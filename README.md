@@ -1,6 +1,8 @@
 # misophonia-dataset
 
-The first large-scale, open-access binaural dataset confirmed to trigger people with misophonia
+The first large-scale, open-access binaural dataset for misphonia trigger selective Active Noise Cancellation. This repo contains the pipeline used to generate on-the-fly, binaural misophonia mixtures, as well as the ```canonical v-1 dataset``` of 30k samples. Reproduction of our work, or use of the pipeline for original endeavors is described below. The pipeline includes source data from FSD50K, ESC-50, and FOAMS datasets. Additional source data can be introduced by creating a class that abides by the `SourceData` interface in `misophonia_dataset/interface.py`.
+
+Authors: Lukas Frimer Thorlander, Tonio Ermakoff.
 
 
 ## Getting Started
@@ -99,3 +101,4 @@ python -m misophonia_dataset.main generate canonical-v1-reproduced test -n 3000 
 python -m misophonia_dataset.main generate canonical-v1-reproduced val -n 7000 --seed 42
 python -m misophonia_dataset.main generate canonical-v1-reproduced train -n 20000 --seed 42
 ```
+
