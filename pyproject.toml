@@ -21,10 +21,12 @@ dependencies = [
     "statsmodels>=0.14.5",
     "soundfile>=0.13.1",
     "soxr>=1.0.0",
-    "typer>=0.15.1",
     "tqdm>=4.67.1",
     "eliot>=1.17.5",
     "pydantic>=2.11.10",
+    "torch>=2.10.0",
+    "torchmetrics>=1.8.2",
+    "typer>=0.24.0",
 ]
 
 [dependency-groups]
@@ -61,3 +63,4 @@ ignore = []
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ANN"]
 "notebooks/exploratory/*" = ["ALL"]
+"SemanticHearing/*" = ["ALL"]
