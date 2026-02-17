@@ -12,8 +12,10 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
-from speechbrain.lobes.models.transformer.Transformer import PositionalEncoding
 from torch import Tensor
+
+# from speechbrain.lobes.models.transformer.Transformer import PositionalEncoding
+PositionalEncoding = NotImplementedError()  # TODO: Should we use the one from speechbrain, which requires torchaudio to be set up? Or find another one?  # noqa: N806
 
 from ._utils import mod_pad
 
