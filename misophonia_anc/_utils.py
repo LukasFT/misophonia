@@ -2,10 +2,28 @@
 
 # ruff: noqa: ANN001 # TODO: Improve quality
 
+import sys
+from pathlib import Path
+
+# Add parent directory of misophonia-dataset to sys.path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import torch.nn.functional as F  # noqa: N812
 from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
+import torch
+
+from misophonia_dataset.interface import MisophoniaItem
+
+
+def collate_fn(batch: list[MisophoniaItem]) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    inputs = {
+        "mix": torch.stack([torch.tensor(i.get_mix_audio(), dtype=torch.float32) for i in batch]),
+        "label_vector": torch.stack([torch.tensor(i.label_vector, dtype=torch.float32) for i in batch]),
+    }
+    gt = torch.stack([torch.tensor(i.get_ground_truth_audio(), dtype=torch.float32) for i in batch])
+    return inputs, gt
 
 
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO

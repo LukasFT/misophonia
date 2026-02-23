@@ -7,10 +7,9 @@ Heavily based on https://github.com/vb000/SemanticHearing
 
 import torch
 import torch.nn as nn
-
-from ._utils import mod_pad
-from .decoder import CausalTransformerDecoder
-from .encoder import DilatedCausalConvEncoder
+from _utils import mod_pad
+from decoder import CausalTransformerDecoder
+from encoder import DilatedCausalConvEncoder
 
 
 class MisophoniaANCNet(nn.Module):
@@ -136,7 +135,7 @@ class MisophoniaANCNet(nn.Module):
             out: [B, n_spk, T]
                 extracted audio with sounds corresponding to the `label`
         """
-        x, label = inputs["mixture"], inputs["label_vector"]
+        x, label = inputs["mix"], inputs["label_vector"]
 
         if init_enc_buf is None or init_dec_buf is None or init_out_buf is None:
             assert init_enc_buf is None and init_dec_buf is None and init_out_buf is None, (
