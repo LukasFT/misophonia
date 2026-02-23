@@ -9,6 +9,19 @@ import numpy as np
 import pydantic
 import soundfile as sf
 
+LABEL_VECTOR = [
+    "basketball_dribbling",
+    "chewing_gum",
+    "clearing_throat",
+    "flipping newspaper",
+    "human_breathing",
+    "knife_cutting",
+    "plastic_crumbling",
+    "swallowing",
+    "typing",
+    "water_drops",
+]
+
 MappingT: TypeAlias = dict[str, dict[Literal["foams_mapping"], str]]
 """The structure of a mapping from dataset-specific classes to FOAMS classes."""
 
@@ -236,7 +249,8 @@ class MisophoniaItem(BaseModel):
     """
     background_categories: tuple[str, ...]
     """Categories of the background sounds in this item according to the AudioSet (FSD50K) taxonomy."""
-
+    label_vector: np.ndarray[float]
+    """One-hot encoded vector of foreground_categories."""
     mix: np.ndarray | Path
     """
     Binaural mixed audio data for both foreground and background sounds.
@@ -330,7 +344,7 @@ class MisophoniaItem(BaseModel):
     @pydantic.model_validator(mode="before")
     @classmethod
     def _auto_compute_categories(cls, values: dict) -> dict:
-        """Auto-compute categories if none given."""
+        """Auto-compute categories if none given. Create one-hot label vector."""
         if "foreground_categories" not in values or values["foreground_categories"] is None:
             if "foregrounds" not in values:
                 raise ValueError("Cannot auto-compute foreground_categories without foregrounds.")
@@ -344,6 +358,16 @@ class MisophoniaItem(BaseModel):
                 set(itertools.chain.from_iterable(it.source_item.labels for it in values["backgrounds"]))
             )
 
+        if "is_trigger" not in values or values["is_trigger"] is None:
+            raise ValueError("Cannot create label vector because audio does not have 'is_trigger' field.")
+
+        if not values["is_trigger"]:
+            values["label_vector"] = np.zeros(len(LABEL_VECTOR), dtype=np.float32)
+        else:
+            values["label_vector"] = np.array(
+                [1 if cat in values["foreground_categories"] else 0 for cat in LABEL_VECTOR],
+                dtype=np.float32,
+            )
         return values
 
     @staticmethod

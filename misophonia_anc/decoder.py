@@ -15,9 +15,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 # from speechbrain.lobes.models.transformer.Transformer import PositionalEncoding
-PositionalEncoding = NotImplementedError()  # TODO: Should we use the one from speechbrain, which requires torchaudio to be set up? Or find another one?  # noqa: N806
-
-from ._utils import mod_pad
+from _utils import mod_pad
 
 
 class CausalTransformerDecoder(nn.Module):
@@ -38,8 +36,8 @@ class CausalTransformerDecoder(nn.Module):
         self.nhead = nhead
         self.use_pos_enc = use_pos_enc
         self.unfold = nn.Unfold(kernel_size=(ctx_len + chunk_size, 1), stride=chunk_size)
-        self.pos_enc_tgt = PositionalEncoding(model_dim, max_len=1000)
-        self.pos_enc_mem = PositionalEncoding(model_dim, max_len=100)
+        self.pos_enc_tgt = PositionalEncoding(model_dim, dropout=0.0, max_len=1000)
+        self.pos_enc_mem = PositionalEncoding(model_dim, dropout=0.0, max_len=100)
         self.tf_dec_layers = nn.ModuleList(
             [
                 _CausalTransformerDecoderLayer(d_model=model_dim, nhead=nhead, dim_feedforward=ff_dim, batch_first=True)
@@ -137,7 +135,7 @@ class CausalTransformerDecoder(nn.Module):
 
             # Positional encoding
             if i == 0 and self.use_pos_enc:
-                tgt = tgt + self.pos_enc_tgt(tgt)
+                tgt = self.pos_enc_tgt(tgt)
 
             _tgt = torch.zeros_like(tgt)[:, : self.chunk_size, :]
             for k in range(int(math.ceil(tgt.shape[0] / K))):
@@ -195,3 +193,31 @@ class _CausalTransformerDecoderLayer(torch.nn.TransformerDecoderLayer):
         tgt_last_tok = tgt_last_tok + self.dropout3(tmp_tgt)
         tgt_last_tok = self.norm3(tgt_last_tok)
         return tgt_last_tok, sa_map, ca_map
+
+
+# TODO: Should we use the one from speechbrain, which requires torchaudio to be set up? Or find another one? Tentative implementation below  # noqa: N806
+
+# Source - https://stackoverflow.com/a/77445896
+# Posted by Yakov Dan, modified by community. See post 'Timeline' for change history. Modified for our use case by us.
+# Retrieved 2026-02-23, License - CC BY-SA 4.0
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(1, max_len, d_model)
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Arguments:
+            x: Tensor, shape ``[B, T, D]``
+        """
+        x = x + self.pe[:, : x.size(1)]
+        return self.dropout(x)
