@@ -15,7 +15,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 # from speechbrain.lobes.models.transformer.Transformer import PositionalEncoding
-from _utils import mod_pad
+from ._utils import mod_pad
 
 
 class CausalTransformerDecoder(nn.Module):
