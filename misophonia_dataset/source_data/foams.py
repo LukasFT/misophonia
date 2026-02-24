@@ -64,6 +64,9 @@ class FoamsDataset(SourceData):
         meta["source_dataset"] = "FOAMS"
 
         meta = meta.rename(columns={"foams_label": "labels"})  # FOAMS labels are already aligned to FOAMS taxonomy
+        meta = meta[
+            meta["labels"] not in ["basketball_dribbling, flipping_newspaper"]
+        ]  # Remove these classes as they do not appear in other datasets
 
         meta["labels"] = meta["labels"].apply(lambda x: [x])  # Make singular lists to align with other datasets
         meta["label_type"] = "trigger"  # All FOAMS sounds are triggers
