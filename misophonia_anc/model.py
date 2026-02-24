@@ -7,9 +7,9 @@ Heavily based on https://github.com/vb000/SemanticHearing
 
 import torch
 import torch.nn as nn
-from _utils import mod_pad
-from decoder import CausalTransformerDecoder
-from encoder import DilatedCausalConvEncoder
+from ._utils import mod_pad
+from .decoder import CausalTransformerDecoder
+from .encoder import DilatedCausalConvEncoder
 
 
 class MisophoniaANCNet(nn.Module):

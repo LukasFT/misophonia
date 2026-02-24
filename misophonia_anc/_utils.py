@@ -2,28 +2,87 @@
 
 # ruff: noqa: ANN001 # TODO: Improve quality
 
-import sys
+import os
 from pathlib import Path
 
-# Add parent directory of misophonia-dataset to sys.path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
 import numpy as np
+import pandas as pd
+import torch
 import torch.nn.functional as F  # noqa: N812
 from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
+
+from misophonia_dataset.interface import MisophoniaItem, SplitT
+from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
+
+# Initialize random generator for reproducibility
+rng = np.random.default_rng()
+
+
 import torch
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import webdataset as wds
 
-from misophonia_dataset.interface import MisophoniaItem
 
+def preprocess_to_webdataset_pt(
+    out_dir: str | Path,
+    dataset_split: MisophoniaDatasetSplit,
+    samples_per_shard: int = 2048,
+    num_workers: int = 8,
+):
+    """
+    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading. Assumes out_dir already contains split in name
+    Saves tensors as mix.pt, gt.pt, and label.pt.
+    """
+    shards_dir = out_dir / "shards"
+    shards_dir.mkdir(parents=True, exist_ok=True)
 
-def collate_fn(batch: list[MisophoniaItem]) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-    inputs = {
-        "mix": torch.stack([torch.tensor(i.get_mix_audio(), dtype=torch.float32) for i in batch]),
-        "label_vector": torch.stack([torch.tensor(i.label_vector, dtype=torch.float32) for i in batch]),
-    }
-    gt = torch.stack([torch.tensor(i.get_ground_truth_audio(), dtype=torch.float32) for i in batch])
-    return inputs, gt
+    pattern = str(shards_dir / "data-%06d.tar")
+    sink = wds.ShardWriter(pattern, maxcount=samples_per_shard)
+
+    def process_item(item_idx_item):
+        idx, item = item_idx_item
+        # This function should call your actual preprocessing
+        # preprocess_item_to_arrays -> returns (X, y, label_vec)
+        mix_array, gt_array, label_array = preprocess_item_to_tensors(item)
+
+        sample = {
+            "__key__": f"{idx:09d}",
+            "mix.npy": mix_array,
+            "gt.npy": gt_array,
+            "label.npy": label_array,
+        }
+        return sample
+
+    def preprocess_item_to_tensors(item: MisophoniaItem) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Preprocess a single MisophoniaItem into tensors for mix, gt, and label.
+        This is a placeholder function and should be replaced with actual preprocessing logic.
+        """
+        # Example preprocessing (replace with actual logic)
+        mix = item.get_mix_audio()
+        gt = item.get_ground_truth_audio()
+        label_vec = item.label_vector
+
+        return (
+            mix,
+            gt,
+            label_vec,
+        )
+
+    # Multithreading
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(process_item, (idx, item)) for idx, item in enumerate(dataset_split)]
+
+        for future in as_completed(futures):
+            sample = future.result()
+            sink.write(sample)
+
+    sink.close()
+
+    shard_glob = str(shards_dir / "data-*.tar")
+    return shard_glob
 
 
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO

@@ -5,7 +5,14 @@
 # import os
 # from copy import deepcopy
 
-# import torch
+
+import sys
+from pathlib import Path
+
+# Add parent directory of misophonia-dataset to sys.path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+import torch
 # import torch.nn as nn
 # import torch.optim as optim
 # import torchaudio
@@ -18,6 +25,20 @@
 
 # from ._utils import ild_diff, itd_diff, mod_pad
 # from .mask_net import MaskNet
+
+
+from misophonia_dataset.interface import MisophoniaItem
+
+
+def collate_fn(batch: list[MisophoniaItem]) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    inputs = {
+        "mix": torch.stack([torch.tensor(i.get_mix_audio(), dtype=torch.float32) for i in batch]),
+        "label_vector": torch.stack([torch.tensor(i.label_vector, dtype=torch.float32) for i in batch]),
+    }
+    gt = torch.stack([torch.tensor(i.get_ground_truth_audio(), dtype=torch.float32) for i in batch])
+    return inputs, gt
+
+
 # def optimizer(  # noqa: ANN201
 #     model,
 #     data_parallel=False,  # TODO: Remove unused parameter?  # noqa: FBT002
