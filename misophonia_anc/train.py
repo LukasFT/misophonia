@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader
+import webdataset as wds  # noqa: F401
 
 # from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.functional import (
@@ -55,7 +55,6 @@ def train_epoch(
     device: torch.device,
     optimizer: optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
-    n_items: int,
     epoch: int = 0,
     # writer: SummaryWriter = None,
 ) -> float:
@@ -63,7 +62,9 @@ def train_epoch(
 
     losses = []
 
-    for inputs, gt in train_loader:
+    for mix, labels, gt in train_loader:
+        # TODO: Change model input format because this is ugly
+        inputs = {"mix": mix.to(torch.float32), "label_vector": labels.to(torch.float32)}
         inputs = {k: v.to(device) for k, v in inputs.items()}
         gt = gt.to(device)
 
@@ -77,26 +78,24 @@ def train_epoch(
 
         losses.append(loss.item())
 
-        print("finished one item!")
-
+    print(f"Epoch {epoch + 1}: Loss = {np.mean(losses)}")
     return np.mean(losses)
 
 
 def train_model(
     model: nn.Module,
     device: torch.device,
-    optimizer: optim.Optimizer,
-    train_data: PremadeMisophoniaDataset,
+    train_loader: wds.WebLoader,
+    batch_size: int,
     n_epochs: int,
-    n_items: int,
     num_workers: int,
     log_dir: Path,
-):
+) -> None:
 
-    train_loader = DataLoader(train_data, batch_size=1, shuffle=True, num_workers=num_workers, collate_fn=collate_fn)
+    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=0.0005, weight_decay=0)
     # writer = SummaryWriter(log_dir=log_dir)
     for epoch in range(n_epochs):
-        losses = train_epoch(model, device, optimizer, train_loader, n_items, epoch)
+        losses = train_epoch(model, device, optimizer, train_loader, epoch)
         print(f"Epoch {epoch + 1}: Loss = {losses}")
 
 
@@ -114,7 +113,6 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=0.0005, weight_decay=0)
     num_workers = 0  # multiprocessing.cpu_count()
     # train(
     #     model,

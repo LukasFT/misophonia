@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F  # noqa: N812
+import yaml
 from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
 
@@ -23,6 +24,10 @@ import torch
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import webdataset as wds
+
+##############
+# Prprocess Utils #
+##############
 
 
 def preprocess_to_webdataset_pt(
@@ -47,29 +52,20 @@ def preprocess_to_webdataset_pt(
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
         mix_array, gt_array, label_array = preprocess_item_to_tensors(item)
 
-        sample = {
-            "__key__": f"{idx:09d}",
-            "mix.npy": mix_array,
-            "gt.npy": gt_array,
-            "label.npy": label_array,
-        }
+        sample = {"__key__": f"{idx:09d}", "mix.npy": mix_array, "label.npy": label_array, "gt.npy": gt_array}
         return sample
 
     def preprocess_item_to_tensors(item: MisophoniaItem) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Preprocess a single MisophoniaItem into tensors for mix, gt, and label.
-        This is a placeholder function and should be replaced with actual preprocessing logic.
+        Fetches the audio in the form of np.ndarray for the binaural mix and ground truth.
+        Also fetches the label vector as np.ndarray.
         """
         # Example preprocessing (replace with actual logic)
         mix = item.get_mix_audio()
         gt = item.get_ground_truth_audio()
         label_vec = item.label_vector
 
-        return (
-            mix,
-            gt,
-            label_vec,
-        )
+        return (mix, label_vec, gt)
 
     # Multithreading
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -83,6 +79,11 @@ def preprocess_to_webdataset_pt(
 
     shard_glob = str(shards_dir / "data-*.tar")
     return shard_glob
+
+
+def load_config(path: str) -> dict:
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
 
 
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO

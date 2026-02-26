@@ -172,6 +172,7 @@ class _CausalTransformerDecoderLayer(torch.nn.TransformerDecoderLayer):
             attn_mask=None,  # not needed because we only care about the last token
             key_padding_mask=None,
         )
+        print("Self attn output shape:", tmp_tgt.shape)
         tgt_last_tok = tgt_last_tok + self.dropout1(tmp_tgt)
         tgt_last_tok = self.norm1(tgt_last_tok)
 

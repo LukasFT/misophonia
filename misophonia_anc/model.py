@@ -136,6 +136,7 @@ class MisophoniaANCNet(nn.Module):
                 extracted audio with sounds corresponding to the `label`
         """
         x, label = inputs["mix"], inputs["label_vector"]
+        print("Inpute shape", x.shape)
 
         if init_enc_buf is None or init_dec_buf is None or init_out_buf is None:
             assert init_enc_buf is None and init_dec_buf is None and init_out_buf is None, (
@@ -201,8 +202,10 @@ class MaskNet(nn.Module):
         """
         # Enocder the label integrated input
         e, enc_buf = self.encoder(x, enc_buf)
+        print("After encoder:", e.shape)
 
         # Decoder conditioned on embedding
         m, dec_buf = self.decoder(input=e, embedding=l, ctx_buf=dec_buf)
+        print("After decoder:", m.shape)
 
         return m, enc_buf, dec_buf
