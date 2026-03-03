@@ -56,8 +56,8 @@ def generate(
     saved_generated = PremadeMisophoniaDataset(name=name, base_save_dir=base_save_dir)
 
     if num_samples > 0:
-        datasets = _get_default_datasets() if datasets is None or len(datasets) == 0 else datasets
-        datasets = tuple(_get_dataset_from_name(name, base_dir=source_base_dir) for name in datasets)
+        datasets = get_default_datasets_names() if datasets is None or len(datasets) == 0 else datasets
+        datasets = tuple(get_dataset_from_name(name, base_dir=source_base_dir) for name in datasets)
 
         misophonia_dataset = GeneratedMisophoniaDataset(source_data=datasets)
 
@@ -91,7 +91,7 @@ def download(
 ) -> None:
     """Downloads specified datasets."""
     if datasets is None or len(datasets) == 0:
-        datasets = _get_default_datasets() + ("sadie",)
+        datasets = get_default_datasets_names() + ("sadie",)
 
     eliot.log_message(f"Downloading datasets: {datasets}", level="debug")
 
@@ -100,7 +100,7 @@ def download(
             download_sadie()
             continue
 
-        dataset = _get_dataset_from_name(dataset_name, base_dir=base_save_dir)
+        dataset = get_dataset_from_name(dataset_name, base_dir=base_save_dir)
 
         if dataset.is_downloaded():
             eliot.log_message(f"Dataset {dataset_name} is already downloaded. Skipping.", level="info")
@@ -122,7 +122,7 @@ def search_metadata(
 
     metadata = []
     for dataset_name in datasets:
-        dataset = _get_dataset_from_name(dataset_name, base_dir=base_save_dir)
+        dataset = get_dataset_from_name(dataset_name, base_dir=base_save_dir)
         assert dataset.is_downloaded(), f"Dataset {dataset_name} is not downloaded yet."
         meta = dataset.get_metadata()
         metadata.append(meta)
@@ -134,7 +134,7 @@ def search_metadata(
     print(res)
 
 
-def _get_dataset_from_name(name: str, base_dir: Path) -> SourceData:
+def get_dataset_from_name(name: str, base_dir: Path) -> SourceData:
     name = name.lower().strip()
     if name == "foams":
         return FoamsDataset(save_dir=get_data_dir(dataset_name="FOAMS", base_dir=base_dir))
@@ -145,7 +145,7 @@ def _get_dataset_from_name(name: str, base_dir: Path) -> SourceData:
     raise ValueError(f"Unknown dataset name: {name}")
 
 
-def _get_default_datasets() -> tuple[str]:
+def get_default_datasets_names() -> tuple[str]:
     return ("foams", "esc50", "fsd50k")
 
 

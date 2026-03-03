@@ -1,6 +1,4 @@
 import glob
-import multiprocessing
-import os
 from pathlib import Path
 
 import torch
@@ -8,8 +6,8 @@ import typer
 import webdataset as wds  # noqa: F401
 from typing_extensions import Annotated
 
-from misophonia_dataset.interface import SplitT
-from misophonia_dataset.main import _get_default_datasets
+from misophonia_dataset.interface import SplitT, get_data_dir
+from misophonia_dataset.main import get_dataset_from_name, get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
 from ._utils import load_config, preprocess_to_webdataset_pt
@@ -23,41 +21,57 @@ app = typer.Typer(help="Misophonia ANC model training and evaluation CLI.")
 
 @app.command()
 def preprocess(
+    # General
     split_name: Annotated[SplitT, typer.Option(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
-    name: Annotated[str, typer.Option(..., help="Name of the dataset to preprocess")] = "demo-v1",
-    base_dir: Annotated[Path, typer.Option(..., help="Base directory to load audio if using Premade dataset")] = None,
+    data_in_dir: Annotated[
+        Path, typer.Option(..., help="Base directory to load audio if using Premade dataset")
+    ] = None,
+    save_dir: Annotated[
+        Path, typer.Option(..., help="Directory to save preprocessed audio. Use data_in_dir if None")
+    ] = None,
+    num_workers: Annotated[
+        int, typer.Option(..., help="Number of workers for parallel processing. Number of CPU cores if not given.")
+    ] = None,
+    name: Annotated[str, typer.Option(..., help="Name of the dataset to preprocess.")] = "demo-v1",
+    overwrite: Annotated[bool, typer.Option(..., help="Whether to overwrite existing preprocessed shards.")] = False,  # noqa: FBT002
+    # Generated
     source_data: Annotated[list[str], typer.Option(..., help="Name of source datasets to mix.")] = None,
     num_samples: Annotated[int, typer.Option(..., help="Number of samples to generate")] = 10,
-    save_dir: Annotated[Path, typer.Option(..., help="Directory to save preprocessed audio")] = None,
-    num_workers: Annotated[int, typer.Option(..., help="Number of workers for parallel processing")] = 8,
 ) -> None:
+    """
+    Pre-process data so it is as expected for the Misophonia ANC model.
 
-    if base_dir is None and source_data is None:
-        raise ValueError("Either a premade dataset name or source data must be provided.")
-    num_workers = min(num_workers, multiprocessing.cpu_count())
+    Will create a WebDataset with .tar shards containing the preprocessed data.
+    It will contain torch files that are efficient to load during training and evaluation.
+    """
+    data_in_dir = data_in_dir or get_data_dir()
 
-    if base_dir is not None:
-        print(f"Using premade dataset from {base_dir} with name {name} and split {split_name}")
-        misophonia_dataset = PremadeMisophoniaDataset(name=name, base_save_dir=base_dir)
-        out_dir = Path(os.path.join(base_dir, name, split_name))
-
+    premade_dir = get_data_dir(dataset_name=name, base_dir=data_in_dir)
+    if premade_dir.exists():
+        print(f"Using premade dataset from {data_in_dir} with name {name} and split {split_name}")
+        misophonia_dataset = PremadeMisophoniaDataset(name=name, base_save_dir=data_in_dir)
         split = misophonia_dataset.get_split(split_name)
-
     else:
-        datasets = _get_default_datasets() if source_data is None or len(source_data) == 0 else source_data
+        dataset_names = get_default_datasets_names() if source_data is None or len(source_data) == 0 else source_data
+        datasets = tuple(get_dataset_from_name(name, base_dir=data_in_dir) for name in dataset_names)
         print("Generating dataset using source datasets:", datasets)
         misophonia_dataset = GeneratedMisophoniaDataset(source_data=datasets)
-        out_dir = Path(os.path.join(save_dir, name, split_name))
-
         split = misophonia_dataset.get_split(split_name, num_samples=num_samples)
 
-    out_dir = preprocess_to_webdataset_pt(
-        out_dir,
-        split,
-        num_workers=num_workers,
-    )
+    save_dir = Path(save_dir or data_in_dir)
+    out_dir = save_dir / name / split_name
+    try:
+        dataset_glob = preprocess_to_webdataset_pt(
+            out_dir,
+            split,
+            num_workers=num_workers,
+            overwrite=overwrite,
+        )
+    except FileExistsError:
+        print("File exists and --overwrite not set. Skipping preprocessing.")
+        return
 
-    print(out_dir)
+    print("Dataset glob: ", dataset_glob)
 
 
 @app.command()

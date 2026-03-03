@@ -3,27 +3,22 @@
 # ruff: noqa: ANN001 # TODO: Improve quality
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
-import torch
 import torch.nn.functional as F  # noqa: N812
+import webdataset as wds
 import yaml
 from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
 
-from misophonia_dataset.interface import MisophoniaItem, SplitT
+from misophonia_dataset.interface import MisophoniaItem
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 
 # Initialize random generator for reproducibility
 rng = np.random.default_rng()
 
-
-import torch
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import webdataset as wds
 
 ##############
 # Prprocess Utils #
@@ -33,20 +28,36 @@ import webdataset as wds
 def preprocess_to_webdataset_pt(
     out_dir: str | Path,
     dataset_split: MisophoniaDatasetSplit,
+    *,
     samples_per_shard: int = 2048,
-    num_workers: int = 8,
-):
+    num_workers: int = None,
+    overwrite: bool = False,
+) -> str:
     """
-    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading. Assumes out_dir already contains split in name
+    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading.
     Saves tensors as mix.pt, gt.pt, and label.pt.
+
+    Args:
+        out_dir: Directory to save the .tar shards. Assumes out_dir already contains split in name
+        dataset_split: The dataset split to preprocess.
+        samples_per_shard: Number of samples per .tar shard
+        num_workers: Number of threads to use for parallel processing. If None, defaults to number of CPU cores.
+
+    Returns:
+        A glob pattern for the generated .tar shards. Used for loading wds.WebDataset.
     """
+    num_workers = num_workers or os.cpu_count() or 1
+
     shards_dir = out_dir / "shards"
+    if shards_dir.exists() and not overwrite:
+        raise FileExistsError(f"Shards directory {shards_dir} already exists.")
+
     shards_dir.mkdir(parents=True, exist_ok=True)
 
     pattern = str(shards_dir / "data-%06d.tar")
     sink = wds.ShardWriter(pattern, maxcount=samples_per_shard)
 
-    def process_item(item_idx_item):
+    def process_item(item_idx_item) -> dict:
         idx, item = item_idx_item
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
