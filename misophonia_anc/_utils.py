@@ -7,13 +7,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
+import pydantic
 import torch.nn.functional as F  # noqa: N812
 import webdataset as wds
 import yaml
 from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
 
-from misophonia_dataset.interface import MisophoniaItem
+from misophonia_dataset.interface import BaseModel, MisophoniaItem, SplitT
+from misophonia_dataset.main import get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 
 # Initialize random generator for reproducibility
@@ -26,19 +28,18 @@ rng = np.random.default_rng()
 
 
 def preprocess_to_webdataset_pt(
-    out_dir: str | Path,
+    shards_dir: str | Path,
     dataset_split: MisophoniaDatasetSplit,
     *,
     samples_per_shard: int = 2048,
     num_workers: int = None,
-    overwrite: bool = False,
 ) -> str:
     """
     Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading.
     Saves tensors as mix.pt, gt.pt, and label.pt.
 
     Args:
-        out_dir: Directory to save the .tar shards. Assumes out_dir already contains split in name
+        shards_dir: Directory to save the .tar shards. Assumes shards_dir already contains split in name
         dataset_split: The dataset split to preprocess.
         samples_per_shard: Number of samples per .tar shard
         num_workers: Number of threads to use for parallel processing. If None, defaults to number of CPU cores.
@@ -48,10 +49,7 @@ def preprocess_to_webdataset_pt(
     """
     num_workers = num_workers or os.cpu_count() or 1
 
-    shards_dir = out_dir / "shards"
-    if shards_dir.exists() and not overwrite:
-        raise FileExistsError(f"Shards directory {shards_dir} already exists.")
-
+    shards_dir = Path(shards_dir)
     shards_dir.mkdir(parents=True, exist_ok=True)
 
     pattern = str(shards_dir / "data-%06d.tar")
@@ -92,9 +90,52 @@ def preprocess_to_webdataset_pt(
     return shard_glob
 
 
-def load_config(path: str) -> dict:
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+def get_shards_dir(config: "MisophoniaANCConfig", split: SplitT) -> Path:
+    return Path(config.dataset_base_save_dir) / config.dataset_name / split / "preprocessed"
+
+
+class MisophoniaDatasetPrerpocessedConfig(BaseModel):
+    from_premade: bool = pydantic.Field(
+        False,  # noqa: FBT003
+        description="Whether to use a premade dataset with the given name. If False, will generate dataset using the given generated_config.",
+    )
+    generated_source_data: list[str] = pydantic.Field(
+        get_default_datasets_names(),
+        description="If from_premade is False, will generate dataset using the given source datasets. See GeneratedMisophoniaDataset for options.",
+    )
+    generated_config: dict | None = pydantic.Field(
+        None,
+        description="If premade_config not given, will generate dataset using the given config. See GeneratedMisophoniaDataset.get_split for options.",
+    )
+
+
+class MisophoniaANCConfig(BaseModel):
+    dataset_base_save_dir: Path = pydantic.Field(
+        ..., description="Base directory to save preprocessed audio. If None, uses default data directory."
+    )
+    dataset_name: str = pydantic.Field(..., description="Name of the dataset to preprocess or use for training/eval.")
+    dataset_splits: dict[SplitT, MisophoniaDatasetPrerpocessedConfig] = pydantic.Field(
+        ..., description="For each split, the config for the preprocessed dataset to use for training/eval."
+    )
+
+    num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
+    batch_size: int = pydantic.Field(1, description="Batch size for training.")
+    num_workers: int = pydantic.Field(
+        ...,
+        description="Number of workers for data loading during training.",
+        default_factory=lambda: os.cpu_count() or 1,
+    )
+
+    model_params: dict = pydantic.Field(
+        {}, description="Dictionary of parameters to initialize the model. See the MisophoniaANCNet class for options."
+    )
+
+    @classmethod
+    def from_yaml(cls, yaml_path: str | Path) -> "MisophoniaANCConfig":
+
+        with open(yaml_path, "r") as f:
+            data = yaml.safe_load(f)
+        return cls(**data)
 
 
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO
