@@ -29,19 +29,13 @@ from torchmetrics.functional import (
     scale_invariant_signal_distortion_ratio as si_sdr,
 )
 from torchmetrics.functional import (
-    scale_invariant_signal_noise_ratio as si_snr,
-)
-from torchmetrics.functional import (
     signal_distortion_ratio as sdr,
 )
-from torchmetrics.functional import (
-    signal_noise_ratio as snr,
-)
+from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr, signal_noise_ratio as snr
 from tqdm import tqdm  # pylint: disable=unused-import
 
 from misophonia_dataset.misophonia_dataset import PremadeMisophoniaDataset
 
-from ._train_eval_utils import collate_fn
 from .model import MisophoniaANCNet
 
 
@@ -62,9 +56,7 @@ def train_epoch(
 
     losses = []
 
-    for mix, labels, gt in train_loader:
-        # TODO: Change model input format because this is ugly
-        inputs = {"mix": mix.to(torch.float32), "label_vector": labels.to(torch.float32)}
+    for inputs, gt in train_loader:
         inputs = {k: v.to(device) for k, v in inputs.items()}
         gt = gt.to(device)
 

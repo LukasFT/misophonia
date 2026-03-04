@@ -9,10 +9,10 @@
 import sys
 from pathlib import Path
 
-# Add parent directory of misophonia-dataset to sys.path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+import numpy as np
 import torch
+import torch.nn.functional as F
 # import torch.nn as nn
 # import torch.optim as optim
 # import torchaudio
@@ -27,15 +27,36 @@ import torch
 # from .mask_net import MaskNet
 
 
+from misophonia_anc._utils import mod_pad
 from misophonia_dataset.interface import MisophoniaItem
 
 
-def collate_fn(batch: list[MisophoniaItem]) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+def custom_collate_fn(
+    batch: list[list[np.ndarray, np.ndarray, np.ndarray]],
+) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    # Pad the audio to all be the same length (the length of the longest audio in the batch)
+    max_len = max([mix.shape[-1] for mix, _, _ in batch])
+
+    mixes = []
+    gts = []
+    labels = []
+    for mix, label, gt in batch:
+        pad_len = max_len - mix.shape[-1]
+        assert pad_len >= 0, "Error calculating batch padding"
+
+        mix = F.pad(torch.from_numpy(mix).to(torch.float32), (0, pad_len))  # Convert and pad mix
+        gt = F.pad(torch.from_numpy(gt).to(torch.float32), (0, pad_len))  # Convert and pad gt
+
+        mixes.append(mix)
+        gts.append(gt)
+        labels.append(torch.from_numpy(label).to(torch.float32))  # Convert label
+
     inputs = {
-        "mix": torch.stack([torch.tensor(i.get_mix_audio(), dtype=torch.float32) for i in batch]),
-        "label_vector": torch.stack([torch.tensor(i.label_vector, dtype=torch.float32) for i in batch]),
+        "mix": torch.stack(mixes),
+        "label_vector": torch.stack(labels),
     }
-    gt = torch.stack([torch.tensor(i.get_ground_truth_audio(), dtype=torch.float32) for i in batch])
+    gt = torch.stack(gts)
+
     return inputs, gt
 
 

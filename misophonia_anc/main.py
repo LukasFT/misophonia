@@ -8,6 +8,7 @@ import typer
 import webdataset as wds  # noqa: F401
 from typing_extensions import Annotated
 
+from misophonia_anc._train_eval_utils import custom_collate_fn
 from misophonia_dataset.interface import SplitT
 from misophonia_dataset.main import _get_default_datasets
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
@@ -84,10 +85,11 @@ def train(config: Annotated[str, typer.Option(..., help="path to config file wit
         .shuffle(1000)  # optional
         .decode("torch")  # converts the saved numpy arrays to tensors
         .to_tuple("mix.npy", "gt.npy", "label.npy")
-        .batched(batch_size)
     )
 
-    train_loader = wds.WebLoader(train_data, batch_size=None, num_workers=num_workers)
+    train_loader = wds.WebLoader(
+        train_data, batch_size=batch_size, num_workers=num_workers, collate_fn=custom_collate_fn
+    )
 
     model = MisophoniaANCNet(**model_params)  # noqa: F841
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
