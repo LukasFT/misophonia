@@ -80,7 +80,7 @@ def train(config: Annotated[str, typer.Option(..., help="path to config file wit
         raise ValueError("Path to webdataset shards must be provided for training.")
     shard_glob = glob.glob(shard_path)
     train_data = (
-        wds.WebDataset(shard_glob)
+        wds.WebDataset(shard_glob, shardshuffle=False)  # TODO: Consider enabling shard shuffling for better training
         .shuffle(1000)  # optional
         .decode("torch")  # converts the saved numpy arrays to tensors
         .to_tuple("mix.npy", "gt.npy", "label.npy")
