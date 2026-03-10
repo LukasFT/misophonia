@@ -126,6 +126,7 @@ class Fsd50kDataset(SourceData):
                 save_dir=self._base_save_dir,
                 rename_extracted_dir=spec_name,
                 delete_zip=True,
+                max_retries=100,  # Expect to get a lot of timeouts for this large dataset ...
             )
 
     def get_metadata(self) -> Collection[SourceDataItem]:
@@ -235,3 +236,4 @@ class Fsd50kDataset(SourceData):
 
     def __str__(self) -> str:
         return "FSDK50 Dataset"
+
