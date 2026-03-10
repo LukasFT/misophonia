@@ -230,3 +230,4 @@ data/*
 !data/.gitkeep
 playground*
 !data/demo-v1/
+out/

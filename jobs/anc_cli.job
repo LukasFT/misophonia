@@ -7,8 +7,6 @@
 #SBATCH --time=24:00:00
 #SBATCH --partition=scavenge
 
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv python install
-uv sync --frozen --no-install-project
+bash jobs/setup.sh
 
-uv run -m python misophonia_dataset.main --help
+uv run -m misophonia_anc.main "$@"
