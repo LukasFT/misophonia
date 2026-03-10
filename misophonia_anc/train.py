@@ -56,13 +56,16 @@ def train_epoch(
 
     losses = []
 
-    for inputs, gt in train_loader:
+    for inputs, gt, mask in train_loader:
+        # in loader return mask that is [B, C, N]
         inputs = {k: v.to(device) for k, v in inputs.items()}
         gt = gt.to(device)
+        mask = mask.to(device)
 
         optimizer.zero_grad()
 
         output = model(inputs)
+        output = output * mask  # only calculate loss on actual audio
 
         loss = loss_fn(output, gt)
         loss.backward()

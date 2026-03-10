@@ -40,6 +40,7 @@ def custom_collate_fn(
     mixes = []
     gts = []
     labels = []
+    masks = []
     for mix, label, gt in batch:
         pad_len = max_len - mix.shape[-1]
         assert pad_len >= 0, "Error calculating batch padding"
@@ -47,17 +48,25 @@ def custom_collate_fn(
         mix = F.pad(torch.from_numpy(mix).to(torch.float32), (0, pad_len))  # Convert and pad mix
         gt = F.pad(torch.from_numpy(gt).to(torch.float32), (0, pad_len))  # Convert and pad gt
 
+        mask = torch.zeros_like(mix)
+        mask[:, :, -pad_len:] = 1.0
+
         mixes.append(mix)
         gts.append(gt)
         labels.append(torch.from_numpy(label).to(torch.float32))  # Convert label
+        masks.append(mask)
 
     inputs = {
         "mix": torch.stack(mixes),
         "label_vector": torch.stack(labels),
     }
     gt = torch.stack(gts)
+    masks = torch.stack(masks)
 
-    return inputs, gt
+    return inputs, gt, masks
+
+
+def custom_snr()
 
 
 # def optimizer(  # noqa: ANN201
