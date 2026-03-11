@@ -90,14 +90,10 @@ def preprocess_to_webdataset_pt(
     return shard_glob
 
 
-def get_shards_dir(config: "MisophoniaANCConfig", split: SplitT) -> Path:
-    return Path(config.dataset_base_save_dir) / config.dataset_name / split / "preprocessed"
-
-
 class MisophoniaDatasetPrerpocessedConfig(BaseModel):
-    from_premade: bool = pydantic.Field(
-        False,  # noqa: FBT003
-        description="Whether to use a premade dataset with the given name. If False, will generate dataset using the given generated_config.",
+    from_premade: str | None = pydantic.Field(
+        None,
+        description="Whether to use a premade dataset with the given name. If a non-empty string, use that name of the premade dataset.",
     )
     generated_source_data: list[str] = pydantic.Field(
         get_default_datasets_names(),
@@ -110,21 +106,12 @@ class MisophoniaDatasetPrerpocessedConfig(BaseModel):
 
 
 class MisophoniaANCConfig(BaseModel):
-    dataset_base_save_dir: Path = pydantic.Field(
-        ..., description="Base directory to save preprocessed audio. If None, uses default data directory."
-    )
-    dataset_name: str = pydantic.Field(..., description="Name of the dataset to preprocess or use for training/eval.")
     dataset_splits: dict[SplitT, MisophoniaDatasetPrerpocessedConfig] = pydantic.Field(
         ..., description="For each split, the config for the preprocessed dataset to use for training/eval."
     )
 
     num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
     batch_size: int = pydantic.Field(1, description="Batch size for training.")
-    num_workers: int = pydantic.Field(
-        ...,
-        description="Number of workers for data loading during training.",
-        default_factory=lambda: os.cpu_count() or 1,
-    )
 
     model_params: dict = pydantic.Field(
         {}, description="Dictionary of parameters to initialize the model. See the MisophoniaANCNet class for options."
@@ -132,7 +119,8 @@ class MisophoniaANCConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, yaml_path: str | Path) -> "MisophoniaANCConfig":
-
+        if not Path(yaml_path).exists():
+            raise FileNotFoundError(f"Cannot load config since file does not exist: {yaml_path}")
         with open(yaml_path, "r") as f:
             data = yaml.safe_load(f)
         return cls(**data)

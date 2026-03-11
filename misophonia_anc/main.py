@@ -1,4 +1,5 @@
 import glob
+import os
 from pathlib import Path
 
 import torch
@@ -7,10 +8,10 @@ import webdataset as wds  # noqa: F401
 from typing_extensions import Annotated
 
 from misophonia_dataset.interface import SplitT, get_data_dir
-from misophonia_dataset.main import get_dataset_from_name, get_default_datasets_names
+from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
-from ._utils import MisophoniaANCConfig, get_shards_dir, preprocess_to_webdataset_pt
+from ._utils import MisophoniaANCConfig, preprocess_to_webdataset_pt
 from .model import MisophoniaANCNet
 from .train import train_model
 
@@ -21,9 +22,14 @@ app = typer.Typer(help="Misophonia ANC model training and evaluation CLI.")
 
 @app.command()
 def preprocess(
-    config_file: Annotated[str, typer.Argument(..., help="path to config file with dataset parameters.")],
-    split: Annotated[SplitT, typer.Option(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
-    overwrite: Annotated[bool, typer.Option(..., help="Whether to overwrite existing preprocessed shards.")] = False,  # noqa: FBT002
+    name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    split: Annotated[SplitT, typer.Argument(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
+    *,
+    overwrite: Annotated[bool, typer.Option(..., help="Whether to overwrite existing preprocessed shards.")] = False,
+    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+    num_workers: Annotated[
+        int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: os.cpu_count())
+    ] = None,
 ) -> None:
     """
     Pre-process data so it is as expected for the Misophonia ANC model.
@@ -31,9 +37,12 @@ def preprocess(
     Will create a WebDataset with .tar shards containing the preprocessed data.
     It will contain torch files that are efficient to load during training and evaluation.
     """
-    config = MisophoniaANCConfig.from_yaml(config_file)
+    model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
+
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+
     split_config = config.dataset_splits[split]
-    shards_dir = get_shards_dir(config, split)
+    shards_dir = model_dir / "webdataset" / split
 
     if shards_dir.exists():
         if overwrite:
@@ -48,15 +57,14 @@ def preprocess(
             return
 
     if split_config.from_premade:
-        dataset = PremadeMisophoniaDataset(name=config.dataset_name, base_save_dir=config.dataset_base_save_dir)
+        dataset = PremadeMisophoniaDataset(name=split_config.from_premade, base_save_dir=data_base_dir)
         dataset_split = dataset.get_split(split)
     else:
         assert split_config.generated_source_data is not None, "source_data must be provided if from_premade is False"
         assert split_config.generated_config is not None, "generated_config must be provided if from_premade is False"
 
         source_data = tuple(
-            get_dataset_from_name(name, base_dir=config.dataset_base_save_dir)
-            for name in split_config.generated_source_data
+            get_dataset_from_name(name, base_dir=data_base_dir) for name in split_config.generated_source_data
         )
         dataset = GeneratedMisophoniaDataset(source_data=source_data)
         dataset_split = dataset.get_split(split, **split_config.generated_config)
@@ -64,30 +72,36 @@ def preprocess(
     dataset_glob = preprocess_to_webdataset_pt(
         shards_dir,
         dataset_split,
-        num_workers=config.num_workers,
+        num_workers=num_workers,
     )
     print(f"Saved preprocessed data to: {dataset_glob}")
 
 
 @app.command()
 def train(
-    config_file: Annotated[str, typer.Argument(..., help="path to config file with training parameters.")],
+    name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+    num_workers: Annotated[
+        int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: os.cpu_count())
+    ] = None,
 ) -> None:
     """
     Train the Misophonia ANC model.
     """  # TODO: Improve docs
-    config = MisophoniaANCConfig.from_yaml(config_file)
+    model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
 
-    train_glob = glob.glob(str(get_shards_dir(config, "train") / "data-*.tar"))
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+
+    shards_glob_train = glob.glob(str(model_dir / "webdataset" / "train" / "data-*.tar"))
     train_data = (
-        wds.WebDataset(train_glob)
+        wds.WebDataset(shards_glob_train, empty_check=False)
         .shuffle(1000)  # optional
         .decode("torch")  # converts the saved numpy arrays to tensors
         .to_tuple("mix.npy", "gt.npy", "label.npy")
         .batched(config.batch_size)
     )
 
-    train_loader = wds.WebLoader(train_data, batch_size=None, num_workers=config.num_workers)
+    train_loader = wds.WebLoader(train_data, batch_size=None, num_workers=num_workers)
 
     model = MisophoniaANCNet(**config.model_params)  # noqa: F841
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -97,7 +111,7 @@ def train(
         train_loader=train_loader,
         batch_size=config.batch_size,
         n_epochs=config.num_epochs,
-        num_workers=config.num_workers,
+        num_workers=num_workers,
         log_dir=None,
     )
 
