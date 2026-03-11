@@ -9,4 +9,6 @@
 
 bash jobs/setup.sh
 
+echo "*** Running: uv run -m misophonia_dataset.main $*"
 uv run -m misophonia_dataset.main "$@"
+echo "*** Finished ***"

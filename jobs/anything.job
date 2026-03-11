@@ -5,6 +5,6 @@
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 
-echo "Running: $*"
+echo "*** Running: $*"
 exec "$@"
-
+echo "*** Finished ***"
