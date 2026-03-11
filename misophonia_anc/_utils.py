@@ -3,7 +3,7 @@
 # ruff: noqa: ANN001 # TODO: Improve quality
 
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +13,7 @@ import webdataset as wds
 import yaml
 from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
+from tqdm import tqdm
 
 from misophonia_dataset.interface import BaseModel, MisophoniaItem, SplitT
 from misophonia_dataset.main import get_default_datasets_names
@@ -33,6 +34,7 @@ def preprocess_to_webdataset_pt(
     *,
     samples_per_shard: int = 2048,
     num_workers: int = None,
+    show_progress: bool = True,
 ) -> str:
     """
     Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading.
@@ -47,16 +49,9 @@ def preprocess_to_webdataset_pt(
     Returns:
         A glob pattern for the generated .tar shards. Used for loading wds.WebDataset.
     """
-    num_workers = num_workers or os.cpu_count() or 1
 
-    shards_dir = Path(shards_dir)
-    shards_dir.mkdir(parents=True, exist_ok=True)
-
-    pattern = str(shards_dir / "data-%06d.tar")
-    sink = wds.ShardWriter(pattern, maxcount=samples_per_shard)
-
-    def process_item(item_idx_item) -> dict:
-        idx, item = item_idx_item
+    def process_item(idx) -> dict:
+        item = dataset_split[idx]
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
         mix_array, gt_array, label_array = preprocess_item_to_tensors(item)
@@ -76,15 +71,21 @@ def preprocess_to_webdataset_pt(
 
         return (mix, label_vec, gt)
 
-    # Multithreading
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(process_item, (idx, item)) for idx, item in enumerate(dataset_split)]
+    num_workers = num_workers or os.cpu_count() or 1
 
-        for future in as_completed(futures):
-            sample = future.result()
-            sink.write(sample)
+    shards_dir = Path(shards_dir)
+    shards_dir.mkdir(parents=True, exist_ok=True)
 
-    sink.close()
+    pattern = str(shards_dir / "data-%06d.tar")
+    with wds.ShardWriter(pattern, maxcount=samples_per_shard) as sink:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            size = len(dataset_split)
+            results = executor.map(process_item, range(size))
+            if show_progress:
+                results = tqdm(results, total=size, desc=f"Saving {dataset_split.split} items")
+
+            for result in results:
+                sink.write(result)
 
     shard_glob = str(shards_dir / "data-*.tar")
     return shard_glob
