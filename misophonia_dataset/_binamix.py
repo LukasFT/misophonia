@@ -14,7 +14,7 @@ def get_binamix_dir() -> Path:
 def setup_binamix_import() -> None:
     binamix_repo = get_binamix_dir()
 
-    if not any(binamix_repo.iterdir()):  # Binamix dir is empty
+    if not binamix_repo.exists() or not any(binamix_repo.iterdir()):  # Binamix dir is empty
         print("Warning: Binamix repository is empty. Updating submodule...")
         subprocess.run(["git", "submodule", "update", "--init"], check=True)
 
@@ -55,6 +55,11 @@ def setup_binamix() -> None:
 
 def download_sadie() -> None:
     binamix_repo = get_binamix_dir()
+    if not binamix_repo.exists():
+        raise FileNotFoundError(
+            f"Binamix repository not found at expected location: {binamix_repo}. Hint: You might need to run setup_binamix()"
+        )
+
     download_and_unzip(
         (
             {
