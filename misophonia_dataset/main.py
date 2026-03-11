@@ -37,7 +37,13 @@ def generate(
     source_base_dir: Annotated[Path, typer.Option("--source-dir", help="Directory to load datasets from")] = None,
     base_save_dir: Annotated[Path, typer.Option("--save-dir", "-s", help="Directory to save dataset to")] = None,
     num_samples: Annotated[int, typer.Option("--num-samples", "-n", help="Number of samples to generate")] = 1,
-    trig_to_ctrl: Annotated[float, typer.Option("--trig-to-ctrl", help="Ratio of trigger to control sounds")] = 0.5,
+    trig_to_ctrl: Annotated[
+        float,
+        typer.Option(
+            "--trig-to-ctrl",
+            help="Ratio of trigger to control sounds. Larger means more trigger sounds. Must be between 0 and 1.",
+        ),
+    ] = 0.5,
     min_fgs_pr_item: Annotated[int, typer.Option("--min-fgs-pr-item", help="Minimum foregrounds per item")] = 1,
     max_fgs_pr_item: Annotated[int, typer.Option("--max-fgs-pr-item", help="Maximum foregrounds per item")] = 1,
     min_bgs_pr_item: Annotated[int, typer.Option("--min-bgs-pr-item", help="Minimum backgrounds per item")] = 1,
