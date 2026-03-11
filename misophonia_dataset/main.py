@@ -12,7 +12,7 @@ import pandas as pd
 import typer
 from typing_extensions import Annotated
 
-from ._binamix import download_sadie
+from ._binamix import setup_binamix
 from ._log import setup_print_logging
 from .interface import SourceData, get_data_dir
 from .misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset, add_experimental_pairs_to_dataset
@@ -97,7 +97,7 @@ def download(
 
     for dataset_name in datasets:
         if dataset_name.lower().strip() == "sadie":
-            download_sadie()
+            setup_binamix()
             continue
 
         dataset = _get_dataset_from_name(dataset_name, base_dir=base_save_dir)
