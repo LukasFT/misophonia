@@ -42,6 +42,7 @@ class FoamsDataset(SourceData):
         Params:
             save_dir
         """
+        self.download_metadata()
         download_and_unzip(
             files=(
                 {
