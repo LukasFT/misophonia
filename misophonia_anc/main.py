@@ -11,8 +11,8 @@ from misophonia_dataset.interface import SplitT, get_data_dir
 from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
-from ._utils import MisophoniaANCConfig, preprocess_to_webdataset_pt
 from ._train_eval_utils import custom_collate_fn
+from ._utils import MisophoniaANCConfig, preprocess_to_webdataset_pt
 from .model import MisophoniaANCNet
 from .train import train_model
 
@@ -130,18 +130,8 @@ def train(
         model,
         device=device,
         train_loader=train_loader,
-        batch_size=config.batch_size,
         n_epochs=config.num_epochs,
-        num_workers=num_workers,
-        log_dir=None,
     )
-
-
-@app.command()
-def evaluate(
-    some_param: int = typer.Option(..., help="Some parameter for evaluation"),  # TODO: Add actual parameters
-) -> None:
-    raise NotImplementedError("Evaluation function not implemented yet")
 
 
 if __name__ == "__main__":
