@@ -73,6 +73,8 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
             foregrounds_per_item: Tuple specifying the (min, max) number of foregrounds per mixed item.
             backgrounds_per_item: Tuple specifying the (min, max) number of backgrounds per mixed item.
             trig_to_control_ratio: Ratio of trigger to control sounds in the generated items.
+                                        I.e, the percent of items that will contain a trigger sound rather than a control sound.
+                                        Must be between 0 and 1.
             random_seed: Random seed for sampling.
                             Given the same seed, parameters, source data and code version, the same dataset will be generated.
 
