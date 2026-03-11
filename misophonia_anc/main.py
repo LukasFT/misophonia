@@ -69,6 +69,7 @@ def preprocess(
         print("Generating using:")
         print(f"{split_config.generated_source_data=}")
         print(f"{split_config.generated_config=}")
+        print(f"Using {num_workers} workers for data loading during generation (CPU cores = {os.cpu_count()})")
         source_data = tuple(
             get_dataset_from_name(name, base_dir=data_base_dir) for name in split_config.generated_source_data
         )
