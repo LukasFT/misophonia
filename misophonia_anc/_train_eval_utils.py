@@ -65,10 +65,6 @@ def custom_collate_fn(
 
     return inputs, gt, masks
 
-
-def custom_snr()
-
-
 # def optimizer(  # noqa: ANN201
 #     model,
 #     data_parallel=False,  # TODO: Remove unused parameter?  # noqa: FBT002
