@@ -10,10 +10,10 @@ import pydantic
 import soundfile as sf
 
 LABEL_VECTOR = [
-    "basketball_dribbling",
+    # "basketball_dribbling",
+    # "flipping newspaper",
     "chewing_gum",
     "clearing_throat",
-    "flipping newspaper",
     "human_breathing",
     "knife_cutting",
     "plastic_crumbling",
