@@ -12,10 +12,19 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "Debug: CLI",
+      "name": "Debug: Dataset CLI",
       "type": "debugpy",
       "request": "launch",
       "module": "misophonia_dataset.main",
+      "console": "integratedTerminal",
+      // See https://stackoverflow.com/a/78912781
+      "args": "${command:pickArgs}"
+    },
+    {
+      "name": "Debug: ANC Model CLI",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "misophonia_anc.main",
       "console": "integratedTerminal",
       // See https://stackoverflow.com/a/78912781
       "args": "${command:pickArgs}"
