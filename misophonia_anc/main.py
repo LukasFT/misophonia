@@ -28,7 +28,7 @@ def preprocess(
     num_workers: Annotated[
         int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: os.cpu_count())
     ],
-    samples_per_shard: Annotated[int, typer.Option(..., help="Number of samples per .tar shard.")] = 2048,
+    samples_per_shard: Annotated[int, typer.Option(..., help="Number of samples per .tar shard.")] = 64,
     no_progress: Annotated[bool, typer.Option(..., help="Whether to disable progress bars.")] = False,
 ) -> None:
     """

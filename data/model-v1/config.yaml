@@ -2,7 +2,7 @@ dataset_splits:
   train: &train
     # from_premade: true
     generated_config:
-      num_samples: 16
+      num_samples: 16384 # 64 samples per shard, * 256 shards
       trig_to_control_ratio: 0.5
   val:
     <<: *train
