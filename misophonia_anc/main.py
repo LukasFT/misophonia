@@ -91,37 +91,6 @@ def train(
     ],
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
 ) -> None:
-
-    if base_dir is None and source_data is None:
-        raise ValueError("Either a premade dataset name or source data must be provided.")
-    num_workers = min(num_workers, multiprocessing.cpu_count())
-
-    if base_dir is not None:
-        print(f"Using premade dataset from {base_dir} with name {name} and split {split_name}")
-        misophonia_dataset = PremadeMisophoniaDataset(name=name, base_save_dir=base_dir)
-        out_dir = Path(os.path.join(base_dir, name, split_name))
-
-        split = misophonia_dataset.get_split(split_name)
-
-    else:
-        datasets = _get_default_datasets() if source_data is None or len(source_data) == 0 else source_data
-        print("Generating dataset using source datasets:", datasets)
-        misophonia_dataset = GeneratedMisophoniaDataset(source_data=datasets)
-        out_dir = Path(os.path.join(save_dir, name, split_name))
-
-        split = misophonia_dataset.get_split(split_name, num_samples=num_samples)
-
-    out_dir = preprocess_to_webdataset_pt(
-        out_dir,
-        split,
-        num_workers=num_workers,
-    )
-
-    print(out_dir)
-
-
-@app.command()
-def train(config: Annotated[str, typer.Option(..., help="path to config file with training parameters.")]) -> None:
     """
     Train the Misophonia ANC model.
     """  # TODO: Improve docs
