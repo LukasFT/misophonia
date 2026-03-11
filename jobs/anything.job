@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=anything
+#SBATCH --output=out/anything_%j.out
+
+set -euo pipefail
+cd "$SLURM_SUBMIT_DIR"
+
+echo "*** Running: $*"
+exec "$@"
+echo "*** Finished ***"
