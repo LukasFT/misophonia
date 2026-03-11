@@ -55,7 +55,7 @@ def custom_collate_fn(
         gt = F.pad(torch.from_numpy(gt).to(torch.float32), (0, pad_len))  # Convert and pad gt
 
         mask = torch.zeros_like(mix)
-        mask[:, :, -pad_len:] = 1.0
+        mask[:, -pad_len:] = 1.0
 
         mixes.append(mix)
         gts.append(gt)
