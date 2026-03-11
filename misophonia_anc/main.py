@@ -46,13 +46,12 @@ def preprocess(
 
     if shards_dir.exists():
         if overwrite:
-            print(f"Overwriting existing preprocessed dataset for split {split} with config: {split_config}")
             print(f"Deleting existing shards in {shards_dir}...")
             for file in shards_dir.glob("*"):
                 file.unlink()
             print("Existing shards deleted.")
         else:
-            print(f"Using existing preprocessed dataset for split {split} with config: {split_config}")
+            print(f"Preprocessed dataset already exists for split {split} at {shards_dir}")
             print("Use --overwrite to overwrite existing preprocessed dataset.")
             return
 
@@ -67,6 +66,9 @@ def preprocess(
         assert split_config.generated_source_data is not None, "source_data must be provided if from_premade is False"
         assert split_config.generated_config is not None, "generated_config must be provided if from_premade is False"
 
+        print("Generating using:")
+        print(f"{split_config.generated_source_data=}")
+        print(f"{split_config.generated_config=}")
         source_data = tuple(
             get_dataset_from_name(name, base_dir=data_base_dir) for name in split_config.generated_source_data
         )
