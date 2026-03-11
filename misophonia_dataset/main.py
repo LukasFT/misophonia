@@ -97,6 +97,7 @@ def download(
 
     for dataset_name in datasets:
         if dataset_name.lower().strip() == "sadie":
+            eliot.log_message("Setting up Binamix and downloading SADIE dataset", level="info")
             setup_binamix()
             continue
 
