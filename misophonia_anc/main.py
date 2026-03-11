@@ -11,12 +11,9 @@ from misophonia_dataset.interface import SplitT, get_data_dir
 from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
-from ._train_eval_utils import custom_collate_fn
 from ._utils import MisophoniaANCConfig, preprocess_to_webdataset_pt
 from .model import MisophoniaANCNet
-from .train import train_model
-
-# from ._train_eval_utils import ... # TODO: Import actual functions needed for training and evaluation
+from .train import custom_collate_fn, train_model
 
 app = typer.Typer(help="Misophonia ANC model training and evaluation CLI.")
 
