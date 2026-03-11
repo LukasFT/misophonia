@@ -29,7 +29,9 @@ def preprocess(
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
     num_workers: Annotated[
         int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: os.cpu_count())
-    ] = None,
+    ],
+    samples_per_shard: Annotated[int, typer.Option(..., help="Number of samples per .tar shard.")] = 2048,
+    no_progress: Annotated[bool, typer.Option(..., help="Whether to disable progress bars.")] = False,
 ) -> None:
     """
     Pre-process data so it is as expected for the Misophonia ANC model.
@@ -57,6 +59,10 @@ def preprocess(
             return
 
     if split_config.from_premade:
+        assert split_config.generated_source_data is None, (
+            "generated_source_data should not be provided if from_premade is True"
+        )
+        assert split_config.generated_config is None, "generated_config should not be provided if from_premade is True"
         dataset = PremadeMisophoniaDataset(name=split_config.from_premade, base_save_dir=data_base_dir)
         dataset_split = dataset.get_split(split)
     else:
@@ -73,6 +79,8 @@ def preprocess(
         shards_dir,
         dataset_split,
         num_workers=num_workers,
+        show_progress=not no_progress,
+        samples_per_shard=samples_per_shard,
     )
     print(f"Saved preprocessed data to: {dataset_glob}")
 
@@ -80,10 +88,10 @@ def preprocess(
 @app.command()
 def train(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
-    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
     num_workers: Annotated[
         int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: os.cpu_count())
-    ] = None,
+    ],
+    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
 ) -> None:
     """
     Train the Misophonia ANC model.
