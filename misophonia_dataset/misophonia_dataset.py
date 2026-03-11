@@ -40,7 +40,11 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
         if self._items_by_split is not None:
             return
 
-        assert all(ds.is_downloaded() for ds in self._source_data), "All source data must be downloaded."
+        for ds in self._source_data:
+            if not ds.is_downloaded():
+                raise RuntimeError(
+                    f"Source data {ds} is not downloaded. Please download it before preparing the dataset."
+                )
 
         all_source_data = tuple(itertools.chain.from_iterable(ds.get_metadata() for ds in self._source_data))
 
