@@ -47,15 +47,12 @@ def train_epoch(
     optimizer: optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
     epoch: int = 0,
-    # writer: SummaryWriter = None,
 ) -> float:
     model = model.train()
 
     losses = []
 
-    for mix, labels, gt in train_loader:
-        # TODO: Change model input format because this is ugly
-        inputs = {"mix": mix.to(torch.float32), "label_vector": labels.to(torch.float32)}
+    for inputs, gt in train_loader:
         inputs = {k: v.to(device) for k, v in inputs.items()}
         gt = gt.to(device)
 
@@ -75,16 +72,14 @@ def train_epoch(
 
 def train_model(
     model: nn.Module,
-    device: torch.device,
     train_loader: wds.WebLoader,
-    batch_size: int,
+    *,
     n_epochs: int,
-    num_workers: int,
-    log_dir: Path,
+    device: torch.device,
 ) -> None:
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=0.0005, weight_decay=0)
-    # writer = SummaryWriter(log_dir=log_dir)
+
     for epoch in range(n_epochs):
         losses = train_epoch(model, device, optimizer, train_loader, epoch)
         print(f"Epoch {epoch + 1}: Loss = {losses}")
