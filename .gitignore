@@ -230,4 +230,8 @@ data/*
 !data/.gitkeep
 playground*
 !data/demo-v1/
+!data/model-v1/
+data/model-v1/*
+!data/model-v1/config.yaml
 out/
+SemanticHearing

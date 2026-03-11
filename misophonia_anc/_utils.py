@@ -3,27 +3,25 @@
 # ruff: noqa: ANN001 # TODO: Improve quality
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
-import torch
+import pydantic
 import torch.nn.functional as F  # noqa: N812
+import webdataset as wds
 import yaml
 from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
+from tqdm import tqdm
 
-from misophonia_dataset.interface import MisophoniaItem, SplitT
+from misophonia_dataset.interface import BaseModel, MisophoniaItem, SplitT
+from misophonia_dataset.main import get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 
 # Initialize random generator for reproducibility
 rng = np.random.default_rng()
 
-
-import torch
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import webdataset as wds
 
 ##############
 # Prprocess Utils #
@@ -31,23 +29,29 @@ import webdataset as wds
 
 
 def preprocess_to_webdataset_pt(
-    out_dir: str | Path,
+    shards_dir: str | Path,
     dataset_split: MisophoniaDatasetSplit,
+    *,
     samples_per_shard: int = 2048,
-    num_workers: int = 8,
-):
+    num_workers: int = None,
+    show_progress: bool = True,
+) -> str:
     """
-    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading. Assumes out_dir already contains split in name
+    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading.
     Saves tensors as mix.pt, gt.pt, and label.pt.
+
+    Args:
+        shards_dir: Directory to save the .tar shards. Assumes shards_dir already contains split in name
+        dataset_split: The dataset split to preprocess.
+        samples_per_shard: Number of samples per .tar shard
+        num_workers: Number of threads to use for parallel processing. If None, defaults to number of CPU cores.
+
+    Returns:
+        A glob pattern for the generated .tar shards. Used for loading wds.WebDataset.
     """
-    shards_dir = out_dir / "shards"
-    shards_dir.mkdir(parents=True, exist_ok=True)
 
-    pattern = str(shards_dir / "data-%06d.tar")
-    sink = wds.ShardWriter(pattern, maxcount=samples_per_shard)
-
-    def process_item(item_idx_item):
-        idx, item = item_idx_item
+    def process_item(idx) -> dict:
+        item = dataset_split[idx]
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
         mix_array, gt_array, label_array = preprocess_item_to_tensors(item)
@@ -67,23 +71,60 @@ def preprocess_to_webdataset_pt(
 
         return (mix, label_vec, gt)
 
-    # Multithreading
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(process_item, (idx, item)) for idx, item in enumerate(dataset_split)]
+    num_workers = num_workers or os.cpu_count() or 1
 
-        for future in as_completed(futures):
-            sample = future.result()
-            sink.write(sample)
+    shards_dir = Path(shards_dir)
+    shards_dir.mkdir(parents=True, exist_ok=True)
 
-    sink.close()
+    pattern = str(shards_dir / "data-%06d.tar")
+    with wds.ShardWriter(pattern, maxcount=samples_per_shard) as sink:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            size = len(dataset_split)
+            results = executor.map(process_item, range(size))
+            if show_progress:
+                results = tqdm(results, total=size, desc=f"Saving {dataset_split.split} items")
+
+            for result in results:
+                sink.write(result)
 
     shard_glob = str(shards_dir / "data-*.tar")
     return shard_glob
 
 
-def load_config(path: str) -> dict:
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+class MisophoniaDatasetPrerpocessedConfig(BaseModel):
+    from_premade: str | None = pydantic.Field(
+        None,
+        description="Whether to use a premade dataset with the given name. If a non-empty string, use that name of the premade dataset.",
+    )
+    generated_source_data: list[str] = pydantic.Field(
+        get_default_datasets_names(),
+        description="If from_premade is False, will generate dataset using the given source datasets. See GeneratedMisophoniaDataset for options.",
+    )
+    generated_config: dict | None = pydantic.Field(
+        None,
+        description="If premade_config not given, will generate dataset using the given config. See GeneratedMisophoniaDataset.get_split for options.",
+    )
+
+
+class MisophoniaANCConfig(BaseModel):
+    dataset_splits: dict[SplitT, MisophoniaDatasetPrerpocessedConfig] = pydantic.Field(
+        ..., description="For each split, the config for the preprocessed dataset to use for training/eval."
+    )
+
+    num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
+    batch_size: int = pydantic.Field(1, description="Batch size for training.")
+
+    model_params: dict = pydantic.Field(
+        {}, description="Dictionary of parameters to initialize the model. See the MisophoniaANCNet class for options."
+    )
+
+    @classmethod
+    def from_yaml(cls, yaml_path: str | Path) -> "MisophoniaANCConfig":
+        if not Path(yaml_path).exists():
+            raise FileNotFoundError(f"Cannot load config since file does not exist: {yaml_path}")
+        with open(yaml_path, "r") as f:
+            data = yaml.safe_load(f)
+        return cls(**data)
 
 
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO

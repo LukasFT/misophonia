@@ -1,0 +1,15 @@
+dataset_splits:
+  train: &train
+    # from_premade: true
+    generated_config:
+      num_samples: 16
+      trig_to_control_ratio: 0.5
+  val:
+    <<: *train
+  test:
+    <<: *train
+  
+batch_size: 4
+
+model_params:
+  label_len: 8

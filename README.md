@@ -117,7 +117,7 @@ TODO: Improve description for ANC model here.
 See the commands to train and evaluate the model in the `misophonia_anc` package. For more details on options, run:
 
 ```bash
-python -m misophonia_anc.preprocess --help
+python -m misophonia_anc.main preprocess --help
 python -m misophonia_anc.main train --help  # For more details on options
 python -m misophonia_anc.main evaluate --help
 ```
@@ -126,6 +126,6 @@ python -m misophonia_anc.main evaluate --help
 
 We first preprocess the misophonia dataset to discard all irrelevant metadata. We can either run 
 ```bash
-python -m misophonia_anc.preprocess
+python -m misophonia_anc.main preprocess
 ``` 
 with a `PremadeMisophoniaDataset` object or a `GeneratedMisophoniaDataset` object. For the former, specify the `base_dir` field. For the latter, specify the `source_data` and `save_dir` fields. It is assumed that the source data has already been downloaded. `name` and `split-name` must be specified for both.
