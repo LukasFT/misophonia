@@ -8,6 +8,7 @@ services:
         USER_UID: "${UID:-1000}"
         USER_GID: "${GID:-1000}"
     user: "${UID:-1000}:${GID:-1000}"
+    shm_size: "4gb"  # Needed to make PyTorch work with multiprocessing for batches (alternativly run anc train with --num-workers 0)
     volumes:
       - .:/app
       - ./data:/data
