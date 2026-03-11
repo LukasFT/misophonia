@@ -32,7 +32,7 @@ def preprocess_to_webdataset_pt(
     shards_dir: str | Path,
     dataset_split: MisophoniaDatasetSplit,
     *,
-    samples_per_shard: int = 2048,
+    samples_per_shard: int,
     num_workers: int = None,
     show_progress: bool = True,
 ) -> str:
