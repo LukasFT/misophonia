@@ -9,7 +9,7 @@ dataset_splits:
   test:
     <<: *train
   
-  
+batch_size: 4
 
 model_params:
   label_len: 8

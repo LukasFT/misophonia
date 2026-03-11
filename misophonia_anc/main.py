@@ -12,6 +12,7 @@ from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
 from ._utils import MisophoniaANCConfig, preprocess_to_webdataset_pt
+from ._train_eval_utils import custom_collate_fn
 from .model import MisophoniaANCNet
 from .train import train_model
 
@@ -101,15 +102,27 @@ def train(
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
 
     shards_glob_train = glob.glob(str(model_dir / "webdataset" / "train" / "data-*.tar"))
+
     train_data = (
-        wds.WebDataset(shards_glob_train, empty_check=False)
-        .shuffle(1000)  # optional
+        wds.WebDataset(
+            shards_glob_train,
+            empty_check=False,
+            shardshuffle=25,  # Number of shards to keep in memory at the time (as I understand it)
+        )
+        .shuffle(1000)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
         .to_tuple("mix.npy", "gt.npy", "label.npy")
-        .batched(config.batch_size)
+        .batched(
+            config.batch_size,
+            collation_fn=custom_collate_fn,  # Make batches of the same size
+        )
     )
 
-    train_loader = wds.WebLoader(train_data, batch_size=None, num_workers=num_workers)
+    train_loader = wds.WebLoader(
+        train_data,
+        batch_size=None,  # We set batch size in the WebDataset pipeline, so we set it to None here
+        num_workers=num_workers,
+    )
 
     model = MisophoniaANCNet(**config.model_params)  # noqa: F841
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
