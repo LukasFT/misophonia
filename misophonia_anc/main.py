@@ -1,5 +1,6 @@
 import glob
 import os
+import subprocess
 from pathlib import Path
 
 import eliot
@@ -101,6 +102,14 @@ def train(
         int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: os.cpu_count())
     ],
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+    fast_data_dir: Annotated[
+        Path | None,
+        typer.Option(
+            ...,
+            help="Move the preprocessed data to this directory before training. Useful on HPCs.",
+            envvar="FAST_DATA_DIR",
+        ),
+    ] = None,
 ) -> None:
     """
     Train the Misophonia ANC model.
@@ -109,7 +118,17 @@ def train(
 
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
 
-    shards_glob_train = glob.glob(str(model_dir / "webdataset" / "train" / "data-*.tar"))
+    dataset_dir = model_dir / "webdataset"
+    if fast_data_dir is not None:
+        dataset_dir_orig = dataset_dir
+        dataset_dir = Path(fast_data_dir) / "webdataset"
+        eliot.log_message(
+            f"Copying preprocessed data from {dataset_dir_orig} to {dataset_dir} using rsync...", level="info"
+        )
+        subprocess.run(["rsync", "-avh", "--delete", str(dataset_dir_orig) + "/", str(dataset_dir) + "/"], check=True)
+        eliot.log_message(f"Copied preprocessed data to {dataset_dir}.", level="debug")
+
+    shards_glob_train = glob.glob(str(dataset_dir / "train" / "data-*.tar"))
 
     train_data = (
         wds.WebDataset(
