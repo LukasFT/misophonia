@@ -140,16 +140,16 @@ def train(
     shards_glob_train = glob.glob(str(dataset_dir / "train" / "data-*.tar"))
     print(f"Loading data from `{shards_glob_train[0]}` etc...")
     print(
-        f"Using {num_workers} workers for data loading during generation (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()})."
+        f"Using {num_workers} workers loading WebDataset (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()})."
     )
 
     train_data = (
         wds.WebDataset(
             shards_glob_train,
             empty_check=False,
-            shardshuffle=25,  # Number of shards to keep in memory at the time (as I understand it)
+            shardshuffle=4,  # Number of shards to keep in memory at the time (as I understand it)
         )
-        .shuffle(1000)  # Number of samples to shuffle in memory at the time (as I understand it)
+        .shuffle(64)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
         .to_tuple("mix.npy", "gt.npy", "label.npy")
         .batched(
