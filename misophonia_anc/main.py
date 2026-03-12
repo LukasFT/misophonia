@@ -99,7 +99,12 @@ def preprocess(
 def train(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
     num_workers: Annotated[
-        int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: get_allocated_cpus())
+        int,
+        typer.Option(
+            ...,
+            help="Number of workers for data loading. A few will suffice, too many will consume extensive memory.",
+            default_factory=lambda: 4,
+        ),
     ],
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
     fast_data_dir: Annotated[
