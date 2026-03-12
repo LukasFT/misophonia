@@ -126,7 +126,8 @@ def train(
         eliot.log_message(
             f"Copying preprocessed data from {dataset_dir_orig} to {dataset_dir} using rsync...", level="info"
         )
-        subprocess.run(["rsync", "-avh", "--delete", str(dataset_dir_orig) + "/", str(dataset_dir) + "/"], check=True)
+        print("May take a while for nodes that have not yet loaded the data into the fast data dir.")
+        subprocess.run(["rsync", "-a", "--delete", str(dataset_dir_orig) + "/", str(dataset_dir) + "/"], check=True)
         eliot.log_message(f"Copied preprocessed data to {dataset_dir}.", level="debug")
 
     shards_glob_train = glob.glob(str(dataset_dir / "train" / "data-*.tar"))
