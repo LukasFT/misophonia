@@ -9,6 +9,9 @@
 
 bash jobs/setup.sh
 
+
+export FAST_DATA_DIR="/scratch/$USER/$SLURM_JOB_ID"
+
 echo "*** Running: uv run -m misophonia_anc.main $*"
 uv run -m misophonia_anc.main "$@"
 echo "*** Finished ***"
