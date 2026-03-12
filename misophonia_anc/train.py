@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 import sys
 from pathlib import Path
 
+import eliot
 import numpy as np
 import torch
 import torch.nn as nn
@@ -89,7 +90,7 @@ def train_epoch(
 
     losses = []
 
-    i = 0
+    i = 0  # TODO: Remove debug
     for inputs, gt, mask in train_loader:
         # in loader return mask that is [B, C, N]
         inputs = {k: v.to(device) for k, v in inputs.items()}
@@ -97,11 +98,12 @@ def train_epoch(
         mask = mask.to(device)
 
         # TODO: Remove debug
-        print(f"{inputs['mix'].shape=}, {gt.shape=}, {mask.shape=}")
+        eliot.log_message(f"{inputs['mix'].shape=}, {gt.shape=}, {mask.shape=}", level="debug")
 
         optimizer.zero_grad()
 
         output = model(inputs)
+        # TODO: Fix this, since output is a dict!
         output = output * mask  # only calculate loss on actual audio (force model output to be 0 on padded parts)
 
         loss = loss_fn(output, gt)
@@ -110,15 +112,15 @@ def train_epoch(
 
         losses.append(loss.item())
 
-        print(f"Epoch {epoch + 1}, Batch {i + 1}: Loss = {loss.item()}")  # TODO: Remove debug
+        # TODO: Remove debug
+        eliot.log_message(f"Epoch {epoch + 1}, Batch {i + 1}: Loss = {loss.item()}", level="debug")
         i += 1
         if i > 5:
-            # TODO: Remove debug
             raise NotImplementedError(
                 "Stopping after 5 batches for testing purposes. Remove this condition to train on the full dataset."
             )
 
-    print(f"Epoch {epoch + 1}: Loss = {np.mean(losses)}")
+    eliot.log_message(f"Epoch {epoch + 1}: Loss = {np.mean(losses)}", level="debug")
     return np.mean(losses)
 
 
@@ -134,4 +136,4 @@ def train_model(
 
     for epoch in range(n_epochs):
         losses = train_epoch(model, device, optimizer, train_loader, epoch)
-        print(f"Epoch {epoch + 1}: Loss = {losses}")
+        eliot.log_message(f"Epoch {epoch + 1}: Loss = {losses}", level="debug")
