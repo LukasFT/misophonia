@@ -121,7 +121,7 @@ def train(
     dataset_dir = model_dir / "webdataset"
     if fast_data_dir is not None:
         dataset_dir_orig = dataset_dir
-        dataset_dir = Path(fast_data_dir) / "webdataset"
+        dataset_dir = Path(fast_data_dir) / name / "webdataset"
         dataset_dir.mkdir(parents=True, exist_ok=True)
         eliot.log_message(
             f"Copying preprocessed data from {dataset_dir_orig} to {dataset_dir} using rsync...", level="info"
