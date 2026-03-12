@@ -106,7 +106,7 @@ def train(
         Path | None,
         typer.Option(
             ...,
-            help="Move the preprocessed data to this directory before training. Useful on HPCs.",
+            help="Move the preprocessed data to this directory before training. Useful on HPCs. WARNING: Data in this dir will be deleted.",
             envvar="FAST_DATA_DIR",
         ),
     ] = None,
@@ -122,6 +122,7 @@ def train(
     if fast_data_dir is not None:
         dataset_dir_orig = dataset_dir
         dataset_dir = Path(fast_data_dir) / "webdataset"
+        dataset_dir.mkdir(parents=True, exist_ok=True)
         eliot.log_message(
             f"Copying preprocessed data from {dataset_dir_orig} to {dataset_dir} using rsync...", level="info"
         )
