@@ -14,7 +14,7 @@ from misophonia_dataset.interface import SplitT, get_data_dir
 from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
-from ._utils import MisophoniaANCConfig, preprocess_to_webdataset_pt
+from ._utils import MisophoniaANCConfig, get_allocated_cpus, preprocess_to_webdataset_pt
 from .model import MisophoniaANCNet
 from .train import custom_collate_fn, train_model
 
@@ -30,7 +30,7 @@ def preprocess(
     overwrite: Annotated[bool, typer.Option(..., help="Whether to overwrite existing preprocessed shards.")] = False,
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
     num_workers: Annotated[
-        int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: os.cpu_count())
+        int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: get_allocated_cpus())
     ],
     samples_per_shard: Annotated[int, typer.Option(..., help="Number of samples per .tar shard.")] = 64,
     no_progress: Annotated[bool, typer.Option(..., help="Whether to disable progress bars.")] = False,
@@ -76,7 +76,7 @@ def preprocess(
         eliot.log_message(f"{split_config.generated_source_data=}", level="debug")
         eliot.log_message(f"{split_config.generated_config=}", level="debug")
         eliot.log_message(
-            f"Using {num_workers} workers for data loading during generation (CPU cores = {os.cpu_count()})",
+            f"Using {num_workers} workers for data loading during generation (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
             level="debug",
         )
         source_data = tuple(
@@ -99,7 +99,7 @@ def preprocess(
 def train(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
     num_workers: Annotated[
-        int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: os.cpu_count())
+        int, typer.Option(..., help="Number of workers for data loading.", default_factory=lambda: get_allocated_cpus())
     ],
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
     fast_data_dir: Annotated[

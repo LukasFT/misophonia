@@ -127,6 +127,25 @@ class MisophoniaANCConfig(BaseModel):
         return cls(**data)
 
 
+def get_allocated_cpus() -> int:
+    """Returns the number of CPUs allocated to the current process, accounting for environments like SLURM and Docker."""
+
+    # 1. Try SLURM environment variable
+    slurm_cpus = os.getenv("SLURM_CPUS_PER_TASK")
+    if slurm_cpus:
+        return int(slurm_cpus)
+
+    # 2. Try scheduler affinity (works for Docker/K8s/SLURM with cgroups)
+    if hasattr(os, "sched_getaffinity"):
+        try:
+            return len(os.sched_getaffinity(0))
+        except Exception:
+            pass
+
+    # 3. Fallback to total system CPUs
+    return os.cpu_count() or 1
+
+
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO
     # Mod pad the input to perform integer number of
     # inferences
