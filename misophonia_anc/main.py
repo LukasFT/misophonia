@@ -2,11 +2,13 @@ import glob
 import os
 from pathlib import Path
 
+import eliot
 import torch
 import typer
 import webdataset as wds  # noqa: F401
 from typing_extensions import Annotated
 
+from misophonia_dataset._log import setup_print_logging
 from misophonia_dataset.interface import SplitT, get_data_dir
 from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
@@ -15,6 +17,7 @@ from ._utils import MisophoniaANCConfig, preprocess_to_webdataset_pt
 from .model import MisophoniaANCNet
 from .train import custom_collate_fn, train_model
 
+setup_print_logging()
 app = typer.Typer(help="Misophonia ANC model training and evaluation CLI.")
 
 
@@ -46,13 +49,15 @@ def preprocess(
 
     if shards_dir.exists():
         if overwrite:
-            print(f"Deleting existing shards in {shards_dir}...")
+            eliot.log_message(f"Deleting existing shards in {shards_dir}...", level="warning")
             for file in shards_dir.glob("*"):
                 file.unlink()
-            print("Existing shards deleted.")
+            eliot.log_message(f"Deleted existing shards in {shards_dir}.", level="info")
         else:
-            print(f"Preprocessed dataset already exists for split {split} at {shards_dir}")
-            print("Use --overwrite to overwrite existing preprocessed dataset.")
+            eliot.log_message(
+                f"Preprocessed dataset already exists for split {split} at {shards_dir}.", level="warning"
+            )
+            eliot.log_message("Use --overwrite to overwrite existing preprocessed dataset.", level="warning")
             return
 
     if split_config.from_premade:
@@ -66,10 +71,13 @@ def preprocess(
         assert split_config.generated_source_data is not None, "source_data must be provided if from_premade is False"
         assert split_config.generated_config is not None, "generated_config must be provided if from_premade is False"
 
-        print("Generating using:")
-        print(f"{split_config.generated_source_data=}")
-        print(f"{split_config.generated_config=}")
-        print(f"Using {num_workers} workers for data loading during generation (CPU cores = {os.cpu_count()})")
+        eliot.log_message("Generating using:", level="debug")
+        eliot.log_message(f"{split_config.generated_source_data=}", level="debug")
+        eliot.log_message(f"{split_config.generated_config=}", level="debug")
+        eliot.log_message(
+            f"Using {num_workers} workers for data loading during generation (CPU cores = {os.cpu_count()})",
+            level="debug",
+        )
         source_data = tuple(
             get_dataset_from_name(name, base_dir=data_base_dir) for name in split_config.generated_source_data
         )
@@ -83,7 +91,7 @@ def preprocess(
         show_progress=not no_progress,
         samples_per_shard=samples_per_shard,
     )
-    print(f"Saved preprocessed data to: {dataset_glob}")
+    eliot.log_message(f"Saved preprocessed data to: {dataset_glob}", level="info")
 
 
 @app.command()
