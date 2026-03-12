@@ -131,6 +131,7 @@ def train(
         eliot.log_message(f"Copied preprocessed data to {dataset_dir}.", level="debug")
 
     shards_glob_train = glob.glob(str(dataset_dir / "train" / "data-*.tar"))
+    print(f"Loading data from `{shards_glob_train}`...")
 
     train_data = (
         wds.WebDataset(
