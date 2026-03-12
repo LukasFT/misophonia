@@ -89,11 +89,15 @@ def train_epoch(
 
     losses = []
 
+    i = 0
     for inputs, gt, mask in train_loader:
         # in loader return mask that is [B, C, N]
         inputs = {k: v.to(device) for k, v in inputs.items()}
         gt = gt.to(device)
         mask = mask.to(device)
+
+        # TODO: Remove debug
+        print(f"{inputs['mix'].shape=}, {gt.shape=}, {mask.shape=}")
 
         optimizer.zero_grad()
 
@@ -105,6 +109,14 @@ def train_epoch(
         optimizer.step()
 
         losses.append(loss.item())
+
+        print(f"Epoch {epoch + 1}, Batch {i + 1}: Loss = {loss.item()}")  # TODO: Remove debug
+        i += 1
+        if i > 5:
+            # TODO: Remove debug
+            raise NotImplementedError(
+                "Stopping after 5 batches for testing purposes. Remove this condition to train on the full dataset."
+            )
 
     print(f"Epoch {epoch + 1}: Loss = {np.mean(losses)}")
     return np.mean(losses)
