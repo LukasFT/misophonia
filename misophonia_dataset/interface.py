@@ -1,13 +1,30 @@
+import ctypes.util
 import itertools
+import platform
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Iterator, Sequence
 from pathlib import Path
 from typing import Literal, TypeAlias, overload
 
-import librosa
 import numpy as np
 import pydantic
 import soundfile as sf
+
+"""
+This needs to be imported before librosa to avoid errors on Linux related to AudioToolbox.
+Patch ctypes.util.find_library to suppress AudioToolbox check on Linux.
+This prevents audioread from spawning gcc via tempfile for every librosa.load call.
+"""
+if platform.system() == "Linux":
+    _original_find_library = ctypes.util.find_library
+
+    def _find_library_patched(name):  # noqa: ANN001, ANN202
+        if name == "AudioToolbox":
+            return None
+        return _original_find_library(name)
+
+    ctypes.util.find_library = _find_library_patched
+import librosa
 
 LABEL_VECTOR = [
     # "basketball_dribbling",
