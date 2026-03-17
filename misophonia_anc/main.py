@@ -1,6 +1,7 @@
 import glob
 import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import eliot
@@ -187,6 +188,11 @@ def train(
             os.environ["MLFLOW_TRACKING_PASSWORD"] = mlflow_password
             mlflow.set_tracking_uri(mlflow_uri)
             mlflow.set_experiment(config.mlflow_experiment)
+
+            mlflow.start_run(run_name=f"Train {name} on {device} at {datetime.now().isoformat()}")
+
+            mlflow.log_params(dict(config))
+
     else:
         if mlflow_username is not None or mlflow_password is not None:
             raise ValueError("MLflow URI must be provided if MLflow username or password is provided.")
