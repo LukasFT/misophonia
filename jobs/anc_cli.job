@@ -3,17 +3,18 @@
 #SBATCH --output=out/anc_cli_%j.out
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-##SBATCH --exclude=desktop[1-9],cn16,cn17
-##SBATCH --nodelist=cn16
-#SBATCH --nodelist=desktop[1-9]
-#SBATCH --time=24:00:00
 #SBATCH --partition=scavenge
 #SBATCH --exclusive
+#SBATCH --time=24:00:00
+
+##SBATCH --exclude=desktop[1-9],cn16,cn17
+##SBATCH --nodelist=cn16
+##SBATCH --nodelist=desktop[1-9]
 
 bash jobs/setup.sh
 
 
-#export FAST_DATA_DIR="/scratch/$USER/misophonia_fast_data"
+# export FAST_DATA_DIR="/scratch/$USER/misophonia_fast_data"
 
 echo "All SLURM environment variables:"
 printenv | grep SLURM | sort
