@@ -21,19 +21,19 @@ import torch.nn.functional as F  # noqa: N812
 import torch.optim as optim
 import webdataset as wds  # noqa: F401
 
-# from torchmetrics.functional import (
-#     signal_distortion_ratio as sdr,
-# )
-from torchmetrics.functional import (
-    signal_noise_ratio as snr,
-)
-
 # from torch.utils.tensorboard import SummaryWriter
 # from torchmetrics.functional import (
 #     scale_invariant_signal_distortion_ratio as si_sdr,
 # )
 from torchmetrics.functional.audio import (
     scale_invariant_signal_noise_ratio as si_snr,
+)
+
+# from torchmetrics.functional import (
+#     signal_distortion_ratio as sdr,
+# )
+from torchmetrics.functional.audio import (
+    signal_noise_ratio as snr,
 )
 
 # from .model import MisophoniaANCNet
