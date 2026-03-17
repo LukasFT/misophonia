@@ -25,14 +25,14 @@ import webdataset as wds  # noqa: F401
 # from torchmetrics.functional import (
 #     scale_invariant_signal_distortion_ratio as si_sdr,
 # )
-from torchmetrics.functional.audio import (
+from torchmetrics.functional import (
     scale_invariant_signal_noise_ratio as si_snr,
 )
 
 # from torchmetrics.functional import (
 #     signal_distortion_ratio as sdr,
 # )
-from torchmetrics.functional.audio import (
+from torchmetrics.functional import (
     signal_noise_ratio as snr,
 )
 
@@ -162,6 +162,7 @@ def train_model(
     model: nn.Module, train_loader: wds.WebLoader, *, n_epochs: int, device: torch.device, save_dir: Path = None
 ) -> None:
 
+    model = model.to(device)
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=0.0005, weight_decay=0)
 
     train_losses = []
@@ -195,8 +196,9 @@ def train_model(
         plt.savefig(save_dir / "loss_plot.png")
         plt.close()
 
+        # Si-SNR plot
         plt.figure()
-        plt.plot(val_si_snr, label="Validation SNR")
+        plt.plot(val_si_snrs, label="Validation Si-SNR")
 
         plt.xlabel("Epoch")
         plt.ylabel("SNR")
