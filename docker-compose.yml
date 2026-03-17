@@ -9,6 +9,8 @@ services:
         USER_GID: "${GID:-1000}"
     user: "${UID:-1000}:${GID:-1000}"
     shm_size: "4gb"  # Needed to make PyTorch work with multiprocessing for batches (alternativly run anc train with --num-workers 0)
+    # depends_on:
+    #   - mlflow
     volumes:
       - .:/app
       - ./data:/data
@@ -28,6 +30,19 @@ services:
               capabilities: [gpu]
 
 
+  # mlflow:
+  #   image: openeuler/mlflow:latest
+  #   user: "${UID:-1000}:${GID:-1000}"
+  #   ports:
+  #     - "5000:5000"
+  #   volumes:
+  #     - ./data:/data
+  #   command: >
+  #     mlflow server
+  #     --host 0.0.0.0
+  #     --backend-store-uri sqlite:///data/mlflow.db
+  #     --default-artifact-root /data/mlflow-artifacts
+
   experiment-jatos:
     image: docker.io/jatos/jatos:3.9.7
     restart: unless-stopped
@@ -43,7 +58,7 @@ services:
     environment:
       - JATOS_LOGS_APPENDER=ASYNCSTDOUT
 
-
+      
   experiment-caddy:
     image: docker.io/library/caddy:2.10.2-alpine
     restart: unless-stopped
