@@ -148,7 +148,7 @@ def train(
             empty_check=False,
             shardshuffle=1,  # Number of shards to keep in memory at the time (as I understand it)
         )
-        .shuffle(64)  # Number of samples to shuffle in memory at the time (as I understand it)
+        .shuffle(config.batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
         .to_tuple("mix.npy", "gt.npy", "label.npy")
         .batched(
