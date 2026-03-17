@@ -171,6 +171,7 @@ def train(
         device=device,
         train_loader=train_loader,
         n_epochs=config.num_epochs,
+        save_dir=Path(model_dir) / "plots",
     )
 
 
