@@ -118,6 +118,8 @@ class MisophoniaANCConfig(BaseModel):
         {}, description="Dictionary of parameters to initialize the model. See the MisophoniaANCNet class for options."
     )
 
+    mlflow_experiment: str = pydantic.Field(..., description="MLflow experiment name to log training metrics to.")
+
     @classmethod
     def from_yaml(cls, yaml_path: str | Path) -> "MisophoniaANCConfig":
         if not Path(yaml_path).exists():

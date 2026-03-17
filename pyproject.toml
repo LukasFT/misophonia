@@ -28,6 +28,8 @@ dependencies = [
     "torchmetrics>=1.8.2",
     "typer>=0.24.0",
     "webdataset>=1.0.2",
+    "mlflow>=3.10.1",
+    "dotenv>=0.9.9",
 ]
 
 [dependency-groups]

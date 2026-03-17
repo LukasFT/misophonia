@@ -4,9 +4,11 @@ import subprocess
 from pathlib import Path
 
 import eliot
+import mlflow
 import torch
 import typer
 import webdataset as wds  # noqa: F401
+from dotenv import load_dotenv
 from typing_extensions import Annotated
 
 from misophonia_dataset._log import setup_print_logging
@@ -19,6 +21,7 @@ from .model import MisophoniaANCNet
 from .train import custom_collate_fn, train_model
 
 setup_print_logging()
+load_dotenv()
 app = typer.Typer(help="Misophonia ANC model training and evaluation CLI.")
 
 
@@ -103,7 +106,7 @@ def train(
         typer.Option(
             ...,
             help="Number of workers for data loading. A few will suffice, too many will consume extensive memory.",
-            default_factory=lambda: 4,
+            default_factory=lambda: 2,
         ),
     ],
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
@@ -114,6 +117,15 @@ def train(
             help="Move the preprocessed data to this directory before training. Useful on HPCs. WARNING: Data in this dir will be deleted.",
             envvar="FAST_DATA_DIR",
         ),
+    ] = None,
+    mlflow_uri: Annotated[
+        str | None, typer.Option(..., help="MLflow tracking URI.", envvar="MLFLOW_TRACKING_URI")
+    ] = None,
+    mlflow_username: Annotated[
+        str | None, typer.Option(..., help="MLflow tracking username.", envvar="MLFLOW_TRACKING_USERNAME")
+    ] = None,
+    mlflow_password: Annotated[
+        str | None, typer.Option(..., help="MLflow tracking password.", envvar="MLFLOW_TRACKING_PASSWORD")
     ] = None,
 ) -> None:
     """
@@ -166,13 +178,31 @@ def train(
     model = MisophoniaANCNet(**config.model_params)  # noqa: F841
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     eliot.log_message(f"Using device: {device}", level="debug")
-    train_model(
-        model,
-        device=device,
-        train_loader=train_loader,
-        n_epochs=config.num_epochs,
-        save_dir=Path(model_dir) / "plots",
-    )
+
+    if mlflow_uri is not None:
+        if mlflow_username is None or mlflow_password is None:
+            raise ValueError("MLflow username and password must be provided if MLflow URI is provided.")
+        else:
+            os.environ["MLFLOW_TRACKING_USERNAME"] = mlflow_username
+            os.environ["MLFLOW_TRACKING_PASSWORD"] = mlflow_password
+            mlflow.set_tracking_uri(mlflow_uri)
+            mlflow.set_experiment(config.mlflow_experiment)
+    else:
+        if mlflow_username is not None or mlflow_password is not None:
+            raise ValueError("MLflow URI must be provided if MLflow username or password is provided.")
+        # Configure empty mlflow
+
+    try:
+        train_model(
+            model,
+            device=device,
+            train_loader=train_loader,
+            n_epochs=config.num_epochs,
+            save_dir=Path(model_dir) / "plots",
+        )
+    finally:
+        if mlflow_uri is not None:
+            mlflow.end_run()
 
 
 if __name__ == "__main__":
