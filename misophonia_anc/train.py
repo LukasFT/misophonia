@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import eliot
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -88,7 +89,7 @@ def train_epoch(
 ) -> float:
     model = model.train()
 
-    losses = []
+    batch_train_losses = []
 
     i = 0  # TODO: Remove debug
     for inputs, gt, mask in train_loader:
@@ -104,13 +105,15 @@ def train_epoch(
 
         output = model(inputs)
         # TODO: Fix this, since output is a dict!
-        output = output * mask  # only calculate loss on actual audio (force model output to be 0 on padded parts)
+        output["x"] = (
+            output["x"] * mask
+        )  # only calculate loss on actual audio (force model output to be 0 on padded parts)
 
         loss = loss_fn(output, gt)
         loss.backward()
         optimizer.step()
 
-        losses.append(loss.item())
+        batch_train_losses.append(loss.item())
 
         # TODO: Remove debug
         eliot.log_message(f"Epoch {epoch + 1}, Batch {i + 1}: Loss = {loss.item()}", level="debug")
@@ -120,20 +123,85 @@ def train_epoch(
                 "Stopping after 5 batches for testing purposes. Remove this condition to train on the full dataset."
             )
 
-    eliot.log_message(f"Epoch {epoch + 1}: Loss = {np.mean(losses)}", level="debug")
-    return np.mean(losses)
+    return np.mean(batch_train_losses)
+
+
+def val_epoch(
+    model: nn.Module,
+    device: torch.device,
+    val_loader: torch.utils.data.DataLoader,
+    epoch: int = 0,
+    # writer: SummaryWriter = None,
+) -> float:
+    model = model.eval()
+
+    batch_val_losses = []
+    val_si_snrs = []
+
+    with torch.no_grad():
+        for inputs, gt, mask in val_loader:
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            gt = gt.to(device)
+            mask = mask.to(device)
+
+            output = model(inputs)
+            output["x"] = (
+                output["x"] * mask
+            )  # only calculate loss on actual audio (force model output to be 0 on padded parts)
+
+            loss = loss_fn(output, gt)
+
+            val_si_snr = si_snr(output["x"], gt).mean().item()
+            batch_val_losses.append(loss.item())
+            val_si_snrs.append(val_si_snr)
+
+    return np.mean(batch_val_losses), np.mean(val_si_snrs)
 
 
 def train_model(
-    model: nn.Module,
-    train_loader: wds.WebLoader,
-    *,
-    n_epochs: int,
-    device: torch.device,
+    model: nn.Module, train_loader: wds.WebLoader, *, n_epochs: int, device: torch.device, save_dir: Path = None
 ) -> None:
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=0.0005, weight_decay=0)
 
+    train_losses = []
+    val_losses = []
+    val_si_snrs = []
     for epoch in range(n_epochs):
-        losses = train_epoch(model, device, optimizer, train_loader, epoch)
-        eliot.log_message(f"Epoch {epoch + 1}: Loss = {losses}", level="debug")
+        train_loss = train_epoch(model, device, optimizer, train_loader, epoch)
+        train_losses.append(train_loss)
+
+        val_loss, val_si_snr = val_epoch(model, device, train_loader, epoch)
+        val_losses.append(val_loss)
+
+        val_si_snrs.append(val_si_snr)
+
+        eliot.log_message(
+            f"Epoch {epoch + 1}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNR = {val_si_snr}",
+            level="debug",
+        )
+
+    if save_dir is not None:
+        # Loss plot
+        plt.figure()
+        plt.plot(train_losses, label="Train Loss")
+        plt.plot(val_losses, label="Validation Loss")
+
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Training and Validation Loss")
+        plt.legend()
+
+        plt.savefig(save_dir / "loss_plot.png")
+        plt.close()
+
+        plt.figure()
+        plt.plot(val_si_snr, label="Validation SNR")
+
+        plt.xlabel("Epoch")
+        plt.ylabel("SNR")
+        plt.title("Validation Si-SNR")
+        plt.legend()
+
+        plt.savefig(save_dir / "si_snr_plot.png")
+        plt.close()
