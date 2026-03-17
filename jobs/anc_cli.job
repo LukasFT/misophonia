@@ -2,7 +2,7 @@
 #SBATCH --job-name=anc_cli
 #SBATCH --output=out/anc_cli_%j.out
 #SBATCH --cpus-per-task=64
-##SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:1
 #SBATCH --exclude=desktop[1-9],cn16,cn17
 #SBATCH --time=24:00:00
 #SBATCH --partition=scavenge
