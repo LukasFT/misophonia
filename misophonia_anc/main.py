@@ -1,4 +1,3 @@
-import glob
 import os
 import subprocess
 from datetime import datetime
@@ -8,7 +7,6 @@ import eliot
 import mlflow
 import torch
 import typer
-import webdataset as wds  # noqa: F401
 from dotenv import load_dotenv
 from typing_extensions import Annotated
 
@@ -17,9 +15,9 @@ from misophonia_dataset.interface import SplitT, get_data_dir
 from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
-from ._utils import MisophoniaANCConfig, get_allocated_cpus, preprocess_to_webdataset_pt
+from ._utils import MisophoniaANCConfig, get_allocated_cpus, make_dataloader, preprocess_to_webdataset_pt
 from .model import MisophoniaANCNet
-from .train import custom_collate_fn, train_model
+from .train import train_model
 
 setup_print_logging()
 load_dotenv()
@@ -148,39 +146,17 @@ def train(
         subprocess.run(["rsync", "-a", "--delete", str(dataset_dir_orig) + "/", str(dataset_dir) + "/"], check=True)
         eliot.log_message(f"Copied preprocessed data to {dataset_dir}.", level="debug")
 
-    shards_glob_train = glob.glob(str(dataset_dir / "train" / "data-*.tar"))
-    eliot.log_message(f"Loading data from `{shards_glob_train[0]}` etc...", level="debug")
-    eliot.log_message(
-        f"Using {num_workers} workers loading WebDataset (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
-        level="debug",
-    )
+    shards_train = (dataset_dir / "train").glob("data-*.tar")
+    shards_val = (dataset_dir / "val").glob("data-*.tar")
 
-    train_data = (
-        wds.WebDataset(
-            shards_glob_train,
-            empty_check=False,
-            shardshuffle=1,  # Number of shards to keep in memory at the time (as I understand it)
-        )
-        .shuffle(config.batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
-        .decode("torch")  # converts the saved numpy arrays to tensors
-        .to_tuple("mix.npy", "gt.npy", "label.npy")
-        .batched(
-            config.batch_size,
-            collation_fn=custom_collate_fn,  # Make batches of the same size
-        )
-    )
-
-    train_loader = wds.WebLoader(
-        train_data,
-        batch_size=None,  # We set batch size in the WebDataset pipeline, so we set it to None here
-        num_workers=num_workers,
-    )
+    train_loader = make_dataloader(shards_train, batch_size=config.batch_size, num_workers=num_workers)
+    val_loader = make_dataloader(shards_val, batch_size=config.batch_size, num_workers=num_workers)
 
     model = MisophoniaANCNet(**config.model_params)  # noqa: F841
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     eliot.log_message(f"Using device: {device}", level="debug")
 
-    if mlflow_uri is not None:
+    if mlflow_uri is not None and config.mlflow_experiment is not None:
         if mlflow_username is None or mlflow_password is None:
             raise ValueError("MLflow username and password must be provided if MLflow URI is provided.")
         else:
@@ -189,22 +165,22 @@ def train(
             mlflow.set_tracking_uri(mlflow_uri)
             mlflow.set_experiment(config.mlflow_experiment)
 
-            mlflow.start_run(run_name=f"Train {name} on {device} at {datetime.now().isoformat()}")
+            hostname = os.uname().nodename
+            run_name = f"Train {name} on {hostname} with {device} at {datetime.now().isoformat()}"
+            mlflow.start_run(run_name=run_name)
 
             mlflow.log_params(dict(config))
 
-    else:
-        if mlflow_username is not None or mlflow_password is not None:
-            raise ValueError("MLflow URI must be provided if MLflow username or password is provided.")
-        # Configure empty mlflow
+            eliot.log_message(f"Started MLflow run with name: {run_name}", level="info")
 
     try:
         train_model(
             model,
             device=device,
             train_loader=train_loader,
+            val_loader=val_loader,
             n_epochs=config.num_epochs,
-            save_dir=Path(model_dir) / "plots",
+            save_dir=Path(model_dir),
         )
     finally:
         if mlflow_uri is not None:

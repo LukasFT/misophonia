@@ -6,9 +6,11 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import eliot
 import numpy as np
 import pydantic
-import torch.nn.functional as F  # noqa: N812
+import torch
+import torch.nn.functional as F  # noqa: N812  # noqa: N812
 import webdataset as wds
 import yaml
 from scipy import signal
@@ -118,7 +120,9 @@ class MisophoniaANCConfig(BaseModel):
         {}, description="Dictionary of parameters to initialize the model. See the MisophoniaANCNet class for options."
     )
 
-    mlflow_experiment: str = pydantic.Field(..., description="MLflow experiment name to log training metrics to.")
+    mlflow_experiment: str | None = pydantic.Field(
+        None, description="MLflow experiment name to log training metrics to."
+    )
 
     @classmethod
     def from_yaml(cls, yaml_path: str | Path) -> "MisophoniaANCConfig":
@@ -127,6 +131,70 @@ class MisophoniaANCConfig(BaseModel):
         with open(yaml_path, "r") as f:
             data = yaml.safe_load(f)
         return cls(**data)
+
+
+def custom_collate_fn(
+    batch: list[list[np.ndarray, np.ndarray, np.ndarray]],
+) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    # Pad the audio to all be the same length (the length of the longest audio in the batch)
+    max_len = max([mix.shape[-1] for mix, _, _ in batch])
+
+    mixes = []
+    gts = []
+    labels = []
+    masks = []
+    for mix, label, gt in batch:
+        pad_len = max_len - mix.shape[-1]
+        assert pad_len >= 0, "Error calculating batch padding"
+
+        mix = F.pad(torch.from_numpy(mix).to(torch.float32), (0, pad_len))  # Convert and pad mix
+        gt = F.pad(torch.from_numpy(gt).to(torch.float32), (0, pad_len))  # Convert and pad gt
+
+        mask = torch.zeros_like(mix)
+        mask[:, -pad_len:] = 1.0
+
+        mixes.append(mix)
+        gts.append(gt)
+        labels.append(torch.from_numpy(label).to(torch.float32))  # Convert label
+        masks.append(mask)
+
+    inputs = {
+        "mix": torch.stack(mixes),
+        "label_vector": torch.stack(labels),
+    }
+    gt = torch.stack(gts)
+    masks = torch.stack(masks)
+
+    return inputs, gt, masks
+
+
+def make_dataloader(files: list[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
+    assert len(files) > 0
+    eliot.log_message(f"Loading data from `{files[0]}` etc...", level="debug")
+    eliot.log_message(
+        f"Using {num_workers} workers loading WebDataset (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
+        level="debug",
+    )
+    data = (
+        wds.WebDataset(
+            files,
+            empty_check=False,
+            shardshuffle=1,  # Number of shards to keep in memory at the time (as I understand it)
+        )
+        .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
+        .decode("torch")  # converts the saved numpy arrays to tensors
+        .to_tuple("mix.npy", "gt.npy", "label.npy")
+        .batched(
+            batch_size,
+            collation_fn=custom_collate_fn,  # Make batches of the same size
+        )
+    )
+
+    return wds.WebLoader(
+        data,
+        batch_size=None,  # We set batch size in the WebDataset pipeline, so we set it to None here
+        num_workers=num_workers,
+    )
 
 
 def get_allocated_cpus() -> int:
