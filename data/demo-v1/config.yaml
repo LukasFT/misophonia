@@ -1,7 +1,6 @@
 dataset_splits:
   train: &train
     from_premade: "true"
-    generated_config:
   val:
     <<: *train
   test:
