@@ -170,7 +170,7 @@ def custom_collate_fn(
 
 
 def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
-    files = tuple(files)
+    files = tuple(str(file) for file in files)
     assert len(files) > 0
     eliot.log_message(f"Loading data from `{files[0]}` etc...", level="debug")
     eliot.log_message(
