@@ -7,7 +7,7 @@ dataset_splits:
   test:
     <<: *train
 
-batch_size: 1
+batch_size: 2
 
 model_params:
   label_len: 10
@@ -21,3 +21,5 @@ model_params:
   use_pos_enc: True
   conditioning: "mult"
   lookahead: True
+
+mlflow_experiment: "demo-v1"
