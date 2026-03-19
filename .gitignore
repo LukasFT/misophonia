@@ -232,6 +232,7 @@ playground*
 !data/demo-v1/
 !data/model-v1/
 data/model-v1/*
+data/demo-v1/webdataset/*
 !data/model-v1/config.yaml
 out/
 SemanticHearing

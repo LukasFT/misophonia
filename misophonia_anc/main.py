@@ -64,15 +64,16 @@ def preprocess(
             return
 
     if split_config.from_premade:
-        assert split_config.generated_source_data is None, (
-            "generated_source_data should not be provided if from_premade is True"
-        )
-        assert split_config.generated_config is None, "generated_config should not be provided if from_premade is True"
+        assert split_config.generated_config is None, "generated_config should not be provided if from_premade is given"
         dataset = PremadeMisophoniaDataset(name=split_config.from_premade, base_save_dir=data_base_dir)
         dataset_split = dataset.get_split(split)
     else:
-        assert split_config.generated_source_data is not None, "source_data must be provided if from_premade is False"
-        assert split_config.generated_config is not None, "generated_config must be provided if from_premade is False"
+        assert split_config.generated_source_data is not None, (
+            "source_data must be provided if from_premade is not given"
+        )
+        assert split_config.generated_config is not None, (
+            "generated_config must be provided if from_premade is not given"
+        )
 
         eliot.log_message("Generating using:", level="debug")
         eliot.log_message(f"{split_config.generated_source_data=}", level="debug")
