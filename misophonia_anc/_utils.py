@@ -3,6 +3,7 @@
 # ruff: noqa: ANN001 # TODO: Improve quality
 
 import os
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -168,7 +169,8 @@ def custom_collate_fn(
     return inputs, gt, masks
 
 
-def make_dataloader(files: list[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
+def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
+    files = tuple(files)
     assert len(files) > 0
     eliot.log_message(f"Loading data from `{files[0]}` etc...", level="debug")
     eliot.log_message(
