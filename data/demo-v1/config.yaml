@@ -1,9 +1,14 @@
-shard_path: "data/demo-v1/train/shards/data-0*.tar"
+dataset_splits:
+  train: &train
+    from_premade: "true"
+    generated_config:
+  val:
+    <<: *train
+  test:
+    <<: *train
 
-train_params:
-  num_epochs: 10
-  batch_size: 1
-  num_workers: 0
+batch_size: 1
+
 model_params:
   label_len: 10
   L: 8  # noqa: N803 # TODO: Improve name?

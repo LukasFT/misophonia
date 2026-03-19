@@ -104,7 +104,6 @@ def train_epoch(
         optimizer.zero_grad()
 
         output = model(inputs)
-        # TODO: Fix this, since output is a dict!
         output["x"] = (
             output["x"] * mask
         )  # only calculate loss on actual audio (force model output to be 0 on padded parts)
