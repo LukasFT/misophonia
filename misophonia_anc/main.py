@@ -172,7 +172,8 @@ def train(
 
             mlflow.log_params(dict(config))
 
-            eliot.log_message(f"Started MLflow run with name: {run_name}", level="info")
+            run_link = f"{mlflow.get_tracking_uri()}/#/experiments/{mlflow.get_experiment_by_name(config.mlflow_experiment).experiment_id}/runs/{mlflow.get_run(mlflow.active_run().info.run_id).info.run_id}"
+            eliot.log_message(f"Started MLflow run with name '{run_name}': {run_link}", level="info")
 
     try:
         train_model(
