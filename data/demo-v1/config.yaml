@@ -1,6 +1,6 @@
 dataset_splits:
   train: &train
-    from_premade: "true"
+    from_premade: "demo-v1"
   val:
     <<: *train
   test:
