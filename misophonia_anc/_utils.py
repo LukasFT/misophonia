@@ -91,7 +91,7 @@ def preprocess_to_webdataset_pt(
     return shard_glob
 
 
-class MisophoniaDatasetPrerpocessedConfig(BaseModel):
+class MisophoniaDatasetPreprocessedConfig(BaseModel):
     from_premade: str | None = pydantic.Field(
         None,
         description="Whether to use a premade dataset with the given name. If a non-empty string, use that name of the premade dataset.",
@@ -107,7 +107,7 @@ class MisophoniaDatasetPrerpocessedConfig(BaseModel):
 
 
 class MisophoniaANCConfig(BaseModel):
-    dataset_splits: dict[SplitT, MisophoniaDatasetPrerpocessedConfig] = pydantic.Field(
+    dataset_splits: dict[SplitT, MisophoniaDatasetPreprocessedConfig] = pydantic.Field(
         ..., description="For each split, the config for the preprocessed dataset to use for training/eval."
     )
 
