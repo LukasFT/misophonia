@@ -10,7 +10,7 @@ dataset_splits:
 batch_size: 1
 
 model_params:
-  label_len: 10
+  label_len: 8
   L: 8  # noqa: N803 # TODO: Improve name?
   model_dim: 128
   num_enc_layers: 1
