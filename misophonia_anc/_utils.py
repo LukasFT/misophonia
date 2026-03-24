@@ -27,7 +27,7 @@ from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 rng = np.random.default_rng()
 
 SAMPLE_RATE = 44100
-MAX_DURATION = 5  # seconds
+MAX_DURATION = 1  # seconds
 
 ######################################
 # Preprocess and Data Loading Utils #
