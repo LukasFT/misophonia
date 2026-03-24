@@ -14,10 +14,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import webdataset as wds  # noqa: F401
+<<<<<<< HEAD
 
 from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from ._utils import print_mem
+=======
+from torchmetrics.audio import scale_invariant_signal_noise_ratio as si_snr
+from torchmetrics.audio import signal_noise_ratio as snr
+>>>>>>> f851d5e (change si_snr to si_snr_improvement on validation set)
 
 from ._utils import print_mem
 
@@ -117,6 +122,7 @@ def val_epoch(
             loss = loss_fn(output, gt)
 
             loss_value = loss.item()
+<<<<<<< HEAD
             val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
             val_si_snr = si_snr(output["x"], gt).mean().item()
 
@@ -129,6 +135,16 @@ def val_epoch(
                 mlflow.log_metric(
                     "val/si_snr_improvement_batch", val_si_snr_improvement, step=start_global_step + batch_idx
                 )
+=======
+            val_si_snr_improvement = si_snr_improvement(inputs["mixes"], output["x"], gt).mean().item()
+            batch_val_losses.append(loss_value)
+            val_si_snrs.append(val_si_snr_improvement)
+
+            if mlflow.active_run() is not None:
+                global_step = epoch * len(val_loader) + batch_idx
+                mlflow.log_metric("val/loss_batch", loss_value, step=global_step, dataset="val")
+                mlflow.log_metric("val/si_snr_batch", val_si_snr_improvement, step=global_step, dataset="val")
+>>>>>>> f851d5e (change si_snr to si_snr_improvement on validation set)
 
     epoch_val_loss = float(np.mean(batch_val_losses))
     epoch_val_si_snr_improvement = float(np.mean(val_si_snr_improvements))
