@@ -4,10 +4,10 @@ from datetime import datetime
 from pathlib import Path
 
 import eliot
-import mlflow
+import mlflow  # type: ignore
 import torch
 import typer
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # type: ignore
 from typing_extensions import Annotated
 
 from misophonia_dataset._log import setup_print_logging

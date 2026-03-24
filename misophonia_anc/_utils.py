@@ -148,7 +148,7 @@ def custom_collate_fn(
     labels = []
     audio_lens = []
     for mix, label, gt in batch:
-        L = mix.shape[-1]
+        L = mix.shape[-1]  # noqa: N806
         if L >= chunk_size:
             # generate a single random start for both mix and gt
             start = torch.randint(0, L - chunk_size + 1, (1,)).item()
@@ -223,7 +223,7 @@ def get_allocated_cpus() -> int:
     return os.cpu_count() or 1
 
 
-def print_mem(label):
+def print_mem(label: str) -> None:
     print(f"{label}:")
     print(f"Allocated: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
     print(f"Reserved:  {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
