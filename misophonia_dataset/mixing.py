@@ -24,11 +24,26 @@ def prepare_track_specs(
     if rng is None:
         rng = np.random.default_rng()
 
-    def _generate_track_specs(item: SourceDataItem, audio: np.ndarray, max_len: int, options: dict) -> TrackAudioSpec:
+    def _generate_track_specs(
+        item: SourceDataItem, audio: np.ndarray, fg_max_len: int, options: dict
+    ) -> TrackAudioSpec:
         # Find placement at random (rest will be zero padded)
         length = audio.shape[0]
-        start = rng.integers(0, max_len - length) if max_len > length else 0
-        end = start + length
+        if length == fg_max_len:
+            start = 0  # No need to place a radom place
+            end = fg_max_len
+        elif length > fg_max_len:
+            last_place_to_start = (
+                length - fg_max_len
+            )  # always need at least the length of the clip from where we start it to where we end it
+            start = rng.integers(0, last_place_to_start)
+            end = fg_max_len
+            audio = audio[start : start + fg_max_len]
+        else:
+            start = 0
+            end = length
+
+        assert end - start <= fg_max_len, "Audio exceeds max length after placement. This should never happen."
 
         track = SourceTrack(
             source_item=item,
@@ -43,12 +58,12 @@ def prepare_track_specs(
     fg_audios = tuple((item, item.load_audio(sample_rate=global_params.sample_rate)[0]) for item in fg_items)
     bg_audios = tuple((item, item.load_audio(sample_rate=global_params.sample_rate)[0]) for item in bg_items)
 
-    max_length = max(max(audio.shape[0] for _, audio in fg_audios), max(audio.shape[0] for _, audio in bg_audios))
+    fg_max_length = max(audio.shape[0] for _, audio in fg_audios)
     fg_specs = tuple(
-        _generate_track_specs(item, audio, max_length, fg_track_options or {}) for item, audio in fg_audios
+        _generate_track_specs(item, audio, fg_max_length, fg_track_options or {}) for item, audio in fg_audios
     )
     bg_specs = tuple(
-        _generate_track_specs(item, audio, max_length, bg_track_options or {}) for item, audio in bg_audios
+        _generate_track_specs(item, audio, fg_max_length, bg_track_options or {}) for item, audio in bg_audios
     )
 
     return fg_specs, bg_specs
@@ -128,10 +143,10 @@ def _normalize_and_pad(
         for (item, audio), rms in zip(bg_tracks, rms_bg)
     )
 
-    # Padding:
-    max_end = max(track.end for track, _ in fg_norm + bg_norm)
-    fg_padded = tuple((track, np.pad(audio, (track.start, max_end - track.end))) for track, audio in fg_norm)
-    bg_padded = tuple((track, np.pad(audio, (track.start, max_end - track.end))) for track, audio in bg_norm)
+    max_end = max(track.end for track, _ in fg_norm)
+    # Pad in case that the audio is shorter than max fg audio
+    fg_padded = tuple((track, np.pad(audio, (0, max_end - track.end))) for track, audio in fg_norm)
+    bg_padded = tuple((track, np.pad(audio, (0, max_end - track.end))) for track, audio in bg_norm)
 
     assert all(len(audio) == max_end for _, audio in fg_padded + bg_padded)
     return fg_padded, bg_padded
