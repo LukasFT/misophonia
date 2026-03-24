@@ -152,8 +152,11 @@ def _normalize_and_pad(
     fg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in fg_norm)
     bg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in bg_norm)
 
+<<<<<<< HEAD
     print("Max length:", fg_max_end)
     print("FG lengths:", [audio.shape for _, audio in fg_padded + bg_padded])
 
+=======
+>>>>>>> 7f523b5 (resolved consistency issues in variable naming and roles)
     assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
     return fg_padded, bg_padded
