@@ -67,9 +67,11 @@ def train_epoch(
         output["x"] = (
             output["x"] * mask
         )  # only calculate loss on actual audio (force model output to be 0 on padded parts)
+        print_mem("after forward")
 
         loss = loss_fn(output, gt)
         loss.backward()
+        print_mem("after backward")
         optimizer.step()
 
         loss_value = loss.item()
@@ -107,7 +109,7 @@ def val_epoch(
             output = model(inputs)
             output["x"] = (
                 output["x"] * mask
-            )  # only calculate loss on actual audio (force model output to be 0 on padded parts)
+            )  # only calculate loss on actual audio (force model output to be 0 on padded parts
 
             loss = loss_fn(output, gt)
 
@@ -142,6 +144,7 @@ def train_model(
 ) -> None:
 
     model = model.to(device)
+    print_mem("after model")
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=0.0005, weight_decay=0)
 
     train_losses = []

@@ -131,6 +131,7 @@ def train(
     """
     Train the Misophonia ANC model.
     """  # TODO: Improve docs
+    print_mem("start")
     model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
 
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")

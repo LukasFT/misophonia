@@ -217,6 +217,12 @@ def get_allocated_cpus() -> int:
     # 3. Fallback to total system CPUs
     return os.cpu_count() or 1
 
+def print_mem(label):
+    print(f"{label}:")
+    print(f"Allocated: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
+    print(f"Reserved:  {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
+    print()
+
 
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO
     # Mod pad the input to perform integer number of
