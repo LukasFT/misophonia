@@ -145,7 +145,7 @@ def custom_collate_fn(
     mixes = []
     gts = []
     labels = []
-    pad_lens = []
+    audio_lens = []
     for mix, label, gt in batch:
         L = mix.shape[-1]
         if L >= chunk_size:
@@ -153,25 +153,25 @@ def custom_collate_fn(
             start = torch.randint(0, L - chunk_size + 1, (1,)).item()
             mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
             gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()
-            pad_len = chunk_size - 1
+            audio_len = chunk_size - 1
         else:
             # audio is shorter than chunk_size → pad
-            mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, pad_len))
-            gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, pad_len))
+            mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, audio_len))
+            gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, audio_len))
 
         mixes.append(mix_chunk)
         gts.append(gt_chunk)
         labels.append(torch.from_numpy(label).float())
-        pad_lens.append(min(L, chunk_size))
+        audio_lens.append(min(L, chunk_size))
 
     inputs = {
         "mix": torch.stack(mixes),
         "label_vector": torch.stack(labels),
     }
     gt = torch.stack(gts)
-    pad_lens = torch.tensor(pad_lens)  # Mask to indicate padded parts of the audio
+    audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
 
-    return inputs, gt, pad_lens
+    return inputs, gt, audio_lens
 
 
 def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
