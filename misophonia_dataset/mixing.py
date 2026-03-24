@@ -27,20 +27,24 @@ def prepare_track_specs(
     def _generate_track_specs(
         item: SourceDataItem, audio: np.ndarray, fg_max_len: int, options: dict
     ) -> TrackAudioSpec:
-        # Find placement at random (rest will be zero padded)
+
         length = audio.shape[0]
         if length == fg_max_len:
             start = 0  # No need to place a radom place
             end = fg_max_len
         elif length > fg_max_len:
-            last_place_to_start = (
-                length - fg_max_len
-            )  # always need at least the length of the clip from where we start it to where we end it
-            start = rng.integers(0, last_place_to_start)
-            end = fg_max_len
-            audio = audio[start : start + fg_max_len]
-        else:
+            # Crop longer clips to be the same length as fg_max_len
+            last_place_to_start_audio = length - fg_max_len
+            audio_start = rng.integers(0, last_place_to_start_audio + 1)
+            audio_end = audio_start + fg_max_len
+            audio = audio[audio_start:audio_end]
+
             start = 0
+            end = fg_max_len
+        else:
+            # Find placement at random (rest will be zero padded)
+            last_place_to_pad = fg_max_len - length
+            start = rng.integers(0, last_place_to_pad + 1)
             end = length
 
         assert end - start <= fg_max_len, "Audio exceeds max length after placement. This should never happen."
@@ -143,10 +147,10 @@ def _normalize_and_pad(
         for (item, audio), rms in zip(bg_tracks, rms_bg)
     )
 
-    max_end = max(track.end for track, _ in fg_norm)
+    fg_max_end = max(track.end for track, _ in fg_norm)
     # Pad in case that the audio is shorter than max fg audio
-    fg_padded = tuple((track, np.pad(audio, (0, max_end - track.end))) for track, audio in fg_norm)
-    bg_padded = tuple((track, np.pad(audio, (0, max_end - track.end))) for track, audio in bg_norm)
+    fg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in fg_norm)
+    bg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in bg_norm)
 
-    assert all(len(audio) == max_end for _, audio in fg_padded + bg_padded)
+    assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
     return fg_padded, bg_padded
