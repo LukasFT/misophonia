@@ -25,7 +25,7 @@ from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 # Initialize random generator for reproducibility
 rng = np.random.default_rng()
 
-SAMPLE_RATE = 441000
+SAMPLE_RATE = 44100
 MAX_DURATION = 5  # seconds
 
 ##############
