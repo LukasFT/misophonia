@@ -140,6 +140,7 @@ def custom_collate_fn(
     batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
 
+    # Only keep chunks of length MAX_DURATION in data loader
     chunk_size = MAX_DURATION * SAMPLE_RATE
 
     mixes = []
@@ -153,11 +154,10 @@ def custom_collate_fn(
             start = torch.randint(0, L - chunk_size + 1, (1,)).item()
             mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
             gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()
-            audio_len = chunk_size - 1
         else:
             # audio is shorter than chunk_size → pad
-            mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, audio_len))
-            gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, audio_len))
+            mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
+            gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, chunk_size - L))
 
         mixes.append(mix_chunk)
         gts.append(gt_chunk)
