@@ -20,6 +20,7 @@ from torchmetrics.functional.audio import signal_noise_ratio as snr
 from ._utils import print_mem
 
 from ._utils import print_mem
+
 # from .model import MisophoniaANCNet
 
 
@@ -133,7 +134,7 @@ def val_epoch(
     epoch_val_si_snr_improvement = float(np.mean(val_si_snr_improvements))
     epoch_val_si_snr = float(np.mean(val_si_snrs))
     global_step = start_global_step + batch_idx
-
+    
     return epoch_val_loss, epoch_val_si_snr_improvement, epoch_val_si_snr, global_step + 1
 
 
