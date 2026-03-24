@@ -18,7 +18,7 @@ class MisophoniaANCNet(nn.Module):
         label_len,
         *,
         L=8,  # noqa: N803 # TODO: Improve name?
-        model_dim=128, # Original 512
+        model_dim=128,  # Original 512
         num_enc_layers=10,
         dec_buf_len=100,
         num_dec_layers=2,
@@ -201,10 +201,8 @@ class MaskNet(nn.Module):
         """
         # Enocder the label integrated input
         e, enc_buf = self.encoder(x, enc_buf)
-        print("After encoder:", e.shape)
 
         # Decoder conditioned on embedding
         m, dec_buf = self.decoder(input=e, embedding=l, ctx_buf=dec_buf)
-        print("After decoder:", m.shape)
 
         return m, enc_buf, dec_buf
