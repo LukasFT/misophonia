@@ -56,24 +56,26 @@ def train_epoch(
 
     batch_train_losses = []
 
-    for batch_idx, (inputs, gt, mask) in enumerate(train_loader):
+    for batch_idx, (inputs, gt, pad_lens) in enumerate(train_loader):
         # in loader return mask that is [B, C, N]
         inputs = {k: v.to(device) for k, v in inputs.items()}
         gt = gt.to(device)
-        mask = mask.to(device)
+        pad_lens = pad_lens.to(device)
+        B = gt.shape[0]
 
-        print_mem("after inputs")
+        # print_mem("after inputs")
         optimizer.zero_grad()
 
         output = model(inputs)
-        output["x"] = (
-            output["x"] * mask
-        )  # only calculate loss on actual audio (force model output to be 0 on padded parts)
-        print_mem("after forward")
+        # ugly but memory efficient
+        for b in range(B):
+            end = pad_lens[b].item()  # scalar
+            output["x"][b, :, end:] = 0
+        # print_mem("after forward")
 
         loss = loss_fn(output, gt)
         loss.backward()
-        print_mem("after backward")
+        # print_mem("after backward")
         optimizer.step()
 
         loss_value = loss.item()
@@ -104,9 +106,9 @@ def val_epoch(
 
     with torch.no_grad():
         for batch_idx, (inputs, gt, pad_lens) in enumerate(val_loader):
-            inputs = {k: v.to(device) for k, v in inputs.items()} # [B, 2, N]
+            inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
             B = gt.shape[0]
-            
+
             gt = gt.to(device)
             pad_lens = pad_lens.to(device)
 
@@ -114,7 +116,7 @@ def val_epoch(
             # ugly but memory efficient
             for b in range(B):
                 end = pad_lens[b].item()  # scalar
-                output[b, :, end:] = 0
+                output["x"][b, :, end:] = 0
 
             loss = loss_fn(output, gt)
 

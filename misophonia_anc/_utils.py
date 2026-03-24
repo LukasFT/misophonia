@@ -26,7 +26,7 @@ from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 rng = np.random.default_rng()
 
 SAMPLE_RATE = 44100
-MAX_DURATION = 5  # seconds
+MAX_DURATION = 1  # seconds
 
 ##############
 # Prprocess Utils #
@@ -140,7 +140,7 @@ def custom_collate_fn(
     batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
 
-    chunk_size = MAX_DURATION * SAMPLE_RATE 
+    chunk_size = MAX_DURATION * SAMPLE_RATE
 
     mixes = []
     gts = []
@@ -151,26 +151,25 @@ def custom_collate_fn(
         if L >= chunk_size:
             # generate a single random start for both mix and gt
             start = torch.randint(0, L - chunk_size + 1, (1,)).item()
-            mix_chunk = torch.from_numpy(mix[..., start:start + chunk_size]).float()
-            gt_chunk = torch.from_numpy(gt[..., start:start + chunk_size]).float()
-            pad_len = 0
+            mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
+            gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()
+            pad_len = chunk_size - 1
         else:
             # audio is shorter than chunk_size → pad
-            pad_len = chunk_size - L
             mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, pad_len))
             gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, pad_len))
 
         mixes.append(mix_chunk)
         gts.append(gt_chunk)
         labels.append(torch.from_numpy(label).float())
-        pad_lens.append(pad_len)
+        pad_lens.append(min(L, chunk_size))
 
     inputs = {
         "mix": torch.stack(mixes),
         "label_vector": torch.stack(labels),
     }
     gt = torch.stack(gts)
-    pad_lens = torch.tensor(pad_lens) # Mask to indicate padded parts of the audio
+    pad_lens = torch.tensor(pad_lens)  # Mask to indicate padded parts of the audio
 
     return inputs, gt, pad_lens
 
@@ -222,6 +221,7 @@ def get_allocated_cpus() -> int:
 
     # 3. Fallback to total system CPUs
     return os.cpu_count() or 1
+
 
 def print_mem(label):
     print(f"{label}:")
