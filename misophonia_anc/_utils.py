@@ -143,7 +143,7 @@ def custom_collate_fn(
     mixes = []
     gts = []
     labels = []
-    masks = []
+    pad_lens = []
     for mix, label, gt in batch:
         pad_len = max_len - mix.shape[-1]
         assert pad_len >= 0, "Error calculating batch padding"
@@ -151,22 +151,19 @@ def custom_collate_fn(
         mix = F.pad(torch.from_numpy(mix).to(torch.float32), (0, pad_len))  # Convert and pad mix
         gt = F.pad(torch.from_numpy(gt).to(torch.float32), (0, pad_len))  # Convert and pad gt
 
-        mask = torch.zeros_like(mix)
-        mask[:, -pad_len:] = 1.0
-
         mixes.append(mix)
         gts.append(gt)
         labels.append(torch.from_numpy(label).to(torch.float32))  # Convert label
-        masks.append(mask)
+        pad_lens.append(pad_len)
 
     inputs = {
         "mix": torch.stack(mixes),
         "label_vector": torch.stack(labels),
     }
     gt = torch.stack(gts)
-    masks = torch.stack(masks)
+    pad_lens = torch.stack(pad_lens).unsqueeze(1)  # Mask to indicate padded parts of the audio
 
-    return inputs, gt, masks
+    return inputs, gt, pad_lens
 
 
 def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
