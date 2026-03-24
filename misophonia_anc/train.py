@@ -14,27 +14,14 @@ from pathlib import Path
 
 import eliot
 import matplotlib.pyplot as plt
-import mlflow
+import mlflow  # type: ignore
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import webdataset as wds  # noqa: F401
-
-# from torch.utils.tensorboard import SummaryWriter
-# from torchmetrics.functional import (
-#     scale_invariant_signal_distortion_ratio as si_sdr,
-# )
-from torchmetrics.functional import (
-    scale_invariant_signal_noise_ratio as si_snr,
-)
-
-# from torchmetrics.functional import (
-#     signal_distortion_ratio as sdr,
-# )
-from torchmetrics.functional import (
-    signal_noise_ratio as snr,
-)
+from torchmetrics.audio import scale_invariant_signal_noise_ratio as si_snr
+from torchmetrics.audio import signal_noise_ratio as snr
 
 from ._utils import print_mem
 
@@ -44,6 +31,10 @@ from ._utils import print_mem
 def loss_fn(_output: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
     pred = _output["x"]
     return -0.9 * snr(pred, tgt).mean() - 0.1 * si_snr(pred, tgt).mean()
+
+
+def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor) -> torch.Tensor:
+    return si_snr(pred, gt) - si_snr(mix, gt)
 
 
 def train_epoch(
@@ -62,7 +53,7 @@ def train_epoch(
         inputs = {k: v.to(device) for k, v in inputs.items()}
         gt = gt.to(device)
         audio_lens = audio_lens.to(device)
-        _, _, T = gt.shape
+        _, _, T = gt.shape  # noqa: N806
 
         # print_mem("after inputs")
         optimizer.zero_grad()
@@ -108,7 +99,7 @@ def val_epoch(
     with torch.no_grad():
         for batch_idx, (inputs, gt, audio_lens) in enumerate(val_loader):
             inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
-            _, _, T = gt.shape
+            _, _, T = gt.shape  # noqa: N806
 
             gt = gt.to(device)
             audio_lens = audio_lens.to(device)
@@ -123,14 +114,14 @@ def val_epoch(
             loss = loss_fn(output, gt)
 
             loss_value = loss.item()
-            val_si_snr = si_snr(output["x"], gt).mean().item()
+            val_si_snr_improvement = si_snr_improvement(inputs["mixes"], output["x"], gt).mean().item()
             batch_val_losses.append(loss_value)
-            val_si_snrs.append(val_si_snr)
+            val_si_snrs.append(val_si_snr_improvement)
 
             if mlflow.active_run() is not None:
                 global_step = epoch * len(val_loader) + batch_idx
                 mlflow.log_metric("val/loss_batch", loss_value, step=global_step, dataset="val")
-                mlflow.log_metric("val/si_snr_batch", val_si_snr, step=global_step, dataset="val")
+                mlflow.log_metric("val/si_snr_batch", val_si_snr_improvement, step=global_step, dataset="val")
 
     epoch_val_loss = float(np.mean(batch_val_losses))
     epoch_val_si_snr = float(np.mean(val_si_snrs))
