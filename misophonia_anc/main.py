@@ -30,8 +30,12 @@ setup_print_logging()
 load_dotenv()
 app = typer.Typer(help="Misophonia ANC model training and evaluation CLI.")
 
+<<<<<<< HEAD
 # torch.backends.cudnn.enabled = False # To resolve memory issue
 
+=======
+torch.backends.cudnn.enabled = False # To resolve memory issue
+>>>>>>> a9a6d4b (memory fix attempts)
 
 @app.command()
 def preprocess(
