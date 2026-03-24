@@ -148,6 +148,7 @@ def custom_collate_fn(
     Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
     For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
 
+<<<<<<< HEAD
     Args:
         mixes (np.ndarray): synthetically generated binaural mixes
         labels (np.ndarray): one-hot encoded label vectors
@@ -158,6 +159,8 @@ def custom_collate_fn(
         gts (torch.tensor): padded ground truth tensors.
     """
 
+=======
+>>>>>>> c5653d6 (fixed 5s chunking bug)
     # Only keep chunks of length MAX_DURATION in data loader
     chunk_size = MAX_DURATION * SAMPLE_RATE
 
