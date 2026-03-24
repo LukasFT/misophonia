@@ -101,15 +101,18 @@ def val_epoch(
     val_si_snrs = []
 
     with torch.no_grad():
-        for batch_idx, (inputs, gt, mask) in enumerate(val_loader):
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+        for batch_idx, (inputs, gt, pad_lens) in enumerate(val_loader):
+            inputs = {k: v.to(device) for k, v in inputs.items()} # [B, 2, N]
+            B = gt.shape[0]
+            
             gt = gt.to(device)
-            mask = mask.to(device)
+            pad_lens = pad_lens.to(device)
 
             output = model(inputs)
-            output["x"] = (
-                output["x"] * mask
-            )  # only calculate loss on actual audio (force model output to be 0 on padded parts
+            # ugly but memory efficient
+            for b in range(B):
+                end = pad_lens[b].item()  # scalar
+                output[b, :, end:] = 0
 
             loss = loss_fn(output, gt)
 
