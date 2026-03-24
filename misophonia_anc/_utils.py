@@ -161,7 +161,7 @@ def custom_collate_fn(
         "label_vector": torch.stack(labels),
     }
     gt = torch.stack(gts)
-    pad_lens = torch.stack(pad_lens).unsqueeze(1)  # Mask to indicate padded parts of the audio
+    pad_lens = torch.tensor(pad_lens) # Mask to indicate padded parts of the audio
 
     return inputs, gt, pad_lens
 
