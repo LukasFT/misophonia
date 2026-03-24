@@ -15,7 +15,7 @@ from misophonia_dataset.interface import SplitT, get_data_dir
 from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
-from ._utils import MisophoniaANCConfig, get_allocated_cpus, make_dataloader, preprocess_to_webdataset_pt
+from ._utils import MisophoniaANCConfig, get_allocated_cpus, make_dataloader, preprocess_to_webdataset_pt, print_mem
 from .model import MisophoniaANCNet
 from .train import train_model
 
