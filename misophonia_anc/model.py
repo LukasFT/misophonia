@@ -136,7 +136,6 @@ class MisophoniaANCNet(nn.Module):
                 extracted audio with sounds corresponding to the `label`
         """
         x, label = inputs["mix"], inputs["label_vector"]
-        print("Inpute shape", x.shape)
 
         if init_enc_buf is None or init_dec_buf is None or init_out_buf is None:
             assert init_enc_buf is None and init_dec_buf is None and init_out_buf is None, (
