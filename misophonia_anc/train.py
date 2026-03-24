@@ -61,6 +61,7 @@ def train_epoch(
         gt = gt.to(device)
         mask = mask.to(device)
 
+        print_mem("after inputs")
         optimizer.zero_grad()
 
         output = model(inputs)
