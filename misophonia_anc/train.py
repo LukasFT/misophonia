@@ -14,10 +14,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import webdataset as wds  # noqa: F401
+<<<<<<< HEAD
 from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 
 from ._utils import print_mem
+=======
+from torchmetrics.audio import scale_invariant_signal_noise_ratio as si_snr
+from torchmetrics.audio import signal_noise_ratio as snr
+>>>>>>> f851d5e (change si_snr to si_snr_improvement on validation set)
 
 from ._utils import print_mem
 
