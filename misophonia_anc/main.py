@@ -193,11 +193,7 @@ def train(
             val_loader=val_loader,
             n_epochs=config.num_epochs,
             save_dir=Path(model_dir),
-<<<<<<< HEAD
             **config.model_hyperparams,
-=======
-            **config.model_hyperparams
->>>>>>> 9391ee6 (added docs, cleaned up code, and added tracking of si-snr on val set to see if model is outputting silence)
         )
     finally:
         if mlflow_uri is not None:
