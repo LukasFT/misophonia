@@ -75,13 +75,13 @@ def train_epoch(
         batch_train_losses.append(loss_value)
         if mlflow.active_run() is not None:
             mlflow.log_metric(
-                "train/loss_batch", loss_value, step=start_global_step + batch_idx, dataset="train"
+                "train/loss_batch", loss_value, step=start_global_step + batch_idx
             )
 
     epoch_train_loss = float(np.mean(batch_train_losses))
 
     if mlflow.active_run() is not None:
-        mlflow.log_metric("train/loss_epoch", epoch_train_loss, step=epoch, dataset="train")
+        mlflow.log_metric("train/loss_epoch", epoch_train_loss, step=epoch)
 
     return epoch_train_loss, start_global_step + batch_idx
 
@@ -121,15 +121,15 @@ def val_epoch(
             val_si_snrs.append(val_si_snr_improvement)
 
             if mlflow.active_run() is not None:
-                mlflow.log_metric("val/loss_batch", loss_value, step=start_global_step + batch_idx, dataset="val")
-                mlflow.log_metric("val/si_snr_batch", val_si_snr_improvement, step=start_global_step + batch_idx, dataset="val")
+                mlflow.log_metric("val/loss_batch", loss_value, step=start_global_step + batch_idx)
+                mlflow.log_metric("val/si_snr_batch", val_si_snr_improvement, step=start_global_step + batch_idx)
 
     epoch_val_loss = float(np.mean(batch_val_losses))
     epoch_val_si_snr = float(np.mean(val_si_snrs))
 
     if mlflow.active_run() is not None:
-        mlflow.log_metric("val/loss_epoch", epoch_val_loss, step=epoch, dataset="val")
-        mlflow.log_metric("val/si_snr_epoch", epoch_val_si_snr, step=epoch, dataset="val")
+        mlflow.log_metric("val/loss_epoch", epoch_val_loss, step=epoch)
+        mlflow.log_metric("val/si_snr_epoch", epoch_val_si_snr, step=epoch)
 
     return epoch_val_loss, epoch_val_si_snr, start_global_step + batch_idx
 
@@ -150,19 +150,19 @@ def train_model(
 
     train_losses = []
     val_losses = []
-    val_si_snrs = []
+    val_si_snr_improvements = []
     global_step_train = 0
     global_step_val = 0
     for epoch in range(n_epochs):
         train_loss, global_step_train = train_epoch(model, device, optimizer, train_loader, epoch, global_step_train)
         train_losses.append(train_loss)
 
-        val_loss, val_si_snr, global_step_val = val_epoch(model, device, val_loader, epoch, global_step_val)
+        val_loss, val_si_snr_improvement, global_step_val = val_epoch(model, device, val_loader, epoch, global_step_val)
         val_losses.append(val_loss)
-        val_si_snrs.append(val_si_snr)
+        val_si_snr_improvements.append(val_si_snr_improvement)
 
         eliot.log_message(
-            f"Epoch {epoch + 1}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNR = {val_si_snr}",
+            f"Epoch {epoch + 1}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNR = {val_si_snr_improvement}",
             level="debug",
         )
         if mlflow.active_run() is not None:
@@ -170,7 +170,7 @@ def train_model(
                 {
                     "epoch/train_loss": train_loss,
                     "epoch/val_loss": val_loss,
-                    "epoch/val_si_snr": val_si_snr,
+                    "epoch/val_si_snr": val_si_snr_improvement,
                     "epoch/global_step_train": global_step_train,
                     "epoch/global_step_val": global_step_val,
                 },
@@ -180,10 +180,10 @@ def train_model(
     if save_dir is not None:
         plot_dir = save_dir / "plots"
         plot_dir.mkdir(parents=True, exist_ok=True)
-        _make_plots(plot_dir, train_losses, val_losses, val_si_snrs)
+        _make_plots(plot_dir, train_losses, val_losses, val_si_snr_improvements)
 
 
-def _make_plots(plot_dir: Path, train_losses: list, val_losses: list, val_si_snrs: list) -> None:
+def _make_plots(plot_dir: Path, train_losses: list, val_losses: list, val_si_snr_improvements: list) -> None:
     # Loss plot
     plt.figure()
     plt.plot(train_losses, label="Train Loss")
@@ -199,7 +199,7 @@ def _make_plots(plot_dir: Path, train_losses: list, val_losses: list, val_si_snr
 
     # Si-SNR plot
     plt.figure()
-    plt.plot(val_si_snrs, label="Validation Si-SNR")
+    plt.plot(val_si_snr_improvements, label="Validation Si-SNR")
 
     plt.xlabel("Epoch")
     plt.ylabel("SNR")
