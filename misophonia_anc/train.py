@@ -36,12 +36,7 @@ def train_epoch(
     device: torch.device,
     optimizer: optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
-<<<<<<< HEAD
     start_global_step: int = 0,
-=======
-    epoch: int = 0,
-    start_global_step = 0,
->>>>>>> a2b4525 (Fix global step len bug)
 ) -> tuple[float, int]:
     model = model.train()
 
@@ -72,30 +67,16 @@ def train_epoch(
         loss_value = loss.item()
         batch_train_losses.append(loss_value)
         if mlflow.active_run() is not None:
-<<<<<<< HEAD
             mlflow.log_metric("train/loss_batch", loss_value, step=start_global_step + batch_idx)
 
     epoch_train_loss = float(np.mean(batch_train_losses))
     return epoch_train_loss, start_global_step + batch_idx + 1
-=======
-            mlflow.log_metric(
-                "train/loss_batch", loss_value, step=start_global_step + batch_idx, dataset="train"
-            )
-
-    epoch_train_loss = float(np.mean(batch_train_losses))
-
-    if mlflow.active_run() is not None:
-        mlflow.log_metric("train/loss_epoch", epoch_train_loss, step=epoch, dataset="train")
-
-    return epoch_train_loss, start_global_step + batch_idx
->>>>>>> a2b4525 (Fix global step len bug)
 
 
 def val_epoch(
     model: nn.Module,
     device: torch.device,
     val_loader: torch.utils.data.DataLoader,
-<<<<<<< HEAD
     start_global_step: int = 0,
 ) -> tuple[float, float, int]:
     """
@@ -110,11 +91,6 @@ def val_epoch(
         global_step (int): number of val batches the on which the model has been ran
 
     """
-=======
-    epoch: int = 0,
-    start_global_step: int = 0,
-) -> tuple[float, float, int]:
->>>>>>> a2b4525 (Fix global step len bug)
     model = model.eval()
 
     batch_val_losses = []
@@ -147,30 +123,17 @@ def val_epoch(
             val_si_snrs.append(val_si_snr)
 
             if mlflow.active_run() is not None:
-<<<<<<< HEAD
                 mlflow.log_metric("val/loss_batch", loss_value, step=start_global_step + batch_idx)
                 mlflow.log_metric(
                     "val/si_snr_improvement_batch", val_si_snr_improvement, step=start_global_step + batch_idx
                 )
-=======
-                mlflow.log_metric("val/loss_batch", loss_value, step=start_global_step + batch_idx, dataset="val")
-                mlflow.log_metric("val/si_snr_batch", val_si_snr_improvement, step=start_global_step + batch_idx, dataset="val")
->>>>>>> a2b4525 (Fix global step len bug)
 
     epoch_val_loss = float(np.mean(batch_val_losses))
     epoch_val_si_snr_improvement = float(np.mean(val_si_snr_improvements))
     epoch_val_si_snr = float(np.mean(val_si_snrs))
     global_step = start_global_step + batch_idx
 
-<<<<<<< HEAD
     return epoch_val_loss, epoch_val_si_snr_improvement, epoch_val_si_snr, global_step + 1
-=======
-    if mlflow.active_run() is not None:
-        mlflow.log_metric("val/loss_epoch", epoch_val_loss, step=epoch, dataset="val")
-        mlflow.log_metric("val/si_snr_epoch", epoch_val_si_snr, step=epoch, dataset="val")
-
-    return epoch_val_loss, epoch_val_si_snr, start_global_step + batch_idx
->>>>>>> a2b4525 (Fix global step len bug)
 
 
 def train_model(
@@ -210,7 +173,6 @@ def train_model(
     val_si_snrs = []
     global_step_train = 0
     global_step_val = 0
-<<<<<<< HEAD
 
     # Checkpoint trackers
     best_epoch = -1
@@ -222,13 +184,6 @@ def train_model(
         val_loss, val_si_snr_improvement, val_si_snr, global_step_val = val_epoch(
             model, device, val_loader, global_step_val
         )
-=======
-    for epoch in range(n_epochs):
-        train_loss, global_step_train = train_epoch(model, device, optimizer, train_loader, epoch, global_step_train)
-        train_losses.append(train_loss)
-
-        val_loss, val_si_snr, global_step_val = val_epoch(model, device, val_loader, epoch, global_step_val)
->>>>>>> a2b4525 (Fix global step len bug)
         val_losses.append(val_loss)
         val_si_snrs.append(val_si_snr)
         val_si_snr_improvements.append(val_si_snr_improvement)
