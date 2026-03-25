@@ -123,6 +123,10 @@ class MisophoniaANCConfig(BaseModel):
         {}, description="Dictionary of parameters to initialize the model. See the MisophoniaANCNet class for options."
     )
 
+    model_hyperparams: dict = pydantic.Field(
+        {}, description="Dictionary of parameters to initialize the model. See the train_model() for options."
+    )
+
     mlflow_experiment: str | None = pydantic.Field(
         None, description="MLflow experiment name to log training metrics to."
     )
@@ -139,6 +143,19 @@ class MisophoniaANCConfig(BaseModel):
 def custom_collate_fn(
     batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    """
+    Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
+    For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
+
+    Args:
+        mixes (np.ndarray): synthetically generated binaural mixes
+        labels (np.ndarray): one-hot encoded label vectors
+        gts (np.ndarray): binaural ground truth trigger sounds (or silence)
+
+    Returns:
+        inputs (dict[str, torch.Tensor]): dictionary of padded mixes and the label vectors in the form of tensors.
+        gts (torch.tensor): padded ground truth tensors.
+    """
 
     # Only keep chunks of length MAX_DURATION in data loader
     chunk_size = MAX_DURATION * SAMPLE_RATE

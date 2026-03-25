@@ -2,14 +2,8 @@
 The main training script for training on synthetic data
 """
 
-import sys
-from pathlib import Path
-
-# Add parent directory of misophonia-dataset to sys.path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
-
-import sys
+import os
+import shutil
 from pathlib import Path
 
 import eliot
@@ -28,7 +22,7 @@ from ._utils import print_mem
 # from .model import MisophoniaANCNet
 
 
-def loss_fn(_output: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor) -> torch.Tensor:
     pred = _output["x"]
     return -0.9 * snr(pred, tgt).mean() - 0.1 * si_snr(pred, tgt).mean()
 
@@ -42,8 +36,7 @@ def train_epoch(
     device: torch.device,
     optimizer: optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
-    epoch: int = 0,
-    start_global_step = 0,
+    start_global_step: int = 0,
 ) -> tuple[float, int]:
     model = model.train()
 
@@ -74,28 +67,34 @@ def train_epoch(
         loss_value = loss.item()
         batch_train_losses.append(loss_value)
         if mlflow.active_run() is not None:
-            mlflow.log_metric(
-                "train/loss_batch", loss_value, step=start_global_step + batch_idx
-            )
+            mlflow.log_metric("train/loss_batch", loss_value, step=start_global_step + batch_idx)
 
     epoch_train_loss = float(np.mean(batch_train_losses))
-
-    if mlflow.active_run() is not None:
-        mlflow.log_metric("train/loss_epoch", epoch_train_loss, step=epoch)
-
-    return epoch_train_loss, start_global_step + batch_idx
+    return epoch_train_loss, start_global_step + batch_idx + 1
 
 
 def val_epoch(
     model: nn.Module,
     device: torch.device,
     val_loader: torch.utils.data.DataLoader,
-    epoch: int = 0,
     start_global_step: int = 0,
 ) -> tuple[float, float, int]:
+    """
+    Function to evaluate model on validation set each epoch.
+
+    Args:
+        See train_model() for arg description
+
+    Returns:
+        epoch_val_loss (float): epoch loss on val set
+        epoch_val_si_snr_improvement (float): si_snri on val set
+        global_step (int): number of val batches the on which the model has been ran
+
+    """
     model = model.eval()
 
     batch_val_losses = []
+    val_si_snr_improvements = []
     val_si_snrs = []
 
     with torch.no_grad():
@@ -117,21 +116,24 @@ def val_epoch(
 
             loss_value = loss.item()
             val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
+            val_si_snr = si_snr(output["x"], gt).mean().item()
+
             batch_val_losses.append(loss_value)
-            val_si_snrs.append(val_si_snr_improvement)
+            val_si_snr_improvements.append(val_si_snr_improvement)
+            val_si_snrs.append(val_si_snr)
 
             if mlflow.active_run() is not None:
                 mlflow.log_metric("val/loss_batch", loss_value, step=start_global_step + batch_idx)
-                mlflow.log_metric("val/si_snr_batch", val_si_snr_improvement, step=start_global_step + batch_idx)
+                mlflow.log_metric(
+                    "val/si_snr_improvement_batch", val_si_snr_improvement, step=start_global_step + batch_idx
+                )
 
     epoch_val_loss = float(np.mean(batch_val_losses))
+    epoch_val_si_snr_improvement = float(np.mean(val_si_snr_improvements))
     epoch_val_si_snr = float(np.mean(val_si_snrs))
+    global_step = start_global_step + batch_idx
 
-    if mlflow.active_run() is not None:
-        mlflow.log_metric("val/loss_epoch", epoch_val_loss, step=epoch)
-        mlflow.log_metric("val/si_snr_epoch", epoch_val_si_snr, step=epoch)
-
-    return epoch_val_loss, epoch_val_si_snr, start_global_step + batch_idx
+    return epoch_val_loss, epoch_val_si_snr_improvement, epoch_val_si_snr, global_step + 1
 
 
 def train_model(
@@ -140,29 +142,54 @@ def train_model(
     train_loader: wds.WebLoader,
     val_loader: wds.WebLoader,
     n_epochs: int,
+    lr: float = 0.0005,
+    weight_decay: float = 0,
     device: torch.device,
     save_dir: Path,
 ) -> None:
+    """
+    Main function to run training loop on Misophonia ANC model. Checkpoints model weights after each epoch. Logs batch and epoch losses for both
+    train and val set to mlflow project as well as si_snri on val set. Optionally plots and saves metrics to a local directory.
+
+    Args:
+        model (nn.Module): Model to train
+        train_loader (wds.WebLoader): Train dataset in the form of a WebLoader
+        val_loader (wds.WebLoader): Val dataset in the form of a WebLoader
+        n_epochs (int): number of epochs for training
+        lr (float): learning rate during trainer
+        weight_decay (float): weight decay to apply to optimizer
+        device (torch.device): cuda or cpu
+        save_dir: Path to save model weights and metric plots
+    """
 
     model = model.to(device)
     print_mem("after model")
-    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=0.0005, weight_decay=0)
+    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
 
+    # Tracking metrics
     train_losses = []
     val_losses = []
     val_si_snr_improvements = []
+    val_si_snrs = []
     global_step_train = 0
     global_step_val = 0
+
+    # Checkpoint trackers
+    best_epoch = -1
+    best_val_si_snr_improvement = -np.inf
     for epoch in range(n_epochs):
         train_loss, global_step_train = train_epoch(model, device, optimizer, train_loader, epoch, global_step_train)
         train_losses.append(train_loss)
 
-        val_loss, val_si_snr_improvement, global_step_val = val_epoch(model, device, val_loader, epoch, global_step_val)
+        val_loss, val_si_snr_improvement, val_si_snr, global_step_val = val_epoch(
+            model, device, val_loader, epoch, global_step_val
+        )
         val_losses.append(val_loss)
+        val_si_snrs.append(val_si_snr)
         val_si_snr_improvements.append(val_si_snr_improvement)
 
         eliot.log_message(
-            f"Epoch {epoch + 1}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNR = {val_si_snr_improvement}",
+            f"Epoch {epoch + 1}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNRi = {val_si_snr_improvement}",
             level="debug",
         )
         if mlflow.active_run() is not None:
@@ -170,20 +197,40 @@ def train_model(
                 {
                     "epoch/train_loss": train_loss,
                     "epoch/val_loss": val_loss,
-                    "epoch/val_si_snr": val_si_snr_improvement,
+                    "epoch/val_si_snr_improvement": val_si_snr_improvement,
+                    "epoch/val_si_snr": val_si_snr,
                     "epoch/global_step_train": global_step_train,
                     "epoch/global_step_val": global_step_val,
                 },
                 step=epoch,
             )
 
-    if save_dir is not None:
-        plot_dir = save_dir / "plots"
-        plot_dir.mkdir(parents=True, exist_ok=True)
-        _make_plots(plot_dir, train_losses, val_losses, val_si_snr_improvements)
+        # Checkpointing
+        ckpt_dir = save_dir / "checkpoints"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = os.path.join(ckpt_dir, f"weights_epoch_{epoch}.pt")
+        torch.save(model.state_dict(), ckpt_path)
+
+        if val_si_snr_improvement > best_val_si_snr_improvement:
+            best_epoch = epoch
+            best_val_si_snr_improvement = val_si_snr_improvement
+
+    # Plotting
+    plot_dir = save_dir / "plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    _make_plots(plot_dir, train_losses, val_losses, val_si_snrs, val_si_snr_improvements)
+
+    # Rename best model weights
+    best_ckpt = os.path.join(ckpt_dir, f"weights_epoch_{best_epoch}.pt")
+    final_path = os.path.join(ckpt_dir, "best_weights.pt")
+
+    if best_epoch >= 0:
+        shutil.copy(best_ckpt, final_path)  # safer than rename
 
 
-def _make_plots(plot_dir: Path, train_losses: list, val_losses: list, val_si_snr_improvements: list) -> None:
+def _make_plots(
+    plot_dir: Path, train_losses: list, val_losses: list, val_si_snrs: list, val_si_snr_improvements: list
+) -> None:
     # Loss plot
     plt.figure()
     plt.plot(train_losses, label="Train Loss")
@@ -197,12 +244,24 @@ def _make_plots(plot_dir: Path, train_losses: list, val_losses: list, val_si_snr
     plt.savefig(plot_dir / "loss_plot.png")
     plt.close()
 
-    # Si-SNR plot
+    # Si-SNRi plot
     plt.figure()
-    plt.plot(val_si_snr_improvements, label="Validation Si-SNR")
+    plt.plot(val_si_snr_improvements, label="Val Si-SNRi")
 
     plt.xlabel("Epoch")
-    plt.ylabel("SNR")
+    plt.ylabel("Si-SNRi")
+    plt.title("Validation Si-SNRi")
+    plt.legend()
+
+    plt.savefig(plot_dir / "si_snr_improvement_plot.png")
+    plt.close()
+
+    # Si-SNR plot
+    plt.figure()
+    plt.plot(val_si_snrs, label="Val Si-SNR")
+
+    plt.xlabel("Epoch")
+    plt.ylabel("Si-SNR")
     plt.title("Validation Si-SNR")
     plt.legend()
 
