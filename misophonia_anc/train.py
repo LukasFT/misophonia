@@ -43,7 +43,8 @@ def train_epoch(
     optimizer: optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
     epoch: int = 0,
-) -> float:
+    start_global_step = 0,
+) -> tuple[float, int]:
     model = model.train()
 
     batch_train_losses = []
@@ -74,7 +75,7 @@ def train_epoch(
         batch_train_losses.append(loss_value)
         if mlflow.active_run() is not None:
             mlflow.log_metric(
-                "train/loss_batch", loss_value, step=epoch * len(train_loader) + batch_idx, dataset="train"
+                "train/loss_batch", loss_value, step=start_global_step + batch_idx, dataset="train"
             )
 
     epoch_train_loss = float(np.mean(batch_train_losses))
@@ -82,7 +83,7 @@ def train_epoch(
     if mlflow.active_run() is not None:
         mlflow.log_metric("train/loss_epoch", epoch_train_loss, step=epoch, dataset="train")
 
-    return epoch_train_loss
+    return epoch_train_loss, start_global_step + batch_idx
 
 
 def val_epoch(
@@ -90,7 +91,8 @@ def val_epoch(
     device: torch.device,
     val_loader: torch.utils.data.DataLoader,
     epoch: int = 0,
-) -> float:
+    start_global_step: int = 0,
+) -> tuple[float, float, int]:
     model = model.eval()
 
     batch_val_losses = []
@@ -119,9 +121,8 @@ def val_epoch(
             val_si_snrs.append(val_si_snr_improvement)
 
             if mlflow.active_run() is not None:
-                global_step = epoch * len(val_loader) + batch_idx
-                mlflow.log_metric("val/loss_batch", loss_value, step=global_step, dataset="val")
-                mlflow.log_metric("val/si_snr_batch", val_si_snr_improvement, step=global_step, dataset="val")
+                mlflow.log_metric("val/loss_batch", loss_value, step=start_global_step + batch_idx, dataset="val")
+                mlflow.log_metric("val/si_snr_batch", val_si_snr_improvement, step=start_global_step + batch_idx, dataset="val")
 
     epoch_val_loss = float(np.mean(batch_val_losses))
     epoch_val_si_snr = float(np.mean(val_si_snrs))
@@ -130,7 +131,7 @@ def val_epoch(
         mlflow.log_metric("val/loss_epoch", epoch_val_loss, step=epoch, dataset="val")
         mlflow.log_metric("val/si_snr_epoch", epoch_val_si_snr, step=epoch, dataset="val")
 
-    return epoch_val_loss, epoch_val_si_snr
+    return epoch_val_loss, epoch_val_si_snr, start_global_step + batch_idx
 
 
 def train_model(
@@ -150,11 +151,13 @@ def train_model(
     train_losses = []
     val_losses = []
     val_si_snrs = []
+    global_step_train = 0
+    global_step_val = 0
     for epoch in range(n_epochs):
-        train_loss = train_epoch(model, device, optimizer, train_loader, epoch)
+        train_loss, global_step_train = train_epoch(model, device, optimizer, train_loader, epoch, global_step_train)
         train_losses.append(train_loss)
 
-        val_loss, val_si_snr = val_epoch(model, device, val_loader, epoch)
+        val_loss, val_si_snr, global_step_val = val_epoch(model, device, val_loader, epoch, global_step_val)
         val_losses.append(val_loss)
         val_si_snrs.append(val_si_snr)
 
@@ -168,6 +171,8 @@ def train_model(
                     "epoch/train_loss": train_loss,
                     "epoch/val_loss": val_loss,
                     "epoch/val_si_snr": val_si_snr,
+                    "epoch/global_step_train": global_step_train,
+                    "epoch/global_step_val": global_step_val,
                 },
                 step=epoch,
             )
