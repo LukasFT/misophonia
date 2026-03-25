@@ -15,7 +15,14 @@ from misophonia_dataset.interface import SplitT, get_data_dir
 from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
-from ._utils import MisophoniaANCConfig, get_allocated_cpus, make_dataloader, preprocess_to_webdataset_pt, print_mem
+from ._utils import (
+    MisophoniaANCConfig,
+    _save_audio_stereo,
+    get_allocated_cpus,
+    make_dataloader,
+    preprocess_to_webdataset_pt,
+    print_mem,
+)
 from .model import MisophoniaANCNet
 from .train import train_model
 
@@ -186,11 +193,76 @@ def train(
             val_loader=val_loader,
             n_epochs=config.num_epochs,
             save_dir=Path(model_dir),
-            **config.model_hyperparams
+            **config.model_hyperparams,
         )
     finally:
         if mlflow_uri is not None:
             mlflow.end_run()
+
+
+def infer(
+    name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    num_samples: Annotated[
+        int,
+        typer.Option(..., help="Number of samples to examine model output"),
+    ] = 5,
+    num_workers: Annotated[
+        int,
+        typer.Option(
+            ...,
+            help="Number of workers for data loading. A few will suffice, too many will consume extensive memory.",
+        ),
+    ] = 2,
+    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+) -> None:
+    """
+    Function to compare sample gts and mixes to model outputs.
+    """
+    model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    samples_dir = model_dir / "samples"
+    samples_dir.mkdir(parents=True, exist_ok=True)
+
+    best_model_path = model_dir / "best_weights.pt"
+    if not best_model_path.exists():
+        raise FileNotFoundError(f"Model weights cannot be found at {best_model_path}")
+
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+    model = MisophoniaANCNet(**config.model_params)
+    state_dict = torch.load(best_model_path, map_location=device)
+    model.load_state_dict(state_dict)
+    model.to(device)
+    model.eval()
+
+    dataset_dir = model_dir / "webdataset"
+    shards_test = sorted((dataset_dir / "test").glob("data-*.tar"))
+    if not shards_test:
+        raise FileNotFoundError(f"No test shards found in {dataset_dir / 'test'}")
+
+    test_loader = make_dataloader(files=shards_test, batch_size=1, num_workers=num_workers)
+
+    with torch.no_grad():
+        for idx, (input, gt, audio_len) in enumerate(test_loader):
+            if idx >= num_samples:
+                break
+
+            inputs = {k: v.to(device) for k, v in input.items()}
+            gt = gt.to(device)
+
+            output = model(inputs)
+            pred = output["x"]
+
+            valid_len = int(audio_len[0].item())
+            gt_i = gt[0, :, :valid_len]
+            pred_i = pred[0, :, :valid_len]
+            mix_i = inputs["mix"][0, :, :valid_len]
+
+            _save_audio_stereo(mix_i, samples_dir / f"sample_{idx:03d}_mix.wav")
+            _save_audio_stereo(gt_i, samples_dir / f"sample_{idx:03d}_gt.wav")
+            _save_audio_stereo(pred_i, samples_dir / f"sample_{idx:03d}_pred.wav")
+
+    eliot.log_message(f"Saved {num_samples} samples to {samples_dir}", level="debug")
 
 
 if __name__ == "__main__":

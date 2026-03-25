@@ -10,6 +10,7 @@ from pathlib import Path
 import eliot
 import numpy as np
 import pydantic
+import soundfile as sf
 import torch
 import torch.nn.functional as F  # noqa: N812  # noqa: N812
 import webdataset as wds
@@ -26,11 +27,11 @@ from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 rng = np.random.default_rng()
 
 SAMPLE_RATE = 44100
-MAX_DURATION = 1  # seconds
+MAX_DURATION = 5  # seconds
 
-##############
-# Prprocess Utils #
-##############
+######################################
+# Preprocess and Data Loading Utils #
+######################################
 
 
 def preprocess_to_webdataset_pt(
@@ -221,6 +222,11 @@ def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers
     )
 
 
+############################
+# Resource Tracking Utils #
+############################
+
+
 def get_allocated_cpus() -> int:
     """Returns the number of CPUs allocated to the current process, accounting for environments like SLURM and Docker."""
 
@@ -245,6 +251,26 @@ def print_mem(label: str) -> None:
     print(f"Allocated: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
     print(f"Reserved:  {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
     print()
+
+
+####################
+# Inference Utils #
+####################
+
+
+def _save_audio_stereo(audio: torch.Tensor, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
+    """
+    Save audio tensor of shape [C, T] as wav.
+    Assumes C is 2.
+    """
+    audio_np = audio.detach().cpu().float().numpy()
+
+    # soundfile expects [T] or [T, C]
+    if audio_np.ndim != 2:
+        raise ValueError(f"Expected audio of shape [C, T], got {audio_np.shape}")
+
+    audio_np = audio_np.T  # [T, C]
+    sf.write(path, audio_np, sample_rate)
 
 
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO
