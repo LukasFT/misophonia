@@ -114,7 +114,7 @@ def val_epoch(
             loss = loss_fn(output, gt)
 
             loss_value = loss.item()
-            val_si_snr_improvement = si_snr_improvement(inputs["mixes"], output["x"], gt).mean().item()
+            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
             batch_val_losses.append(loss_value)
             val_si_snrs.append(val_si_snr_improvement)
 
