@@ -73,7 +73,7 @@ class Esc50Dataset(SourceData):
 
         base_audio_dir = (self._base_unzipped_dir / "audio").expanduser().resolve()
         cwd = Path.cwd()
-        meta["file_path"] = meta["esc50_filename"].apply(lambda x: (base_audio_dir / x).relative_to(cwd))
+        meta["file_path"] = meta["esc50_filename"].apply(lambda x: base_audio_dir / x)
 
         meta["labels"] = meta["esc50_category"].apply(lambda x: self.mapping.get(str(x), {}).get("foams_mapping", None))
 

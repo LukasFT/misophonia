@@ -151,9 +151,7 @@ class Fsd50kDataset(SourceData):
 
         cwd = Path.cwd()
         meta["file_path"] = meta.apply(
-            lambda row: (
-                self._base_save_dir / f"{row['fsd50k_split']}_audio" / f"{row['fsd50k_fname']}.wav"
-            ).relative_to(cwd),
+            lambda row: self._base_save_dir / f"{row['fsd50k_split']}_audio" / f"{row['fsd50k_fname']}.wav",
             axis=1,
         )
 
@@ -236,4 +234,3 @@ class Fsd50kDataset(SourceData):
 
     def __str__(self) -> str:
         return "FSDK50 Dataset"
-
