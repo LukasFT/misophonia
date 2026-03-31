@@ -45,7 +45,7 @@ def prepare_track_specs(
             # Find placement at random (rest will be zero padded)
             last_place_to_pad = fg_max_len - length
             start = rng.integers(0, last_place_to_pad + 1)
-            end = length
+            end = start + length
 
         assert end - start <= fg_max_len, "Audio exceeds max length after placement. This should never happen."
 
