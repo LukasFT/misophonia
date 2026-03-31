@@ -153,7 +153,7 @@ def _normalize_and_pad(
     bg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in bg_norm)
 
     print("Max length:", fg_max_end)
-    print("FG lengths:", [audio.shape[0] for _, audio in fg_padded])
+    print("FG lengths:", [audio.shape[0] for _, audio in fg_padded + bg_padded])
 
     assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
     return fg_padded, bg_padded
