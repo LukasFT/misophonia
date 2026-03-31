@@ -73,7 +73,7 @@ class FoamsDataset(SourceData):
         meta["label_type"] = "trigger"  # All FOAMS sounds are triggers
         cwd = Path.cwd()
         meta["file_path"] = meta["freesound_id"].apply(
-            lambda x: (self._base_save_dir / "processed_audio" / f"{x}_processed.wav").relative_to(cwd)
+            lambda x: self._base_save_dir / "processed_audio" / f"{x}_processed.wav"
         )
 
         meta["sound_license"] = generate_freesound_licenses(meta["freesound_id"])
