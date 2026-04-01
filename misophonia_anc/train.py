@@ -142,8 +142,6 @@ def train_model(
     train_loader: wds.WebLoader,
     val_loader: wds.WebLoader,
     n_epochs: int,
-    lr: float = 0.0005,
-    weight_decay: float = 0,
     device: torch.device,
     save_dir: Path,
     lr: float = 0.0005,
