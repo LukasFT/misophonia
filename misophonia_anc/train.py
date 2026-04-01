@@ -142,10 +142,10 @@ def train_model(
     train_loader: wds.WebLoader,
     val_loader: wds.WebLoader,
     n_epochs: int,
-    lr: float = 0.0005,
-    weight_decay: float = 0,
     device: torch.device,
     save_dir: Path,
+    lr: float = 0.0005,
+    weight_decay: float = 0.0,
 ) -> None:
     """
     Main function to run training loop on Misophonia ANC model. Checkpoints model weights after each epoch. Logs batch and epoch losses for both
@@ -178,11 +178,11 @@ def train_model(
     best_epoch = -1
     best_val_si_snr_improvement = -np.inf
     for epoch in range(n_epochs):
-        train_loss, global_step_train = train_epoch(model, device, optimizer, train_loader, epoch, global_step_train)
+        train_loss, global_step_train = train_epoch(model, device, optimizer, train_loader, global_step_train)
         train_losses.append(train_loss)
 
         val_loss, val_si_snr_improvement, val_si_snr, global_step_val = val_epoch(
-            model, device, val_loader, epoch, global_step_val
+            model, device, val_loader, global_step_val
         )
         val_losses.append(val_loss)
         val_si_snrs.append(val_si_snr)
