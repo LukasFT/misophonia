@@ -115,7 +115,7 @@ def train(
         typer.Option(
             ...,
             help="Number of workers for data loading. A few will suffice, too many will consume extensive memory.",
-            default_factory=lambda: 2,
+            default_factory=lambda: 8,
         ),
     ],
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
