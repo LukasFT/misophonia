@@ -206,7 +206,14 @@ def train_model(
         ckpt_dir = save_dir / "checkpoints"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         ckpt_path = ckpt_dir / f"weights_epoch_{epoch}.pt"
-        model.save_checkpoint(ckpt_path, epoch=epoch, val_si_snr_improvement=val_si_snr_improvement)
+        model.save_checkpoint(
+            ckpt_path,
+            epoch=epoch,
+            val_si_snr_improvement=val_si_snr_improvement,
+            val_si_snr=val_si_snr,
+            val_loss=val_loss,
+            train_loss=train_loss,
+        )
 
         if val_si_snr_improvement > best_val_si_snr_improvement:
             best_epoch = epoch
