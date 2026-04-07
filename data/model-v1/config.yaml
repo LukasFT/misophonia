@@ -2,9 +2,9 @@ dataset_splits:
   train:
     # from_premade: true
     generated_config: &generate_train
-      num_samples: 20000 # 16384 # 64 samples per shard, * 256 shards
+      num_samples: 20000 
       trig_to_control_ratio: 0.95 # 95% triggers, 5% controls
-      backgrounds_per_item: [1, 2]
+      backgrounds_per_item: [1, 6]
 
   val:
     generated_config:
@@ -15,7 +15,7 @@ dataset_splits:
       <<: *generate_train
       num_samples: 3000
   
-batch_size: 4
+batch_size: 8
 num_epochs : 50
 
 model_params:
@@ -23,6 +23,6 @@ model_params:
 
 model_hyperparams:
   lr: 0.0005
-  model_decay: 0
+  weight_decay: 0
 
 mlflow_experiment: "model-v1"
