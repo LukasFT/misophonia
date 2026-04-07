@@ -228,7 +228,7 @@ def infer(
     samples_dir = model_dir / "samples" / checkpoint.replace(".pt", "") / split
     samples_dir.mkdir(parents=True, exist_ok=True)
 
-    checkpoint_file = model_dir / checkpoint
+    checkpoint_file = model_dir / "checkpoints" / checkpoint
 
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
     model = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
