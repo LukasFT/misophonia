@@ -206,6 +206,7 @@ def infer(
     split: Annotated[SplitT, typer.Argument(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
     *,
     checkpoint: Annotated[str, typer.Option(..., help="Name of model checkpoint to load.")] = "best_weights.pt",
+    overwrite: Annotated[bool, typer.Option(..., help="Whether to overwrite existing samples.")] = False,
     num_samples: Annotated[
         int | None,
         typer.Option(..., help="Number of samples to examine model output"),
@@ -227,6 +228,17 @@ def infer(
 
     samples_dir = model_dir / "samples" / checkpoint.replace(".pt", "") / split
     samples_dir.mkdir(parents=True, exist_ok=True)
+
+    if samples_dir.exists() and any(samples_dir.iterdir()):
+        if overwrite:
+            eliot.log_message(f"Deleting existing samples in {samples_dir}...", level="debug")
+            for file in samples_dir.glob("*"):
+                file.unlink()
+            eliot.log_message(f"Deleted existing samples in {samples_dir}.", level="debug")
+        else:
+            raise FileExistsError(
+                f"Samples already exist for checkpoint {checkpoint} at {samples_dir}. Use --overwrite to overwrite existing samples."
+            )
 
     checkpoint_file = model_dir / "checkpoints" / checkpoint
 
