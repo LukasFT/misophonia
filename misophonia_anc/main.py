@@ -200,6 +200,7 @@ def train(
             mlflow.end_run()
 
 
+@app.command()
 def infer(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
     split: Annotated[SplitT, typer.Argument(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
