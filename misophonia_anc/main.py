@@ -241,8 +241,9 @@ def infer(
         shards_split,
         batch_size=1,  # We do inference one at a time
         num_workers=num_workers,
-        max_batches=num_samples,
     )
+    if num_samples is not None:
+        split_loader = torch.utils.data.Subset(split_loader, range(num_samples))
 
     perform_inference(model, split_loader, save_to=samples_dir, device=device)
 
