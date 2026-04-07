@@ -227,7 +227,9 @@ class MisophoniaANCNet(nn.Module):
         """
         model_params = dict(config.model_params)
 
-        if checkpoint is not None:
+        if checkpoint is None:
+            model = MisophoniaANCNet(**model_params)
+        else:
             checkpoint = Path(checkpoint)
             assert checkpoint.is_file(), f"Checkpoint path {checkpoint} does not exist or is not a file."
             checkpoint_data = torch.load(checkpoint, map_location=device)

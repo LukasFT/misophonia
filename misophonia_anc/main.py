@@ -246,7 +246,7 @@ def infer(
     checkpoint_file = model_dir / "checkpoints" / checkpoint
     if checkpoint == "random":
         checkpoint_file = None
-        eliot.log_message("Using random untrained model for inference.", level="debug")
+        eliot.log_message("Using random untrained model for inference.", level="info")
 
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
     model = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
