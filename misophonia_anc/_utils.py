@@ -193,9 +193,7 @@ def custom_collate_fn(
     return inputs, gt, audio_lens
 
 
-def make_dataloader(
-    files: Iterable[str | Path], *, batch_size: int, num_workers: int, max_batches: int | None = None
-) -> wds.WebLoader:
+def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
     """
     Make a WebLoader from the given .tar files.
 
@@ -203,7 +201,6 @@ def make_dataloader(
         files: An iterable of paths to .tar shard files.
         batch_size: Batch size for the dataloader.
         num_workers: Number of worker threads for loading data.
-        max_batches: If not None, limits the number of batches loaded from the dataset (useful for debugging).
 
     Returns:
         An iterable WebLoader that yields batches of data from the given .tar files.
@@ -230,9 +227,6 @@ def make_dataloader(
             collation_fn=custom_collate_fn,  # Make batches of the same size
         )
     )
-
-    if max_batches is not None:
-        data = data.with_epoch(max_batches)
 
     return wds.WebLoader(
         data,
