@@ -17,9 +17,9 @@ from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, Pr
 
 from ._utils import (
     MisophoniaANCConfig,
-    _save_audio_stereo,
     get_allocated_cpus,
     make_dataloader,
+    perform_inference,
     preprocess_to_webdataset_pt,
     print_mem,
 )
@@ -163,9 +163,9 @@ def train(
     train_loader = make_dataloader(shards_train, batch_size=config.batch_size, num_workers=num_workers)
     val_loader = make_dataloader(shards_val, batch_size=config.batch_size, num_workers=num_workers)
 
-    model = MisophoniaANCNet(**config.model_params)  # noqa: F841
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     eliot.log_message(f"Using device: {device}", level="debug")
+    model = MisophoniaANCNet.from_config(config, checkpoint=None, device=device)
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
         if mlflow_username is None or mlflow_password is None:
@@ -180,7 +180,7 @@ def train(
             run_name = f"Train {name} on {hostname} with {device} at {datetime.now().isoformat()}"
             mlflow.start_run(run_name=run_name)
 
-            mlflow.log_params(config.dict())
+            mlflow.log_params(config.model_dump(mode="json"))
 
             run_link = f"{mlflow.get_tracking_uri()}/#/experiments/{mlflow.get_experiment_by_name(config.mlflow_experiment).experiment_id}/runs/{mlflow.get_run(mlflow.active_run().info.run_id).info.run_id}"
             eliot.log_message(f"Started MLflow run with name '{run_name}': {run_link}", level="info")
@@ -228,42 +228,22 @@ def infer(
     samples_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint_file = model_dir / checkpoint
-    if not checkpoint_file.exists():
-        raise FileNotFoundError(f"Checkpoint file cannot be found at {checkpoint_file}")
 
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
-    model = MisophoniaANCNet(**config.model_params)
-    state_dict = torch.load(checkpoint_file, map_location=device)
-    model.load_state_dict(state_dict)
-    model.to(device)
+    model = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
     model.eval()
 
-    dataset_dir = model_dir / "webdataset"
-    shards_test = sorted((dataset_dir / "test").glob("data-*.tar"))
-    if not shards_test:
-        raise FileNotFoundError(f"No test shards found in {dataset_dir / 'test'}")
+    dataset_split_dir = model_dir / "webdataset" / split
+    eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
+    shards_split = dataset_split_dir.glob("data-*.tar")
+    split_loader = make_dataloader(
+        shards_split,
+        batch_size=1,  # We do inference one at a time
+        num_workers=num_workers,
+        num_samples=num_samples,
+    )
 
-    test_loader = make_dataloader(files=shards_test, batch_size=1, num_workers=num_workers)
-
-    with torch.no_grad():
-        for idx, (input, gt, audio_len) in enumerate(test_loader):
-            if idx >= num_samples:
-                break
-
-            inputs = {k: v.to(device) for k, v in input.items()}
-            gt = gt.to(device)
-
-            output = model(inputs)
-            pred = output["x"]
-
-            valid_len = int(audio_len[0].item())
-            gt_i = gt[0, :, :valid_len]
-            pred_i = pred[0, :, :valid_len]
-            mix_i = inputs["mix"][0, :, :valid_len]
-
-            _save_audio_stereo(mix_i, samples_dir / f"sample_{idx:03d}_mix.wav")
-            _save_audio_stereo(gt_i, samples_dir / f"sample_{idx:03d}_gt.wav")
-            _save_audio_stereo(pred_i, samples_dir / f"sample_{idx:03d}_pred.wav")
+    perform_inference(model, split_loader, save_to=samples_dir, device=device)
 
     eliot.log_message(f"Saved {num_samples} samples to {samples_dir}", level="debug")
 

@@ -192,9 +192,24 @@ def custom_collate_fn(
     return inputs, gt, audio_lens
 
 
-def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
+def make_dataloader(
+    files: Iterable[str | Path], *, batch_size: int, num_workers: int, num_samples: int | None = None
+) -> wds.WebLoader:
+    """
+    Make a WebLoader from the given .tar files.
+
+    Args:
+        files: An iterable of paths to .tar shard files.
+        batch_size: Batch size for the dataloader.
+        num_workers: Number of worker threads for loading data.
+        num_samples: If not None, limits the number of samples loaded from the dataset (useful for debugging).
+
+    Returns:
+        An iterable WebLoader that yields batches of data from the given .tar files.
+
+    """
     files = tuple(str(file) for file in files)
-    assert len(files) > 0
+    assert len(files) > 0, "No files provided to make_dataloader."
     eliot.log_message(f"Loading data from `{files[0]}` etc...", level="debug")
     eliot.log_message(
         f"Using {num_workers} workers loading WebDataset (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
@@ -214,6 +229,9 @@ def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers
             collation_fn=custom_collate_fn,  # Make batches of the same size
         )
     )
+
+    if num_samples is not None:
+        data = data.take(num_samples)
 
     return wds.WebLoader(
         data,
@@ -258,11 +276,47 @@ def print_mem(label: str) -> None:
 ####################
 
 
+def perform_inference(
+    model: torch.nn.Module,
+    data_loader: wds.WebLoader,
+    *,
+    device: torch.device,
+    save_to: Path | None = None,
+) -> None:
+    """
+    Run inference on the given model and dataloader, and save the related audio.
+    """
+
+    if save_to is not None:
+        save_to.mkdir(parents=True, exist_ok=True)
+        assert save_to.is_dir()
+
+    model.eval()
+    with torch.no_grad():
+        for idx, (inp, gt, audio_len) in enumerate(data_loader):
+            inputs = {k: v.to(device) for k, v in inp.items()}
+            gt = gt.to(device)
+
+            output = model(inputs)
+            pred = output["x"]
+
+            valid_len = int(audio_len[0].item())
+            gt_i = gt[0, :, :valid_len]
+            pred_i = pred[0, :, :valid_len]
+            mix_i = inputs["mix"][0, :, :valid_len]
+
+            if save_to is not None:
+                _save_audio_stereo(mix_i, save_to / f"sample_{idx:03d}_mix.flac")
+                _save_audio_stereo(gt_i, save_to / f"sample_{idx:03d}_gt.flac")
+                _save_audio_stereo(pred_i, save_to / f"sample_{idx:03d}_pred.flac")
+
+
 def _save_audio_stereo(audio: torch.Tensor, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
     """
     Save audio tensor of shape [C, T] as wav.
     Assumes C is 2.
     """
+    assert path.suffix == ".flac"
     audio_np = audio.detach().cpu().float().numpy()
 
     # soundfile expects [T] or [T, C]
@@ -270,7 +324,13 @@ def _save_audio_stereo(audio: torch.Tensor, path: Path, sample_rate: int = SAMPL
         raise ValueError(f"Expected audio of shape [C, T], got {audio_np.shape}")
 
     audio_np = audio_np.T  # [T, C]
-    sf.write(path, audio_np, sample_rate)
+    sf.write(
+        path,
+        audio_np,
+        samplerate=sample_rate,
+        format="FLAC",
+        subtype="PCM_24",
+    )
 
 
 def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO

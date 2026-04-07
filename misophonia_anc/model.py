@@ -5,10 +5,12 @@ Heavily based on https://github.com/vb000/SemanticHearing
 """
 # ruff: noqa: ANN001, ANN002, ANN003 # TODO: Improve quality
 
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
-from ._utils import mod_pad
+from ._utils import MisophoniaANCConfig, mod_pad
 from .decoder import CausalTransformerDecoder
 from .encoder import DilatedCausalConvEncoder
 
@@ -163,6 +165,39 @@ class MisophoniaANCNet(nn.Module):
             return out
         else:
             return out, enc_buf, dec_buf, out_buf
+
+    @classmethod
+    def from_config(
+        cls, config: MisophoniaANCConfig, *, checkpoint: Path | None = None, device: torch.device | None = None
+    ) -> "MisophoniaANCNet":
+        """
+        Load model from config and checkpoint.
+
+        Args:
+            config: MisophoniaANCConfig containing model hyperparameters.
+            checkpoint: Optional path to a checkpoint to load model weights from.
+                            If None, model will be initialized with random weights.
+            device: Device to move the model to. If None, the model will be moved to the default device.
+
+        Returns:
+            An instance of MisophoniaANCNet initialized according to the provided config and checkpoint.
+        """
+        model = MisophoniaANCNet(**config.model_params)
+
+        if checkpoint is not None:
+            checkpoint = Path(checkpoint)
+            assert checkpoint.is_file(), f"Checkpoint path {checkpoint} does not exist or is not a file."
+            checkpoint_data = torch.load(checkpoint, map_location=device)
+            assert "model_state_dict" in checkpoint_data, (
+                f"Checkpoint file {checkpoint} does not contain 'model_state_dict'."
+            )
+            state_dict = checkpoint_data["model_state_dict"]
+            model.load_state_dict(state_dict)
+
+        if device is not None:
+            model.to(device)
+
+        return model
 
 
 class MaskNet(nn.Module):
