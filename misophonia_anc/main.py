@@ -241,7 +241,7 @@ def infer(
         shards_split,
         batch_size=1,  # We do inference one at a time
         num_workers=num_workers,
-        num_samples=num_samples,
+        max_batches=num_samples,
     )
 
     perform_inference(model, split_loader, save_to=samples_dir, device=device)
