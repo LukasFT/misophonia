@@ -1,3 +1,4 @@
+import itertools
 import os
 import subprocess
 from datetime import datetime
@@ -261,7 +262,7 @@ def infer(
         num_workers=num_workers,
     )
     if num_samples is not None:
-        split_loader = torch.utils.data.Subset(split_loader, range(num_samples))
+        split_loader = itertools.islice(split_loader, num_samples)
 
     perform_inference(model, split_loader, save_to=samples_dir, device=device)
 
