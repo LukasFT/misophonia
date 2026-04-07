@@ -205,7 +205,7 @@ def infer(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
     split: Annotated[SplitT, typer.Argument(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
     *,
-    checkpoint: Annotated[str, typer.Argument(..., help="Name of model checkpoint to load.")] = "best_weights.pt",
+    checkpoint: Annotated[str, typer.Option(..., help="Name of model checkpoint to load.")] = "best_weights.pt",
     num_samples: Annotated[
         int | None,
         typer.Option(..., help="Number of samples to examine model output"),
