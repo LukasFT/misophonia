@@ -37,7 +37,6 @@ dev = [
     "pytest>=8.3.4",
 ]
 
-
 [tool.ruff]
 line-length = 120
 indent-width = 4
@@ -67,3 +66,4 @@ ignore = []
 "tests/*" = ["ANN"]
 "notebooks/exploratory/*" = ["ALL"]
 "SemanticHearing/*" = ["ALL"]
+"Binamix/*" = ["ALL"]

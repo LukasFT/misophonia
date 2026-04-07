@@ -14,16 +14,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import webdataset as wds  # noqa: F401
-
 from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr
 from torchmetrics.functional.audio import signal_noise_ratio as snr
-from ._utils import print_mem
 
 from ._utils import print_mem
-
-from ._utils import print_mem
-
-# from .model import MisophoniaANCNet
 
 
 def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor) -> torch.Tensor:
