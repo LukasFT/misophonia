@@ -224,7 +224,7 @@ def infer(
     model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    samples_dir = model_dir / "samples"
+    samples_dir = model_dir / "samples" / checkpoint.replace(".pt", "") / split
     samples_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint_file = model_dir / checkpoint
