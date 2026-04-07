@@ -3,6 +3,7 @@
 # ruff: noqa: ANN001 # TODO: Improve quality
 
 import os
+import subprocess
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -372,6 +373,16 @@ def run_time(model, inputs, *, profiling: bool = False) -> float:
 
     # Return runtime in ms
     return prof.profiler.self_cpu_time_total / 1000
+
+
+def get_git_sha() -> str | None:
+    """Returns the current git commit SHA, or None if it cannot be determined."""
+    try:
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
+        assert isinstance(sha, str) and len(sha) == 40, f"Unexpected git SHA format: {sha}"
+        return sha
+    except Exception:
+        return None
 
 
 ##############

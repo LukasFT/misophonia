@@ -7,10 +7,11 @@ Heavily based on https://github.com/vb000/SemanticHearing
 
 from pathlib import Path
 
+import eliot
 import torch
 import torch.nn as nn
 
-from ._utils import MisophoniaANCConfig, mod_pad
+from ._utils import MisophoniaANCConfig, get_git_sha, mod_pad
 from .decoder import CausalTransformerDecoder
 from .encoder import DilatedCausalConvEncoder
 
@@ -33,6 +34,21 @@ class MisophoniaANCNet(nn.Module):
         pretrained_path=None,
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
+
+        self._hyperparameters = {
+            "label_len": label_len,
+            "L": L,
+            "model_dim": model_dim,
+            "num_enc_layers": num_enc_layers,
+            "dec_buf_len": dec_buf_len,
+            "num_dec_layers": num_dec_layers,
+            "dec_chunk_size": dec_chunk_size,
+            "out_buf_len": out_buf_len,
+            "use_pos_enc": use_pos_enc,
+            "conditioning": conditioning,
+            "lookahead": lookahead,
+        }
+
         self.L = L
         self.out_buf_len = out_buf_len
         self.model_dim = model_dim
@@ -80,7 +96,8 @@ class MisophoniaANCNet(nn.Module):
         )
 
         if pretrained_path is not None:
-            state_dict = torch.load(pretrained_path)["model_state_dict"]
+            # TODO: I think this should not be done in the constructor and does not need to be concerned about loading the checkpoint
+            state_dict = torch.load(pretrained_path)["model_state"]
 
             # Load all the layers except label_embedding and freeze them
             for name, param in self.named_parameters():
@@ -166,6 +183,32 @@ class MisophoniaANCNet(nn.Module):
         else:
             return out, enc_buf, dec_buf, out_buf
 
+    #### UTILITY FUNCTIONS ####
+    @property
+    def hyperparameters(self) -> dict:
+        """Get the hyperparameters used to initialize the model. This can be useful for logging and checkpointing."""
+        return dict(self._hyperparameters)
+
+    def save_checkpoint(self, ckpt_path: Path, **other_info: dict) -> None:
+        """
+        Save model checkpoint.
+
+        Args:
+            ckpt_path: Path to save the checkpoint file.
+            epoch: Current epoch number.
+            val_si_snr_improvement: Validation SI-SNR improvement at the current epoch.
+            hyperparameters: Dictionary of model hyperparameters to save in the checkpoint.
+        """
+        torch.save(
+            {
+                "model_state": self.state_dict(),
+                "hyperparameters": self.hyperparameters,
+                "git_sha": get_git_sha(),
+                **other_info,
+            },
+            ckpt_path,
+        )
+
     @classmethod
     def from_config(
         cls, config: MisophoniaANCConfig, *, checkpoint: Path | None = None, device: torch.device | None = None
@@ -182,16 +225,27 @@ class MisophoniaANCNet(nn.Module):
         Returns:
             An instance of MisophoniaANCNet initialized according to the provided config and checkpoint.
         """
-        model = MisophoniaANCNet(**config.model_params)
+        model_params = dict(config.model_params)
 
         if checkpoint is not None:
             checkpoint = Path(checkpoint)
             assert checkpoint.is_file(), f"Checkpoint path {checkpoint} does not exist or is not a file."
             checkpoint_data = torch.load(checkpoint, map_location=device)
-            assert "model_state_dict" in checkpoint_data, (
-                f"Checkpoint file {checkpoint} does not contain 'model_state_dict'."
-            )
-            state_dict = checkpoint_data["model_state_dict"]
+            assert "model_state" in checkpoint_data, f"Checkpoint file {checkpoint} does not contain 'model_state'."
+
+            if "hyperparameters" in checkpoint_data:
+                for key, value in model_params.items():
+                    if key in checkpoint_data["hyperparameters"] and checkpoint_data["hyperparameters"][key] != value:
+                        eliot.log_message(
+                            f"Checkpoint hyperparameter {key} has value {value} which does not match config value {model_params[key]}. Replacing config value with checkpoint value.",
+                            level="warning",
+                        )
+                        model_params[key] = value
+            else:
+                eliot.log_message(f"Checkpoint {checkpoint} does not contain hyperparameters.", level="warning")
+
+            model = MisophoniaANCNet(**model_params)
+            state_dict = checkpoint_data["model_state"]
             model.load_state_dict(state_dict)
 
         if device is not None:

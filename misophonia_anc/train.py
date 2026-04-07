@@ -2,7 +2,6 @@
 The main training script for training on synthetic data
 """
 
-import os
 import shutil
 from pathlib import Path
 
@@ -206,15 +205,8 @@ def train_model(
         # Checkpointing
         ckpt_dir = save_dir / "checkpoints"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
-        ckpt_path = os.path.join(ckpt_dir, f"weights_epoch_{epoch}.pt")
-        torch.save(
-            {
-                "model_state": model.state_dict(),
-                "epoch": epoch,
-                "val_si_snr_improvement": val_si_snr_improvement,
-            },
-            ckpt_path,
-        )
+        ckpt_path = ckpt_dir / f"weights_epoch_{epoch}.pt"
+        model.save_checkpoint(ckpt_path, epoch=epoch, val_si_snr_improvement=val_si_snr_improvement)
 
         if val_si_snr_improvement > best_val_si_snr_improvement:
             best_epoch = epoch
@@ -226,8 +218,8 @@ def train_model(
     _make_plots(plot_dir, train_losses, val_losses, val_si_snrs, val_si_snr_improvements)
 
     # Rename best model weights
-    best_ckpt = os.path.join(ckpt_dir, f"weights_epoch_{best_epoch}.pt")
-    final_path = os.path.join(ckpt_dir, "best_weights.pt")
+    best_ckpt = ckpt_dir / f"weights_epoch_{best_epoch}.pt"
+    final_path = ckpt_dir / "best_weights.pt"
 
     if best_epoch >= 0:
         shutil.copy(best_ckpt, final_path)  # safer than rename
