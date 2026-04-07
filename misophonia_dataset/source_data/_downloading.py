@@ -163,7 +163,7 @@ def download_single_file(
                 if attempt == max_retries:
                     raise RuntimeError(f"Failed to download {filename} after {max_retries} attempts.") from e
 
-                sleep_time = min(1.5**attempt, 60*15)
+                sleep_time = min(1.5**attempt, 60 * 15)
                 eliot.log_message(
                     f"Error downloading {filename} (attempt {attempt}/{max_retries}; retrying in {sleep_time:.1f} seconds): {e}",
                     level="warning",
@@ -354,4 +354,3 @@ def _get_expected_size(url: str) -> int | None:
     if content_length is None:
         return None
     return int(content_length)
-

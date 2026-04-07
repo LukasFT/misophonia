@@ -202,10 +202,13 @@ def train(
 
 def infer(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    split: Annotated[SplitT, typer.Argument(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
+    *,
+    checkpoint: Annotated[str, typer.Argument(..., help="Name of model checkpoint to load.")] = "best_weights.pt",
     num_samples: Annotated[
-        int,
+        int | None,
         typer.Option(..., help="Number of samples to examine model output"),
-    ] = 5,
+    ] = None,
     num_workers: Annotated[
         int,
         typer.Option(
@@ -224,13 +227,13 @@ def infer(
     samples_dir = model_dir / "samples"
     samples_dir.mkdir(parents=True, exist_ok=True)
 
-    best_model_path = model_dir / "best_weights.pt"
-    if not best_model_path.exists():
-        raise FileNotFoundError(f"Model weights cannot be found at {best_model_path}")
+    checkpoint_file = model_dir / checkpoint
+    if not checkpoint_file.exists():
+        raise FileNotFoundError(f"Checkpoint file cannot be found at {checkpoint_file}")
 
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
     model = MisophoniaANCNet(**config.model_params)
-    state_dict = torch.load(best_model_path, map_location=device)
+    state_dict = torch.load(checkpoint_file, map_location=device)
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
