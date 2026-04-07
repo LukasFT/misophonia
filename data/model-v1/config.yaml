@@ -4,7 +4,7 @@ dataset_splits:
     generated_config: &generate_train
       num_samples: 20000 # 16384 # 64 samples per shard, * 256 shards
       trig_to_control_ratio: 0.95 # 95% triggers, 5% controls
-      backgrounds_per_item: [1, 6]
+      backgrounds_per_item: [1, 2]
 
   val:
     generated_config:
