@@ -111,6 +111,14 @@ def preprocess(
 @app.command()
 def train(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    *,
+    checkpoint: Annotated[
+        str | None,
+        typer.Option(
+            ...,
+            help="Name of model checkpoint file to load (e.g. 'weights_epoch_1.pt'). If 'init' or none given, a random untrained model will be used.",
+        ),
+    ] = None,
     num_workers: Annotated[
         int,
         typer.Option(
@@ -166,7 +174,8 @@ def train(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     eliot.log_message(f"Using device: {device}", level="debug")
-    model = MisophoniaANCNet.from_config(config, checkpoint=None, device=device)
+    checkpoint = None if (checkpoint == "init" or checkpoint is None) else model_dir / "checkpoints" / checkpoint
+    model = MisophoniaANCNet.from_config(config, checkpoint=checkpoint, device=device)
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
         if mlflow_username is None or mlflow_password is None:
@@ -208,7 +217,7 @@ def infer(
     *,
     checkpoint: Annotated[
         str,
-        typer.Option(..., help="Name of model checkpoint to load. If 'random', a random untrained model will be used."),
+        typer.Option(..., help="Name of model checkpoint to load. If 'init', a random untrained model will be used."),
     ] = "best_weights.pt",
     overwrite: Annotated[bool, typer.Option(..., help="Whether to overwrite existing samples.")] = False,
     num_samples: Annotated[
@@ -245,7 +254,7 @@ def infer(
             )
 
     checkpoint_file = model_dir / "checkpoints" / checkpoint
-    if checkpoint == "random":
+    if checkpoint == "init":
         checkpoint_file = None
         eliot.log_message("Using random untrained model for inference.", level="info")
 
