@@ -176,7 +176,7 @@ def train(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     eliot.log_message(f"Using device: {device}", level="debug")
     checkpoint = None if (checkpoint == "init" or checkpoint is None) else model_dir / "checkpoints" / checkpoint
-    model = MisophoniaANCNet.from_config(config, checkpoint=checkpoint, device=device)
+    model, checkpoint_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint, device=device)
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
         if mlflow_username is None or mlflow_password is None:
@@ -208,7 +208,7 @@ def train(
             train_loader=train_loader,
             val_loader=val_loader,
             n_epochs=config.num_epochs,
-            # TODO: If a checkpoint is given, we should start at epoch corresponding to that checkpoint + 1, not epoch 1
+            checkpoint_epoch=checkpoint_metadata.get("epoch", 0),
             save_dir=Path(model_dir),
             **config.model_hyperparams,
         )
@@ -266,7 +266,7 @@ def infer(
         eliot.log_message("Using random untrained model for inference.", level="info")
 
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
-    model = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+    model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
     model.eval()
 
     dataset_split_dir = model_dir / "webdataset" / split
