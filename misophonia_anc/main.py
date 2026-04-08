@@ -19,6 +19,7 @@ from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, Pr
 from ._utils import (
     MisophoniaANCConfig,
     get_allocated_cpus,
+    get_git_sha,
     make_dataloader,
     perform_inference,
     preprocess_to_webdataset_pt,
@@ -190,7 +191,12 @@ def train(
             run_name = f"Train {name} on {hostname} with {device} at {datetime.now().isoformat()}"
             mlflow.start_run(run_name=run_name)
 
-            mlflow.log_params(config.model_dump(mode="json"))
+            mlflow.log_params(
+                {
+                    "git_sha": get_git_sha(),
+                    **config.model_dump(mode="json"),
+                }
+            )
 
             run_link = f"{mlflow.get_tracking_uri()}/#/experiments/{mlflow.get_experiment_by_name(config.mlflow_experiment).experiment_id}/runs/{mlflow.get_run(mlflow.active_run().info.run_id).info.run_id}"
             eliot.log_message(f"Started MLflow run with name '{run_name}': {run_link}", level="info")
