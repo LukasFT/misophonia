@@ -91,7 +91,7 @@ def binaural_mix(
 
     def _make_binamix_track(spec: TrackAudioSpec) -> TrackObject:
         track, padded_audio = spec
-        return TrackObject(
+        return TrackObject(  # NOTE: Tonio change this, but it should not be changed
             name=track.source_item.file_path.stem,
             azimuth=track.azimuth,
             elevation=track.elevation,
