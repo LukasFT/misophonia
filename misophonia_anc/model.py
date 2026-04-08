@@ -189,7 +189,7 @@ class MisophoniaANCNet(nn.Module):
         """Get the hyperparameters used to initialize the model. This can be useful for logging and checkpointing."""
         return dict(self._hyperparameters)
 
-    def save_checkpoint(self, ckpt_path: Path, **other_info: dict) -> None:
+    def save_checkpoint(self, ckpt_path: Path, *, epoch: int, **other_info: dict) -> None:
         """
         Save model checkpoint.
 
@@ -203,6 +203,7 @@ class MisophoniaANCNet(nn.Module):
             {
                 "model_state": self.state_dict(),
                 "hyperparameters": self.hyperparameters,
+                "epoch": epoch,
                 "git_sha": get_git_sha(),
                 **other_info,
             },
@@ -212,7 +213,7 @@ class MisophoniaANCNet(nn.Module):
     @classmethod
     def from_config(
         cls, config: MisophoniaANCConfig, *, checkpoint: Path | None = None, device: torch.device | None = None
-    ) -> "MisophoniaANCNet":
+    ) -> tuple["MisophoniaANCNet", dict]:
         """
         Load model from config and checkpoint.
 
@@ -223,21 +224,26 @@ class MisophoniaANCNet(nn.Module):
             device: Device to move the model to. If None, the model will be moved to the default device.
 
         Returns:
-            An instance of MisophoniaANCNet initialized according to the provided config and checkpoint.
+            a tuple containing:
+             - An instance of MisophoniaANCNet initialized according to the provided config and checkpoint.
+             - A dictionary containing metadata from the checkpoint (e.g. epoch, hyperparameters) if a checkpoint was provided, or an empty dictionary if no checkpoint was provided.
         """
         model_params = dict(config.model_params)
+        metadata = {}
 
         if checkpoint is None:
             model = MisophoniaANCNet(**model_params)
+            metadata["epoch"] = 0
         else:
             checkpoint = Path(checkpoint)
             assert checkpoint.is_file(), f"Checkpoint path {checkpoint} does not exist or is not a file."
-            checkpoint_data = torch.load(checkpoint, map_location=device)
-            assert "model_state" in checkpoint_data, f"Checkpoint file {checkpoint} does not contain 'model_state'."
+            metadata = torch.load(checkpoint, map_location=device)
+            assert "model_state" in metadata, f"Checkpoint file {checkpoint} does not contain 'model_state'."
+            assert "epoch" in metadata, f"Checkpoint file {checkpoint} does not contain 'epoch'."
 
-            if "hyperparameters" in checkpoint_data:
+            if "hyperparameters" in metadata:
                 for key, value in model_params.items():
-                    if key in checkpoint_data["hyperparameters"] and checkpoint_data["hyperparameters"][key] != value:
+                    if key in metadata["hyperparameters"] and metadata["hyperparameters"][key] != value:
                         eliot.log_message(
                             f"Checkpoint hyperparameter {key} has value {value} which does not match config value {model_params[key]}. Replacing config value with checkpoint value.",
                             level="warning",
@@ -247,13 +253,14 @@ class MisophoniaANCNet(nn.Module):
                 eliot.log_message(f"Checkpoint {checkpoint} does not contain hyperparameters.", level="warning")
 
             model = MisophoniaANCNet(**model_params)
-            state_dict = checkpoint_data["model_state"]
+            state_dict = metadata["model_state"]
+            metadata.pop("model_state")  # Remove model state from metadata to avoid confusion
             model.load_state_dict(state_dict)
 
         if device is not None:
             model.to(device)
 
-        return model
+        return model, metadata
 
 
 class MaskNet(nn.Module):
