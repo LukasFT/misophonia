@@ -208,6 +208,7 @@ def train(
             train_loader=train_loader,
             val_loader=val_loader,
             n_epochs=config.num_epochs,
+            # TODO: If a checkpoint is given, we should start at epoch corresponding to that checkpoint + 1, not epoch 1
             save_dir=Path(model_dir),
             **config.model_hyperparams,
         )
