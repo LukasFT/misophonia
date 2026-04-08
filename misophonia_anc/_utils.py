@@ -10,6 +10,7 @@ from pathlib import Path
 
 import eliot
 import numpy as np
+import pandas as pd
 import pydantic
 import soundfile as sf
 import torch
@@ -23,6 +24,8 @@ from tqdm import tqdm
 from misophonia_dataset.interface import BaseModel, MisophoniaItem, SplitT
 from misophonia_dataset.main import get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
+
+from .train import si_snr_improvement
 
 # Initialize random generator for reproducibility
 rng = np.random.default_rng()
@@ -271,6 +274,57 @@ def print_mem(label: str) -> None:
 ####################
 
 
+def perfrom_eval(
+    model: torch.nn.Module,
+    data_loader: wds.WebLoader,
+    *,
+    device: torch.device,
+) -> pd.DataFrame:
+    """
+    Run inference on the given model and dataloader, and save the related audio.
+    """
+
+    model.eval()
+    si_snr_improvements = []
+    ild_diffs = []
+    itd_diffs = []
+    latencies = []
+
+    with torch.no_grad():
+        for idx, (inputs, gt, audio_len) in enumerate(data_loader):
+            if idx == 0:
+                for _ in range(100):
+                    # Warm up for latency test
+                    output = model(*inputs)
+
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            gt = gt.to(device)
+
+            output = model(inputs)
+            pred = output["x"]
+
+            si_snr_imp = si_snr_improvement(pred, gt, audio_len)
+            ild = ild_diff(pred, gt)
+            itd = itd_diff(pred, gt)
+            latency = run_time(model, inputs, profiling=False)
+
+            si_snr_improvements.append(si_snr_imp.item())
+            ild_diffs.append(ild.item())
+            itd_diffs.append(itd.item())
+            latencies.append(latency)
+
+    results = pd.DataFrame(
+        {
+            "si_snr_improvement": np.mean(si_snr_improvements),
+            "ild_diff": np.mean(ild_diffs),
+            "itd_diff": np.mean(itd_diffs),
+            "latency_ms": np.mean(latencies),
+        }
+    )
+    eliot.log_message(f"Evaluation results:\n{results}", level="info")
+    return results
+
+
 def perform_inference(
     model: torch.nn.Module,
     data_loader: wds.WebLoader,
@@ -354,8 +408,6 @@ def run_time(model, inputs, *, profiling: bool = False) -> float:
     Returns runtime of a model in ms.
     """
     # Warmup
-    for _ in range(100):
-        output = model(*inputs)
 
     with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
         with record_function("model_inference"):

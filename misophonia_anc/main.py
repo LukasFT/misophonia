@@ -21,6 +21,7 @@ from ._utils import (
     get_allocated_cpus,
     get_git_sha,
     make_dataloader,
+    perform_eval,
     perform_inference,
     preprocess_to_webdataset_pt,
     print_mem,
@@ -283,6 +284,59 @@ def infer(
     perform_inference(model, split_loader, save_to=samples_dir, device=device)
 
     eliot.log_message(f"Saved {num_samples} samples to {samples_dir}", level="debug")
+
+
+@app.command()
+def eval(
+    name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    split: Annotated[SplitT, typer.Argument(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
+    *,
+    checkpoint: Annotated[
+        str,
+        typer.Option(..., help="Name of model checkpoint to load. If 'random', a random untrained model will be used."),
+    ] = "best_weights.pt",
+    num_workers: Annotated[
+        int,
+        typer.Option(
+            ...,
+            help="Number of workers for data loading. A few will suffice, too many will consume extensive memory.",
+        ),
+    ] = 2,
+    batch_size: Annotated[int, typer.Option(..., help="Batch size for evaluation.")] = 4,
+    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+) -> None:
+
+    model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    checkpoint_file = model_dir / "checkpoints" / checkpoint
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+
+    try:
+        model = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+    except FileNotFoundError:
+        eliot.log_message(f"Invalid checkpoint file: {checkpoint_file}", level="error")
+        raise
+
+    dataset_split_dir = model_dir / "webdataset" / split
+    eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
+    shards_split = dataset_split_dir.glob("data-*.tar")
+    data_loader = make_dataloader(
+        shards_split,
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
+
+    results = perform_eval(
+        model=model,
+        data_loader=data_loader,
+        device=device,
+    )
+
+    results_file = model_dir / f"evaluation_{split}_{checkpoint.replace('.pt', '')}.csv"
+
+    results.to_csv(results_file, index=False)
+    eliot.log_message(f"Saved evaluation results to {results_file}", level="info")
 
 
 if __name__ == "__main__":
