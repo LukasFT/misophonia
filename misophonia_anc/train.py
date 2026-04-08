@@ -174,7 +174,7 @@ def train_model(
     # Checkpoint trackers
     best_epoch = -1
     best_val_si_snr_improvement = -np.inf
-    for epoch in range(n_epochs):
+    for epoch in range(1, n_epochs + 1):
         train_loss, global_step_train = train_epoch(model, device, optimizer, train_loader, global_step_train)
         train_losses.append(train_loss)
 
@@ -186,7 +186,7 @@ def train_model(
         val_si_snr_improvements.append(val_si_snr_improvement)
 
         eliot.log_message(
-            f"Epoch {epoch + 1}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNRi = {val_si_snr_improvement}",
+            f"Epoch {epoch}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNRi = {val_si_snr_improvement}",
             level="debug",
         )
         if mlflow.active_run() is not None:
