@@ -17,6 +17,7 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 
 from ._utils import print_mem
+from .model import MisophoniaANCNet
 
 
 def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor) -> torch.Tensor:
@@ -134,7 +135,7 @@ def val_epoch(
 
 
 def train_model(
-    model: nn.Module,
+    model: MisophoniaANCNet,
     *,
     train_loader: wds.WebLoader,
     val_loader: wds.WebLoader,
@@ -144,13 +145,15 @@ def train_model(
     save_dir: Path,
     lr: float = 0.0005,
     weight_decay: float = 0.0,
+    global_step_train: int = 0,
+    global_step_val: int = 0,
 ) -> None:
     """
     Main function to run training loop on Misophonia ANC model. Checkpoints model weights after each epoch. Logs batch and epoch losses for both
     train and val set to mlflow project as well as si_snri on val set. Optionally plots and saves metrics to a local directory.
 
     Args:
-        model (nn.Module): Model to train
+        model (MisophoniaANCNet): Model to train
         train_loader (wds.WebLoader): Train dataset in the form of a WebLoader
         val_loader (wds.WebLoader): Val dataset in the form of a WebLoader
         n_epochs (int): number of epochs for training
@@ -159,6 +162,8 @@ def train_model(
         weight_decay (float): weight decay to apply to optimizer
         device (torch.device): cuda or cpu
         save_dir: Path to save model weights and metric plots
+        global_step_train (int): Metadata for MLflow to report total number of training batches already logged.
+        global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
     """
 
     model = model.to(device)
@@ -170,8 +175,6 @@ def train_model(
     val_losses = []
     val_si_snr_improvements = []
     val_si_snrs = []
-    global_step_train = 0
-    global_step_val = 0
 
     # Checkpoint trackers
     best_epoch = -1
@@ -211,6 +214,8 @@ def train_model(
         model.save_checkpoint(
             ckpt_path,
             epoch=epoch,
+            global_step_train=global_step_train,
+            global_step_val=global_step_val,
             val_si_snr_improvement=val_si_snr_improvement,
             val_si_snr=val_si_snr,
             val_loss=val_loss,
