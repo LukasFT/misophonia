@@ -198,12 +198,7 @@ def train(
             )
 
             if mlflow_existing_id is None:
-                mlflow.log_params(
-                    {
-                        "git_sha": get_git_sha(),
-                        **config.model_dump(mode="json"),
-                    }
-                )
+                mlflow.log_params(config.model_dump(mode="json", round_trip=True))
             else:
                 mlflow.set_tag("resumed", True)  # noqa: FBT003
                 eliot.log_message(
@@ -218,7 +213,7 @@ def train(
                     "git_sha": get_git_sha(),
                     "hostname": os.uname().nodename,
                     "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
-                    "config": config.model_dump(mode="json"),
+                    "config": config.model_dump(mode="json", round_trip=True),
                 },
                 "parameters_by_resume.json",
             )
