@@ -55,7 +55,6 @@ def train_epoch(
         audio_lens = audio_lens.to(device)
         _, _, T = gt.shape  # noqa: N806
 
-        # print_mem("after inputs")
         optimizer.zero_grad()
 
         # Mask output
@@ -67,7 +66,6 @@ def train_epoch(
 
         loss = loss_fn(output, gt)
         loss.backward()
-        # print_mem("after backward")
         optimizer.step()
 
         loss_value = loss.item()
@@ -179,7 +177,6 @@ def train_model(
     """
 
     model = model.to(device)
-    print_mem("after model")
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
 
     # Tracking metrics
