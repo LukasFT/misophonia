@@ -74,9 +74,9 @@ def preprocess_to_webdataset_pt(
         _save_audio_stereo(torch.from_numpy(gt), save_to / "gt.flac")
         metadata = {
             "item": item.model_dump(round_trip=True, mode="json", exclude={"mix", "ground_truth", "label_vector"}),
-            "mix_shape": mix.shape,
-            "gt_shape": gt.shape,
-            "label_vector": label_vec,
+            "mix_shape": list(mix.shape),
+            "gt_shape": list(gt.shape),
+            "label_vector": label_vec.tolist(),
             "LABEL_VECTOR_ORDER": LABEL_VECTOR_ORDER,
         }
         metadata_json = json.dumps(metadata, indent=4)
