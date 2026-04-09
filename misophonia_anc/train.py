@@ -83,7 +83,9 @@ def val_epoch(
     model: nn.Module,
     device: torch.device,
     val_loader: torch.utils.data.DataLoader,
+    *,
     start_global_step: int = 0,
+    epoch: int = 0,
 ) -> tuple[float, float, int]:
     """
     Function to evaluate model on validation set each epoch.
@@ -104,7 +106,9 @@ def val_epoch(
     val_si_snrs = []
 
     with torch.no_grad():
-        for batch_idx, (inputs, gt, audio_lens) in enumerate(val_loader):
+        for batch_idx, (inputs, gt, audio_lens) in tqdm(
+            enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"
+        ):
             inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
             _, _, T = gt.shape  # noqa: N806
 
@@ -199,7 +203,11 @@ def train_model(
         train_losses.append(train_loss)
 
         val_loss, val_si_snr_improvement, val_si_snr, global_step_val = val_epoch(
-            model, device, val_loader, global_step_val
+            model,
+            device,
+            val_loader,
+            start_global_step=global_step_val,
+            epoch=epoch,
         )
         val_losses.append(val_loss)
         val_si_snrs.append(val_si_snr)
