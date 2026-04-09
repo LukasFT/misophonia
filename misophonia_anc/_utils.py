@@ -67,7 +67,7 @@ def preprocess_to_webdataset_pt(
         gt = item.get_ground_truth_audio()
         label_vec = item.label_vector
 
-        save_to = Path("debug_outputs") / f"item_{item.idx}"
+        save_to = Path("debug_outputs") / f"item_{idx:09d}"
         save_to.mkdir(parents=True, exist_ok=True)
         _save_audio_stereo(torch.from_numpy(mix), save_to / "mix.flac")
         _save_audio_stereo(torch.from_numpy(gt), save_to / "gt.flac")
