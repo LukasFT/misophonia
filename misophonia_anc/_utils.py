@@ -60,28 +60,29 @@ def preprocess_to_webdataset_pt(
     """
 
     def process_item(idx) -> dict:
-        item = dataset_split[idx]
+        item: MisophoniaItem = dataset_split[idx]
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
-        mix_array, gt_array, label_array = preprocess_item_to_tensors(item)
-
-        sample = {"__key__": f"{idx:09d}", "mix.npy": mix_array, "label.npy": label_array, "gt.npy": gt_array}
-        return sample
-
-    def preprocess_item_to_tensors(item: MisophoniaItem) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Fetches the audio in the form of np.ndarray for the binaural mix and ground truth.
-        Also fetches the label vector as np.ndarray.
-        """
-        # Example preprocessing (replace with actual logic)
         mix = item.get_mix_audio()
         gt = item.get_ground_truth_audio()
         label_vec = item.label_vector
-        print(f"Item: {item.model_dump(round_trip=True)}")
-        print(f"Mix shape: {mix.shape}, GT shape: {gt.shape}, Label vector: {label_vec}")
-        print(f"Label vector order: {LABEL_VECTOR_ORDER}")
 
-        return (mix, label_vec, gt)
+        save_to = Path("debug_outputs") / f"item_{item.idx}"
+        save_to.mkdir(parents=True, exist_ok=True)
+        _save_audio_stereo(torch.from_numpy(mix), save_to / "mix.flac")
+        _save_audio_stereo(torch.from_numpy(gt), save_to / "gt.flac")
+        metadata = {
+            "item": item.model_dump(round_trip=True),
+            "mix_shape": mix.shape,
+            "gt_shape": gt.shape,
+            "label_vector": label_vec,
+            "LABEL_VECTOR_ORDER": LABEL_VECTOR_ORDER,
+        }
+        with open(save_to / "metadata.yaml", "w") as f:
+            yaml.safe_dump(metadata, f)
+
+        sample = {"__key__": f"{idx:09d}", "mix.npy": mix, "label.npy": label_vec, "gt.npy": gt}
+        return sample
 
     num_workers = num_workers or os.cpu_count() or 1
 
