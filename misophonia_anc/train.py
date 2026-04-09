@@ -193,7 +193,7 @@ def train_model(
             device=device,
             optimizer=optimizer,
             train_loader=train_loader,
-            global_step_train=global_step_train,
+            start_global_step=global_step_train,
             epoch=epoch,
         )
         train_losses.append(train_loss)
