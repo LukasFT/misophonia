@@ -187,19 +187,30 @@ def train(
             mlflow.set_tracking_uri(mlflow_uri)
             mlflow.set_experiment(config.mlflow_experiment)
 
-            hostname = os.uname().nodename
-            run_name = f"Train {name} on {hostname} with {device} at {datetime.now().isoformat()}"
-            mlflow.start_run(run_name=run_name)
-
-            mlflow.log_params(
-                {
-                    "git_sha": get_git_sha(),
-                    **config.model_dump(mode="json"),
-                }
+            mlflow.start_run(
+                run_id=checkpoint_metadata.get(
+                    "mlflow_run_id", None
+                ),  # If resuming from checkpoint, continue the same MLflow run
+                run_name=f"Train at {datetime.now().isoformat()}",  # Name if starting new run
             )
 
+            try:
+                mlflow.log_params(
+                    {
+                        "git_sha": get_git_sha(),
+                        **config.model_dump(mode="json"),
+                    }
+                )
+            except Exception as e:
+                eliot.log_message(
+                    f"Failed to log params to MLflow. Continuing without logging params. Error: {e}", level="error"
+                )
+
             run_link = f"{mlflow.get_tracking_uri()}/#/experiments/{mlflow.get_experiment_by_name(config.mlflow_experiment).experiment_id}/runs/{mlflow.get_run(mlflow.active_run().info.run_id).info.run_id}"
-            eliot.log_message(f"Started MLflow run with name '{run_name}': {run_link}", level="info")
+            run_name = mlflow.get_run(mlflow.active_run().info.run_id).data.tags.get(
+                "mlflow.runName", "Unknown Run Name"
+            )
+            eliot.log_message(f"Tracking using MLflow '{run_name}': {run_link}", level="info")
 
     try:
         train_model(

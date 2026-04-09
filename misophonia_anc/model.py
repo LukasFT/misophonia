@@ -8,6 +8,7 @@ Heavily based on https://github.com/vb000/SemanticHearing
 from pathlib import Path
 
 import eliot
+import mlflow
 import torch
 import torch.nn as nn
 
@@ -205,6 +206,7 @@ class MisophoniaANCNet(nn.Module):
                 "hyperparameters": self.hyperparameters,
                 "epoch": epoch,
                 "git_sha": get_git_sha(),
+                "mlflow_run_id": mlflow.active_run().info.run_id if mlflow.active_run() is not None else None,
                 **other_info,
             },
             ckpt_path,
