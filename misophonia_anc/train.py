@@ -4,6 +4,7 @@ The main training script for training on synthetic data
 
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import eliot
 import matplotlib.pyplot as plt
@@ -17,7 +18,9 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 
 from ._utils import print_mem
-from .model import MisophoniaANCNet
+
+if TYPE_CHECKING:
+    from .model import MisophoniaANCNet
 
 
 def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor) -> torch.Tensor:
@@ -135,7 +138,7 @@ def val_epoch(
 
 
 def train_model(
-    model: MisophoniaANCNet,
+    model: "MisophoniaANCNet",
     *,
     train_loader: wds.WebLoader,
     val_loader: wds.WebLoader,
