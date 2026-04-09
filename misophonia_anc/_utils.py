@@ -25,8 +25,6 @@ from misophonia_dataset.interface import BaseModel, MisophoniaItem, SplitT
 from misophonia_dataset.main import get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 
-from .train import si_snr_improvement
-
 # Initialize random generator for reproducibility
 rng = np.random.default_rng()
 
@@ -283,6 +281,7 @@ def perfrom_eval(
     """
     Run inference on the given model and dataloader, and save the related audio.
     """
+    from .train import si_snr_improvement
 
     model.eval()
     si_snr_improvements = []
