@@ -81,7 +81,6 @@ def preprocess_to_webdataset_pt(
         print(f"Mix shape: {mix.shape}, GT shape: {gt.shape}, Label vector: {label_vec}")
         print(f"Label vector order: {LABEL_VECTOR_ORDER}")
 
-        raise NotImplementedError("Debugging")
         return (mix, label_vec, gt)
 
     num_workers = num_workers or os.cpu_count() or 1
