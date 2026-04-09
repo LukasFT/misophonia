@@ -190,15 +190,18 @@ class MisophoniaANCNet(nn.Module):
         """Get the hyperparameters used to initialize the model. This can be useful for logging and checkpointing."""
         return dict(self._hyperparameters)
 
-    def save_checkpoint(self, ckpt_path: Path, *, epoch: int, **other_info: dict) -> None:
+    def save_checkpoint(
+        self, ckpt_path: Path, *, epoch: int, global_step_train: int, global_step_val: int, **other_info: dict
+    ) -> None:
         """
         Save model checkpoint.
 
         Args:
             ckpt_path: Path to save the checkpoint file.
             epoch: Current epoch number.
-            val_si_snr_improvement: Validation SI-SNR improvement at the current epoch.
-            hyperparameters: Dictionary of model hyperparameters to save in the checkpoint.
+            global_step_train: Total number of training batches logged.
+            global_step_val: Total number of validation batches logged.
+            other_info: Additional key-value pairs to include in the checkpoint metadata (e.g. metrics like val_loss, val_si_snr_improvement).
         """
         torch.save(
             {
@@ -207,6 +210,8 @@ class MisophoniaANCNet(nn.Module):
                 "epoch": epoch,
                 "git_sha": get_git_sha(),
                 "mlflow_run_id": mlflow.active_run().info.run_id if mlflow.active_run() is not None else None,
+                "global_step_train": global_step_train,
+                "global_step_val": global_step_val,
                 **other_info,
             },
             ckpt_path,
