@@ -197,26 +197,25 @@ def train(
                 run_name=f"Train at {datetime.now().isoformat()}",  # Name if starting new run
             )
 
+            mlflow_artifact = f"parameters_{datetime.now().isoformat()}.json"
+            mlflow_parameters = {
+                "timestamp": datetime.now().isoformat(),
+                "checkpoint_metadata": checkpoint_metadata,
+                "git_sha": get_git_sha(),
+                "hostname": os.uname().nodename,
+                "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+                "config": config.model_dump(mode="json", round_trip=True),
+            }
+            mlflow.log_dict(mlflow_parameters, mlflow_artifact)
+
             if mlflow_existing_id is None:
-                mlflow.log_params(config.model_dump(mode="json", round_trip=True))
+                mlflow.log_params(mlflow_parameters["config"])
             else:
                 mlflow.set_tag("resumed", True)  # noqa: FBT003
                 eliot.log_message(
-                    "Not updating MLflow parameters. Check parameters_by_resume.json artifact for checkpointed parameters.",
+                    f"Not updating MLflow parameters. Check {mlflow_artifact} artifact for checkpointed parameters.",
                     level="debug",
                 )
-
-            mlflow.log_dict(
-                {
-                    "timestamp": datetime.now().isoformat(),
-                    "checkpoint_metadata": checkpoint_metadata,
-                    "git_sha": get_git_sha(),
-                    "hostname": os.uname().nodename,
-                    "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
-                    "config": config.model_dump(mode="json", round_trip=True),
-                },
-                "parameters_by_resume.json",
-            )
 
             run_link = f"{mlflow.get_tracking_uri()}/#/experiments/{mlflow.get_experiment_by_name(config.mlflow_experiment).experiment_id}/runs/{mlflow.get_run(mlflow.active_run().info.run_id).info.run_id}"
             run_name = mlflow.get_run(mlflow.active_run().info.run_id).data.tags.get(
