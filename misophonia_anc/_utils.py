@@ -361,10 +361,18 @@ def perform_inference(
                 label_idx = np.where(label_vector == 1)[0][0]
                 label = LABEL_VECTOR_ORDER[label_idx]
             except IndexError:
+                label_idx = None
                 label = None
 
             idx_s = f"{idx:03d}"
-            metadata.append({"idx": idx_s, "fg_label": label})
+            metadata.append(
+                {
+                    "idx": idx_s,
+                    "fg_label": label,
+                    "label_vector": label_vector.tolist(),
+                    "audio_len": valid_len,
+                }
+            )
 
             if save_to is not None:
                 _save_audio_stereo(mix_i, save_to / f"sample_{idx_s}_mix.flac")
