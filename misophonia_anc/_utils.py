@@ -295,7 +295,7 @@ def print_mem(label: str) -> None:
 ####################
 
 
-def perfrom_eval(
+def perform_eval(
     model: torch.nn.Module,
     data_loader: wds.WebLoader,
     *,
