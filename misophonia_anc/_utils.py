@@ -2,6 +2,7 @@
 
 # ruff: noqa: ANN001 # TODO: Improve quality
 
+import json
 import os
 import subprocess
 from collections.abc import Iterable
@@ -78,8 +79,9 @@ def preprocess_to_webdataset_pt(
             "label_vector": label_vec,
             "LABEL_VECTOR_ORDER": LABEL_VECTOR_ORDER,
         }
-        with open(save_to / "metadata.yaml", "w") as f:
-            yaml.safe_dump(metadata, f)
+        metadata_json = json.dumps(metadata, indent=4)
+        with open(save_to / "metadata.json", "w") as f:
+            f.write(metadata_json)
 
         sample = {"__key__": f"{idx:09d}", "mix.npy": mix, "label.npy": label_vec, "gt.npy": gt}
         return sample
