@@ -176,6 +176,10 @@ def train(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     eliot.log_message(f"Using device: {device}", level="debug")
     checkpoint = None if (checkpoint == "init" or checkpoint is None) else model_dir / "checkpoints" / checkpoint
+    if checkpoint is None:
+        eliot.log_message("No checkpoint provided. Initializing random model.", level="info")
+    else:
+        eliot.log_message(f"Loading model from checkpoint: {checkpoint}", level="info")
     model, checkpoint_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint, device=device)
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
