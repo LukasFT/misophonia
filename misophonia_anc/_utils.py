@@ -21,6 +21,7 @@ from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
 from tqdm import tqdm
 
+from misophonia_dataset.interface import LABEL_VECTOR as LABEL_VECTOR_ORDER
 from misophonia_dataset.interface import BaseModel, MisophoniaItem, SplitT
 from misophonia_dataset.main import get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
@@ -339,6 +340,8 @@ def perform_inference(
         save_to.mkdir(parents=True, exist_ok=True)
         assert save_to.is_dir()
 
+    metadata = []
+
     model.eval()
     with torch.no_grad():
         for idx, (inp, gt, audio_len) in enumerate(data_loader):
@@ -353,10 +356,25 @@ def perform_inference(
             pred_i = pred[0, :, :valid_len]
             mix_i = inputs["mix"][0, :, :valid_len]
 
+            label_vector = inputs["label_vector"][0].cpu().numpy()
+            try:
+                label_idx = np.where(label_vector == 1)[0][0]
+                label = LABEL_VECTOR_ORDER[label_idx]
+            except IndexError:
+                label = None
+
+            idx_s = f"{idx:03d}"
+            metadata.append({"idx": idx_s, "fg_label": label})
+
             if save_to is not None:
-                _save_audio_stereo(mix_i, save_to / f"sample_{idx:03d}_mix.flac")
-                _save_audio_stereo(gt_i, save_to / f"sample_{idx:03d}_gt.flac")
-                _save_audio_stereo(pred_i, save_to / f"sample_{idx:03d}_pred.flac")
+                _save_audio_stereo(mix_i, save_to / f"sample_{idx_s}_mix.flac")
+                _save_audio_stereo(gt_i, save_to / f"sample_{idx_s}_gt.flac")
+                _save_audio_stereo(pred_i, save_to / f"sample_{idx_s}_pred.flac")
+
+        if save_to is not None:
+            # Save metadata as csv
+            metadata_df = pd.DataFrame(metadata)
+            metadata_df.to_csv(save_to / "metadata.csv", index=False)
 
 
 def _save_audio_stereo(audio: torch.Tensor, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
