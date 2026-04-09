@@ -16,6 +16,7 @@ import torch.optim as optim
 import webdataset as wds  # noqa: F401
 from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr
 from torchmetrics.functional.audio import signal_noise_ratio as snr
+from tqdm import tqdm
 
 from ._utils import print_mem
 
@@ -34,16 +35,20 @@ def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor) 
 
 def train_epoch(
     model: nn.Module,
+    *,
     device: torch.device,
     optimizer: optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
     start_global_step: int = 0,
+    epoch: int = 0,
 ) -> tuple[float, int]:
     model = model.train()
 
     batch_train_losses = []
 
-    for batch_idx, (inputs, gt, audio_lens) in enumerate(train_loader):
+    for batch_idx, (inputs, gt, audio_lens) in tqdm(
+        enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"
+    ):
         # in loader return mask that is [B, C, N]
         inputs = {k: v.to(device) for k, v in inputs.items()}
         gt = gt.to(device)
@@ -183,7 +188,14 @@ def train_model(
     best_epoch = -1
     best_val_si_snr_improvement = -np.inf
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
-        train_loss, global_step_train = train_epoch(model, device, optimizer, train_loader, global_step_train)
+        train_loss, global_step_train = train_epoch(
+            model,
+            device=device,
+            optimizer=optimizer,
+            train_loader=train_loader,
+            global_step_train=global_step_train,
+            epoch=epoch,
+        )
         train_losses.append(train_loss)
 
         val_loss, val_si_snr_improvement, val_si_snr, global_step_val = val_epoch(
