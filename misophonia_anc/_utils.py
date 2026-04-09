@@ -106,7 +106,7 @@ class MisophoniaDatasetPreprocessedConfig(BaseModel):
         None,
         description="Whether to use a premade dataset with the given name. If a non-empty string, use that name of the premade dataset.",
     )
-    generated_source_data: list[str] = pydantic.Field(
+    generated_source_data: list[str] | tuple[str, ...] = pydantic.Field(
         get_default_datasets_names(),
         description="If from_premade is False, will generate dataset using the given source datasets. See GeneratedMisophoniaDataset for options.",
     )
