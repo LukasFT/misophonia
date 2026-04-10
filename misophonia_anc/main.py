@@ -320,20 +320,20 @@ def debug() -> None:
     debug_path = Path("data") / "debug" / datetime.now().strftime("%Y%m%d_%H%M%S")
     debug_path.mkdir(parents=True, exist_ok=True)
 
-    # eliot.log_message("=== Make base dataset ===", level="info")
+    eliot.log_message("=== Make base dataset ===", level="info")
 
-    # dataset = PremadeMisophoniaDataset(name="debug-v1")
-    # dataset_split = dataset.get_split("train")
+    dataset = PremadeMisophoniaDataset(name="debug-v1")
+    dataset_split = dataset.get_split("train")
 
-    # eliot.log_message("=== Test preprocess to webdataset ===", level="info")
-    webdataset_path = debug_path / "webdataset"
-    # preprocessed_glob = preprocess_to_webdataset_pt(
-    #     webdataset_path,
-    #     dataset_split,
-    #     num_workers=0,
-    #     samples_per_shard=16,
-    # )
-    # eliot.log_message(f"Saved preprocessed dataset to: {webdataset_path} (glob: {preprocessed_glob})", level="debug")
+    eliot.log_message("=== Test preprocess to webdataset ===", level="info")
+    webdataset_path = Path("data") / "debug-v1" / "webdataset"
+    preprocessed_glob = preprocess_to_webdataset_pt(
+        webdataset_path,
+        dataset_split,
+        num_workers=0,
+        samples_per_shard=16,
+    )
+    eliot.log_message(f"Saved preprocessed dataset to: {webdataset_path} (glob: {preprocessed_glob})", level="debug")
 
     eliot.log_message("=== Test dataloader ===", level="info")
     dataloader_save_dir = debug_path / "dataloader_samples"
