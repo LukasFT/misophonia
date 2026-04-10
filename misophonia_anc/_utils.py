@@ -150,6 +150,11 @@ def custom_collate_fn(
     Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
     For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
 
+    Also randomly assign control sounds a class in the label vector during training, since they don't have a specific class.
+    This is done by randomly assigning a 1 to one of the trigger classes in the label vector.
+    This is done because the purpose of the control sounds is to teach the model that even if a category is queried,
+        it might need to predict silence if there is no trigger sound of that category in the mix.
+
     Args:
         mixes (np.ndarray): synthetically generated binaural mixes
         labels (np.ndarray): one-hot encoded label vectors
@@ -167,7 +172,16 @@ def custom_collate_fn(
     gts = []
     labels = []
     audio_lens = []
+    is_controls = []
     for mix, label, gt in batch:
+        is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
+        is_controls.append(is_control)
+        if is_control:
+            # Randomly assign a class to the control sound in the label vector
+            # See note in docstring for motivation
+            random_class = rng.integers(0, len(label))
+            label[random_class] = 1
+
         L = mix.shape[-1]  # noqa: N806
         if L >= chunk_size:
             # generate a single random start for both mix and gt
@@ -187,6 +201,7 @@ def custom_collate_fn(
     inputs = {
         "mix": torch.stack(mixes),
         "label_vector": torch.stack(labels),
+        "is_control": torch.stack(is_controls),
     }
     gt = torch.stack(gts)
     audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
@@ -225,7 +240,7 @@ def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers
         .to_tuple("mix.npy", "gt.npy", "label.npy")
         .batched(
             batch_size,
-            collation_fn=custom_collate_fn,  # Make batches of the same size
+            collation_fn=custom_collate_fn,  # Make batches of the same size, and randomly assign control sounds a class
         )
     )
 
