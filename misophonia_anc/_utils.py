@@ -245,7 +245,7 @@ def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers
         )
         .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
-        .to_tuple("mix.npy", "gt.npy", "label.npy")
+        .to_tuple("mix.npy", "label.npy", "gt.npy")
         .batched(
             batch_size,
             collation_fn=custom_collate_fn,  # Make batches of the same size, and randomly assign control sounds a class
