@@ -322,12 +322,16 @@ def debug() -> None:
 
     eliot.log_message("=== Make base dataset ===", level="info")
 
-    dataset = GeneratedMisophoniaDataset(source_data=get_default_datasets_names())
+    dataset = GeneratedMisophoniaDataset(
+        source_data=tuple(get_dataset_from_name(name) for name in get_default_datasets_names())
+    )
     dataset_split = dataset.get_split(
         "train",
         num_samples=16,
         trig_to_control_ratio=0.5,
     )
+    # dataset = PremadeMisophoniaDataset(name="demo-v1")
+    # dataset_split = dataset.get_split("train")
 
     base_save_path = debug_path / "base_dataset"
     base_save_path.mkdir(parents=True, exist_ok=True)
