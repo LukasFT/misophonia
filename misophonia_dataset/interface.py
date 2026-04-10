@@ -150,7 +150,7 @@ class SourceTrack(BaseModel):
             values["elevation"] = rng.integers(-180, 181)
 
         if "level" not in values:
-            values["level"] = round(rng.uniform(0.4, 1.0), 1)
+            values["level"] = round(rng.uniform(0.8, 1.0), 1)
 
         if "reverb" not in values:
             values["reverb"] = round(rng.uniform(0.0, 1.0), 1)
