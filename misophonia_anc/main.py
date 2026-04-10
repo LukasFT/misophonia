@@ -14,7 +14,7 @@ from typing_extensions import Annotated
 
 from misophonia_dataset._log import setup_print_logging
 from misophonia_dataset.interface import SplitT, get_data_dir
-from misophonia_dataset.main import get_dataset_from_name, get_default_datasets_names
+from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
 from ._utils import (
@@ -322,46 +322,8 @@ def debug() -> None:
 
     eliot.log_message("=== Make base dataset ===", level="info")
 
-    dataset = GeneratedMisophoniaDataset(
-        source_data=tuple(get_dataset_from_name(name) for name in get_default_datasets_names())
-    )
-    dataset_split = dataset.get_split(
-        "train",
-        num_samples=128,
-        trig_to_control_ratio=0.90,
-    )
-    # dataset = PremadeMisophoniaDataset(name="demo-v1")
-    # dataset_split = dataset.get_split("train")
-
-    base_save_path = debug_path / "base_dataset"
-    base_save_path.mkdir(parents=True, exist_ok=True)
-    metadata = []
-    for item_idx, item in enumerate(dataset_split):
-        # save item
-        gt = item.get_ground_truth_audio()
-        mix = item.get_mix_audio()
-        fg_labels = item.foreground_categories
-        fb_label_vector = item.get_label_vector()
-        bg_labels = item.background_categories
-
-        metadata.append(
-            {
-                "item_idx": item_idx,
-                "uuid": item.uuid,
-                "foreground_categories": fg_labels,
-                "background_categories": bg_labels,
-                "label_vector": fb_label_vector.tolist(),
-            }
-        )
-
-        _save_audio_stereo(gt, base_save_path / f"{item_idx}_gt.flac")
-        _save_audio_stereo(mix, base_save_path / f"{item_idx}_mix.flac")
-
-    metadata_file_base = base_save_path / "metadata.json"
-    with metadata_file_base.open("w") as f:
-        json.dump(metadata, f, indent=4)
-
-    eliot.log_message(f"Saved base dataset with {len(dataset_split)} items to {base_save_path}", level="debug")
+    dataset = PremadeMisophoniaDataset(name="debug-v1")
+    dataset_split = dataset.get_split("train")
 
     eliot.log_message("=== Test preprocess to webdataset ===", level="info")
     webdataset_path = debug_path / "webdataset"
@@ -369,7 +331,6 @@ def debug() -> None:
         webdataset_path,
         dataset_split,
         num_workers=0,
-        show_progress=False,
         samples_per_shard=16,
     )
     eliot.log_message(f"Saved preprocessed dataset to: {webdataset_path} (glob: {preprocessed_glob})", level="debug")
