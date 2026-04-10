@@ -21,7 +21,7 @@ from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
 from tqdm import tqdm
 
-from misophonia_dataset.interface import BaseModel, MisophoniaItem, SplitT
+from misophonia_dataset.interface import DEFAULT_LABEL_ORDER, BaseModel, MisophoniaItem, SplitT
 from misophonia_dataset.main import get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
 
@@ -75,7 +75,7 @@ def preprocess_to_webdataset_pt(
         # Example preprocessing (replace with actual logic)
         mix = item.get_mix_audio()
         gt = item.get_ground_truth_audio()
-        label_vec = item.label_vector
+        label_vec = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
 
         return (mix, label_vec, gt)
 
