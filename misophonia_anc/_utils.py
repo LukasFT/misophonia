@@ -175,7 +175,7 @@ def custom_collate_fn(
     is_controls = []
     for mix, label, gt in batch:
         is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
-        is_controls.append(is_control)
+        is_controls.append(1 if is_control else 0)
         if is_control:
             # Randomly assign a class to the control sound in the label vector
             # See note in docstring for motivation
