@@ -71,7 +71,7 @@ def preprocess_to_webdataset_pt(
             "uuid": item.uuid,
             "fg_categories": item.foreground_categories,
             "bg_categories": item.background_categories,
-            "is_control": item.is_control,
+            "is_trigger": item.is_trigger,
             "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
             "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
         }
