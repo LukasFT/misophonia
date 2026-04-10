@@ -174,7 +174,7 @@ def _normalize_and_pad(
     #     for (item, audio), rms in zip(bg_tracks, rms_bg)
     # )
 
-    fg_max_end = max(track.end for track, _ in fg_norm)
+    fg_max_end = max(track.end for track, _ in fg_tracks)
     # Pad in case that the audio is shorter than max fg audio
     fg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in fg_tracks)
     bg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in bg_tracks)
