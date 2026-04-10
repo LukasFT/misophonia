@@ -161,7 +161,7 @@ def _normalize_and_pad(
     fg_tracks: tuple[TrackAudioSpec, ...],
     bg_tracks: tuple[TrackAudioSpec, ...],
 ) -> tuple[tuple[TrackAudioSpec, ...], tuple[TrackAudioSpec, ...]]:
-    RMS normalization:
+    # RMS normalization:
     rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
     rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
     rms_target = np.mean(rms_fg + rms_bg)
