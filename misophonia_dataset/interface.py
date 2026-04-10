@@ -33,7 +33,7 @@ LABEL_VECTOR = (
     "clearing_throat",
     "human_breathing",
     "knife_cutting",
-    "plastic_crumbling",
+    "plastic_crumpling",
     "swallowing",
     "typing",
     "water_drops",
