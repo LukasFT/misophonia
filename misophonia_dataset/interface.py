@@ -26,7 +26,7 @@ if platform.system() == "Linux":
     ctypes.util.find_library = _find_library_patched
 import librosa
 
-LABEL_VECTOR = [
+LABEL_VECTOR = (
     # "basketball_dribbling",
     # "flipping newspaper",
     "chewing_gum",
@@ -37,7 +37,7 @@ LABEL_VECTOR = [
     "swallowing",
     "typing",
     "water_drops",
-]
+)
 
 MappingT: TypeAlias = dict[str, dict[Literal["foams_mapping"], str]]
 """The structure of a mapping from dataset-specific classes to FOAMS classes."""
