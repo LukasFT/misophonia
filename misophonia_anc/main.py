@@ -1,5 +1,4 @@
 import itertools
-import json
 import os
 import subprocess
 from datetime import datetime
@@ -19,7 +18,6 @@ from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, Pr
 
 from ._utils import (
     MisophoniaANCConfig,
-    _save_audio_stereo,
     get_allocated_cpus,
     get_git_sha,
     make_dataloader,
@@ -309,84 +307,6 @@ def infer(
     perform_inference(model, split_loader, save_to=samples_dir, device=device)
 
     eliot.log_message(f"Saved {num_samples} samples to {samples_dir}", level="debug")
-
-
-@app.command()
-def debug() -> None:
-    """
-    Function to test code snippets during development.
-    """
-
-    debug_path = Path("data") / "debug" / datetime.now().strftime("%Y%m%d_%H%M%S")
-    debug_path.mkdir(parents=True, exist_ok=True)
-
-    eliot.log_message("=== Make base dataset ===", level="info")
-
-    dataset = PremadeMisophoniaDataset(name="debug-v1")
-    dataset_split = dataset.get_split("train")
-
-    eliot.log_message("=== Test preprocess to webdataset ===", level="info")
-    webdataset_path = Path("data") / "debug-v1" / "webdataset"
-    preprocessed_glob = preprocess_to_webdataset_pt(
-        webdataset_path,
-        dataset_split,
-        num_workers=0,
-        samples_per_shard=16,
-    )
-    eliot.log_message(f"Saved preprocessed dataset to: {webdataset_path} (glob: {preprocessed_glob})", level="debug")
-
-    eliot.log_message("=== Test dataloader ===", level="info")
-    dataloader_save_dir = debug_path / "dataloader_samples"
-    dataloader = make_dataloader(webdataset_path.glob("data-*.tar"), batch_size=4, num_workers=0)
-    metadata = []
-    for batch_idx, batch in enumerate(dataloader):
-        batch_dir = dataloader_save_dir / f"batch_{batch_idx}"
-        batch_dir.mkdir(parents=True, exist_ok=True)
-
-        inputs, gts, audio_lens = batch
-
-        metadata.append(
-            {
-                "batch_idx": batch_idx,
-                "inputs_keys": list(inputs.keys()),
-                "mix_shape": list(inputs["mix"].shape),
-                "label_vector_shape": list(inputs["label_vector"].shape),
-                "is_control_shape": list(inputs["is_control"].shape),
-                "gt_shape": list(gts.shape),
-                "audio_lens": audio_lens.tolist(),
-            }
-        )
-
-        for j in range(inputs["mix"].shape[0]):
-            try:
-                audio_len = audio_lens[j]
-                gt = gts[j, :, :audio_len]
-                mix = inputs["mix"][j, :, :audio_len]
-                label_vec = inputs["label_vector"][j]
-                is_control = inputs["is_control"][j]
-
-                _save_audio_stereo(gt, batch_dir / f"gt_{j}.flac")
-                _save_audio_stereo(mix, batch_dir / f"mix_{j}.flac")
-                metadata.append(
-                    {
-                        "batch_idx": batch_idx,
-                        "sample_idx": j,
-                        "label_vector": label_vec.tolist(),
-                        "gt_shape": list(gt.shape),
-                        "mix_shape": list(mix.shape),
-                        "label_vec_shape": list(label_vec.shape),
-                        "audio_len": audio_len,
-                        "is_control": is_control.item(),
-                    }
-                )
-            except Exception as e:
-                eliot.log_message(f"Error processing batch {batch_idx} sample {j}: {e}", level="error")
-
-    metadata_file_dataloder = dataloader_save_dir / "metadata.json"
-    with metadata_file_dataloder.open("w") as f:
-        json.dump(metadata, f, indent=4)
-
-    eliot.log_message(f"Saved dataloader batches to {dataloader_save_dir}", level="debug")
 
 
 if __name__ == "__main__":
