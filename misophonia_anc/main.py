@@ -400,6 +400,7 @@ def debug() -> None:
             gt = gt[j, :, :audio_len]
             mix = inputs["mix"][j, :, :audio_len]
             label_vec = inputs["label_vector"][j]
+            is_control = inputs["is_control"][j]
 
             _save_audio_stereo(gt, batch_dir / f"gt_{j}.flac")
             _save_audio_stereo(mix, batch_dir / f"mix_{j}.flac")
@@ -412,6 +413,7 @@ def debug() -> None:
                     "mix_shape": list(mix.shape),
                     "label_vec_shape": list(label_vec.shape),
                     "audio_len": audio_len,
+                    "is_control": is_control.item(),
                 }
             )
 
