@@ -161,18 +161,18 @@ def _normalize_and_pad(
     fg_tracks: tuple[TrackAudioSpec, ...],
     bg_tracks: tuple[TrackAudioSpec, ...],
 ) -> tuple[tuple[TrackAudioSpec, ...], tuple[TrackAudioSpec, ...]]:
-    # RMS normalization:
-    # rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
-    # rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
-    # rms_target = np.mean(rms_fg + rms_bg)
-    # fg_norm = tuple(
-    #     (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
-    #     for (item, audio), rms in zip(fg_tracks, rms_fg)
-    # )
-    # bg_norm = tuple(
-    #     (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
-    #     for (item, audio), rms in zip(bg_tracks, rms_bg)
-    # )
+    RMS normalization:
+    rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
+    rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
+    rms_target = np.mean(rms_fg + rms_bg)
+    fg_norm = tuple(
+        (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
+        for (item, audio), rms in zip(fg_tracks, rms_fg)
+    )
+    bg_norm = tuple(
+        (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
+        for (item, audio), rms in zip(bg_tracks, rms_bg)
+    )
 
     fg_max_end = max(track.end for track, _ in fg_tracks)
     # Pad in case that the audio is shorter than max fg audio
