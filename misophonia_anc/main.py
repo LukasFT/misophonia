@@ -357,26 +357,29 @@ def debug() -> None:
         )
 
         for j in range(inputs["mix"].shape[0]):
-            audio_len = audio_lens[j]
-            gt = gt[j, :, :audio_len]
-            mix = inputs["mix"][j, :, :audio_len]
-            label_vec = inputs["label_vector"][j]
-            is_control = inputs["is_control"][j]
+            try:
+                audio_len = audio_lens[j]
+                gt = gt[j, :, :audio_len]
+                mix = inputs["mix"][j, :, :audio_len]
+                label_vec = inputs["label_vector"][j]
+                is_control = inputs["is_control"][j]
 
-            _save_audio_stereo(gt, batch_dir / f"gt_{j}.flac")
-            _save_audio_stereo(mix, batch_dir / f"mix_{j}.flac")
-            metadata.append(
-                {
-                    "batch_idx": batch_idx,
-                    "sample_idx": j,
-                    "label_vector": label_vec.tolist(),
-                    "gt_shape": list(gt.shape),
-                    "mix_shape": list(mix.shape),
-                    "label_vec_shape": list(label_vec.shape),
-                    "audio_len": audio_len,
-                    "is_control": is_control.item(),
-                }
-            )
+                _save_audio_stereo(gt, batch_dir / f"gt_{j}.flac")
+                _save_audio_stereo(mix, batch_dir / f"mix_{j}.flac")
+                metadata.append(
+                    {
+                        "batch_idx": batch_idx,
+                        "sample_idx": j,
+                        "label_vector": label_vec.tolist(),
+                        "gt_shape": list(gt.shape),
+                        "mix_shape": list(mix.shape),
+                        "label_vec_shape": list(label_vec.shape),
+                        "audio_len": audio_len,
+                        "is_control": is_control.item(),
+                    }
+                )
+            except Exception as e:
+                eliot.log_message(f"Error processing batch {batch_idx} sample {j}: {e}", level="error")
 
     metadata_file_dataloder = dataloader_save_dir / "metadata.json"
     with metadata_file_dataloder.open("w") as f:
