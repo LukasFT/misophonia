@@ -359,22 +359,26 @@ def perform_inference(
                 _save_audio_stereo(pred_i, save_to / f"sample_{idx:03d}_pred.flac")
 
 
-def _save_audio_stereo(audio: torch.Tensor, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
+def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
     """
     Save audio tensor of shape [C, T] as wav.
     Assumes C is 2.
     """
     assert path.suffix == ".flac"
-    audio_np = audio.detach().cpu().float().numpy()
+    if isinstance(audio, torch.Tensor):
+        audio = audio.detach().cpu().float().numpy()
+
+    assert isinstance(audio, np.ndarray)
+    assert audio.ndim == 2, f"Expected audio of shape [C, T], got {audio.shape}"
 
     # soundfile expects [T] or [T, C]
-    if audio_np.ndim != 2:
-        raise ValueError(f"Expected audio of shape [C, T], got {audio_np.shape}")
+    if audio.ndim != 2:
+        raise ValueError(f"Expected audio of shape [C, T], got {audio.shape}")
 
-    audio_np = audio_np.T  # [T, C]
+    audio = audio.T  # [T, C]
     sf.write(
         path,
-        audio_np,
+        audio,
         samplerate=sample_rate,
         format="FLAC",
         subtype="PCM_24",
