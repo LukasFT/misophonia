@@ -2,6 +2,7 @@
 
 # ruff: noqa: ANN001 # TODO: Improve quality
 
+import json
 import os
 import subprocess
 from collections.abc import Iterable
@@ -59,25 +60,31 @@ def preprocess_to_webdataset_pt(
     """
 
     def process_item(idx) -> dict:
-        item = dataset_split[idx]
+        item: MisophoniaItem = dataset_split[idx]
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
-        mix_array, gt_array, label_array = preprocess_item_to_tensors(item)
+        mix_array = item.get_mix_audio()
+        gt_array = item.get_ground_truth_audio()
+        label_array = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
 
-        sample = {"__key__": f"{idx:09d}", "mix.npy": mix_array, "label.npy": label_array, "gt.npy": gt_array}
+        metadata = {
+            "uuid": item.uuid,
+            "fg_categories": item.foreground_categories,
+            "bg_categories": item.background_categories,
+            "is_control": item.is_control,
+            "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
+            "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
+        }
+        metadata_str = json.dumps(metadata)
+
+        sample = {
+            "__key__": f"{idx:09d}",
+            "mix.npy": mix_array,
+            "label.npy": label_array,
+            "gt.npy": gt_array,
+            "metadata.json": metadata_str,
+        }
         return sample
-
-    def preprocess_item_to_tensors(item: MisophoniaItem) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Fetches the audio in the form of np.ndarray for the binaural mix and ground truth.
-        Also fetches the label vector as np.ndarray.
-        """
-        # Example preprocessing (replace with actual logic)
-        mix = item.get_mix_audio()
-        gt = item.get_ground_truth_audio()
-        label_vec = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
-
-        return (mix, label_vec, gt)
 
     num_workers = num_workers or os.cpu_count() or 1
 
