@@ -141,7 +141,7 @@ def search_metadata(
     print(res)
 
 
-def get_dataset_from_name(name: str, base_dir: Path) -> SourceData:
+def get_dataset_from_name(name: str, base_dir: Path | None = None) -> SourceData:
     name = name.lower().strip()
     if name == "foams":
         return FoamsDataset(save_dir=get_data_dir(dataset_name="FOAMS", base_dir=base_dir))
