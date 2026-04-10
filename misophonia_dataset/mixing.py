@@ -28,11 +28,7 @@ def prepare_track_specs(
         item: SourceDataItem, audio: np.ndarray, fg_max_len: int, options: dict
     ) -> TrackAudioSpec:
 
-<<<<<<< HEAD
         def _locate_meaningful_audio(audio: np.ndarray, fg_max_len: int, last_place_to_start_audio: int) ->tuple[int, int]:
-=======
-        def _locate_meaningful_audio(audio: np.ndaray, fg_max_len: int, last_place_to_start_audio: int) ->tuple[int, int]:
->>>>>>> d01963e (remove rms normalization and added intelligent segmentation)
             """
                 Takes an an array of audio, the length of the clip to be used in the mix, and the last place to start.
                 Finds the start and end of a clip of length fg_max_len that contains the most energy.
