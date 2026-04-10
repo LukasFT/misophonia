@@ -53,11 +53,10 @@ def prepare_track_specs(
             best_idx = np.argmax(energies)
             best_energy = energies[best_idx]
 
-            if best_energy < min_energy:
-                return None
 
-    best_start = int(candidate_starts[best_idx])
-    return best_start, best_start + fg_max_len
+
+            best_start = int(candidate_starts[best_idx])
+            return best_start, best_start + fg_max_len
 
         length = audio.shape[0]
         if length == fg_max_len:
