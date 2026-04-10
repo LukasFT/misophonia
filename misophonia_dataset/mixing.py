@@ -40,21 +40,21 @@ def prepare_track_specs(
             n = len(audio)
             x = audio.astype(np.float64, copy=False)
 
-                sq = x * x
-                csum = np.empty(n + 1, dtype=np.float64)
-                csum[0] = 0.0
-                csum[1:] = np.cumsum(sq)
+            sq = x * x
+            csum = np.empty(n + 1, dtype=np.float64)
+            csum[0] = 0.0
+            csum[1:] = np.cumsum(sq)
 
-                candidate_starts = np.arange(0, last_start + 1, step_size)
-                candidate_ends = candidate_starts + fg_max_len
+            candidate_starts = np.arange(0, last_start + 1, step_size)
+            candidate_ends = candidate_starts + fg_max_len
 
-                energies = csum[candidate_ends] - csum[candidate_starts]
+            energies = csum[candidate_ends] - csum[candidate_starts]
 
-                best_idx = np.argmax(energies)
-                best_energy = energies[best_idx]
+            best_idx = np.argmax(energies)
+            best_energy = energies[best_idx]
 
-                if best_energy < min_energy:
-                    return None
+            if best_energy < min_energy:
+                return None
 
     best_start = int(candidate_starts[best_idx])
     return best_start, best_start + fg_max_len
