@@ -1,4 +1,5 @@
 import itertools
+import json
 import os
 import subprocess
 from datetime import datetime
@@ -13,11 +14,12 @@ from typing_extensions import Annotated
 
 from misophonia_dataset._log import setup_print_logging
 from misophonia_dataset.interface import SplitT, get_data_dir
-from misophonia_dataset.main import get_dataset_from_name
+from misophonia_dataset.main import get_dataset_from_name, get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
 from ._utils import (
     MisophoniaANCConfig,
+    _save_audio_stereo,
     get_allocated_cpus,
     get_git_sha,
     make_dataloader,
@@ -307,6 +309,115 @@ def infer(
     perform_inference(model, split_loader, save_to=samples_dir, device=device)
 
     eliot.log_message(f"Saved {num_samples} samples to {samples_dir}", level="debug")
+
+
+@app.command()
+def debug() -> None:
+    """
+    Function to test code snippets during development.
+    """
+
+    debug_path = Path("data") / "debug" / datetime.now().strftime("%Y%m%d_%H%M%S")
+    debug_path.mkdir(parents=True, exist_ok=True)
+
+    eliot.log_message("=== Make base dataset ===", level="info")
+
+    dataset = GeneratedMisophoniaDataset(source_data=get_default_datasets_names())
+    dataset_split = dataset.get_split(
+        "train",
+        num_samples=16,
+        trig_to_control_ratio=0.5,
+    )
+
+    base_save_path = debug_path / "base_dataset"
+    base_save_path.mkdir(parents=True, exist_ok=True)
+    metadata = []
+    for item_idx, item in enumerate(dataset_split):
+        # save item
+        gt = item.get_ground_truth_audio()
+        mix = item.get_mix_audio()
+        fg_labels = item.foreground_categories
+        fb_label_vector = item.label_vector
+        bg_labels = item.background_categories
+
+        metadata.append(
+            {
+                "item_idx": item_idx,
+                "uuid": item.uuid,
+                "foreground_categories": fg_labels,
+                "background_categories": bg_labels,
+                "label_vector": fb_label_vector.tolist(),
+            }
+        )
+
+        item_dir = base_save_path / f"item_{item_idx}"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        _save_audio_stereo(gt, item_dir / "gt.flac")
+        _save_audio_stereo(mix, item_dir / "mix.flac")
+
+    metadata_file_base = base_save_path / "metadata.json"
+    with metadata_file_base.open("w") as f:
+        json.dump(metadata, f, indent=4)
+
+    eliot.log_message(f"Saved base dataset with {len(dataset_split)} items to {base_save_path}", level="debug")
+
+    eliot.log_message("=== Test preprocess to webdataset ===", level="info")
+    webdataset_path = debug_path / "webdataset"
+    preprocessed_glob = preprocess_to_webdataset_pt(
+        webdataset_path,
+        dataset_split,
+        num_workers=0,
+        show_progress=False,
+        samples_per_shard=4,
+    )
+    eliot.log_message(f"Saved preprocessed dataset to: {webdataset_path} (glob: {preprocessed_glob})", level="debug")
+
+    eliot.log_message("=== Test dataloader ===", level="info")
+    dataloader_save_dir = debug_path / "dataloader_samples"
+    dataloader = make_dataloader(webdataset_path.glob("data-*.tar"), batch_size=2, num_workers=0)
+    metadata = []
+    for batch_idx, batch in enumerate(dataloader):
+        batch_dir = dataloader_save_dir / f"batch_{batch_idx}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+
+        inputs, gt, audio_lens = batch
+
+        metadata.append(
+            {
+                "batch_idx": batch_idx,
+                "inputs_keys": list(inputs.keys()),
+                "mix_shape": list(inputs["mix"].shape),
+                "label_vector_shape": list(inputs["label_vector"].shape),
+                "gt_shape": list(gt.shape),
+                "audio_lens": audio_lens.tolist(),
+            }
+        )
+
+        for j in range(inputs.shape[0]):
+            audio_len = audio_lens[j]
+            gt = gt[j, :, :audio_len]
+            mix = inputs["mix"][j, :, :audio_len]
+            label_vec = inputs["label_vector"][j]
+
+            _save_audio_stereo(gt, batch_dir / f"gt_{j}.flac")
+            _save_audio_stereo(mix, batch_dir / f"mix_{j}.flac")
+            metadata.append(
+                {
+                    "batch_idx": batch_idx,
+                    "sample_idx": j,
+                    "label_vector": label_vec.tolist(),
+                    "gt_shape": list(gt.shape),
+                    "mix_shape": list(mix.shape),
+                    "label_vec_shape": list(label_vec.shape),
+                    "audio_len": audio_len,
+                }
+            )
+
+    metadata_file_dataloder = dataloader_save_dir / "metadata.json"
+    with metadata_file_dataloder.open("w") as f:
+        json.dump(metadata, f, indent=4)
+
+    eliot.log_message(f"Saved dataloader batches to {dataloader_save_dir}", level="debug")
 
 
 if __name__ == "__main__":
