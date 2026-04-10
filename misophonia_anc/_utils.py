@@ -145,7 +145,7 @@ class MisophoniaANCConfig(BaseModel):
 
 def custom_collate_fn(
     batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
-) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
     """
     Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
     For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
@@ -163,6 +163,7 @@ def custom_collate_fn(
     Returns:
         inputs (dict[str, torch.Tensor]): dictionary of padded mixes and the label vectors in the form of tensors.
         gts (torch.tensor): padded ground truth tensors.
+        audio_lens (torch.tensor): lengths of the original (unpadded) audio, used for masking in the loss function.
     """
 
     # Only keep chunks of length MAX_DURATION in data loader
@@ -201,7 +202,7 @@ def custom_collate_fn(
     inputs = {
         "mix": torch.stack(mixes),
         "label_vector": torch.stack(labels),
-        "is_control": torch.stack(is_controls),
+        "is_control": torch.tensor(is_controls),
     }
     gt = torch.stack(gts)
     audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
