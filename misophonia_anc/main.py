@@ -327,8 +327,8 @@ def debug() -> None:
     )
     dataset_split = dataset.get_split(
         "train",
-        num_samples=16,
-        trig_to_control_ratio=0.5,
+        num_samples=128,
+        trig_to_control_ratio=0.90,
     )
     # dataset = PremadeMisophoniaDataset(name="demo-v1")
     # dataset_split = dataset.get_split("train")
@@ -341,7 +341,7 @@ def debug() -> None:
         gt = item.get_ground_truth_audio()
         mix = item.get_mix_audio()
         fg_labels = item.foreground_categories
-        fb_label_vector = item.label_vector
+        fb_label_vector = item.get_label_vector()
         bg_labels = item.background_categories
 
         metadata.append(
@@ -354,10 +354,8 @@ def debug() -> None:
             }
         )
 
-        item_dir = base_save_path / f"item_{item_idx}"
-        item_dir.mkdir(parents=True, exist_ok=True)
-        _save_audio_stereo(gt, item_dir / "gt.flac")
-        _save_audio_stereo(mix, item_dir / "mix.flac")
+        _save_audio_stereo(gt, base_save_path / f"{item_idx}_gt.flac")
+        _save_audio_stereo(mix, base_save_path / f"{item_idx}_mix.flac")
 
     metadata_file_base = base_save_path / "metadata.json"
     with metadata_file_base.open("w") as f:
@@ -372,7 +370,7 @@ def debug() -> None:
         dataset_split,
         num_workers=0,
         show_progress=False,
-        samples_per_shard=4,
+        samples_per_shard=16,
     )
     eliot.log_message(f"Saved preprocessed dataset to: {webdataset_path} (glob: {preprocessed_glob})", level="debug")
 
