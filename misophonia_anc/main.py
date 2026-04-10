@@ -337,13 +337,13 @@ def debug() -> None:
 
     eliot.log_message("=== Test dataloader ===", level="info")
     dataloader_save_dir = debug_path / "dataloader_samples"
-    dataloader = make_dataloader(webdataset_path.glob("data-*.tar"), batch_size=2, num_workers=0)
+    dataloader = make_dataloader(webdataset_path.glob("data-*.tar"), batch_size=4, num_workers=0)
     metadata = []
     for batch_idx, batch in enumerate(dataloader):
         batch_dir = dataloader_save_dir / f"batch_{batch_idx}"
         batch_dir.mkdir(parents=True, exist_ok=True)
 
-        inputs, gt, audio_lens = batch
+        inputs, gts, audio_lens = batch
 
         metadata.append(
             {
@@ -351,7 +351,8 @@ def debug() -> None:
                 "inputs_keys": list(inputs.keys()),
                 "mix_shape": list(inputs["mix"].shape),
                 "label_vector_shape": list(inputs["label_vector"].shape),
-                "gt_shape": list(gt.shape),
+                "is_control_shape": list(inputs["is_control"].shape),
+                "gt_shape": list(gts.shape),
                 "audio_lens": audio_lens.tolist(),
             }
         )
@@ -359,7 +360,7 @@ def debug() -> None:
         for j in range(inputs["mix"].shape[0]):
             try:
                 audio_len = audio_lens[j]
-                gt = gt[j, :, :audio_len]
+                gt = gts[j, :, :audio_len]
                 mix = inputs["mix"][j, :, :audio_len]
                 label_vec = inputs["label_vector"][j]
                 is_control = inputs["is_control"][j]
