@@ -26,7 +26,7 @@ if platform.system() == "Linux":
     ctypes.util.find_library = _find_library_patched
 import librosa
 
-LABEL_VECTOR = (
+DEFAULT_LABEL_ORDER = (
     # "basketball_dribbling",
     # "flipping newspaper",
     "chewing_gum",
@@ -266,8 +266,7 @@ class MisophoniaItem(BaseModel):
     """
     background_categories: tuple[str, ...]
     """Categories of the background sounds in this item according to the AudioSet (FSD50K) taxonomy."""
-    label_vector: np.ndarray[float]
-    """One-hot encoded vector of foreground_categories."""
+
     mix: np.ndarray | Path
     """
     Binaural mixed audio data for both foreground and background sounds.
@@ -328,6 +327,19 @@ class MisophoniaItem(BaseModel):
             )
         )
 
+    def get_label_vector(self, label_order: tuple[str, ...] = DEFAULT_LABEL_ORDER) -> np.ndarray:
+        """One-hot encoded vector of foreground_categories."""
+        if not self.is_trigger:
+            return np.zeros(len(label_order), dtype=np.float32)
+
+        assert all(cat in label_order for cat in self.foreground_categories), (
+            "All foreground categories must be in the label order."
+        )
+        return np.array(
+            [1 if cat in self.foreground_categories else 0 for cat in label_order],
+            dtype=np.float32,
+        )
+
     def get_mix_audio(self) -> np.ndarray:
         """Load (if not already loaded) and return the mixed audio data."""
         if isinstance(self.mix, Path):
@@ -378,13 +390,6 @@ class MisophoniaItem(BaseModel):
         if "is_trigger" not in values or values["is_trigger"] is None:
             raise ValueError("Cannot create label vector because audio does not have 'is_trigger' field.")
 
-        if not values["is_trigger"]:
-            values["label_vector"] = np.zeros(len(LABEL_VECTOR), dtype=np.float32)
-        else:
-            values["label_vector"] = np.array(
-                [1 if cat in values["foreground_categories"] else 0 for cat in LABEL_VECTOR],
-                dtype=np.float32,
-            )
         return values
 
     @staticmethod
