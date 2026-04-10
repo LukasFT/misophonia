@@ -45,7 +45,7 @@ def prepare_track_specs(
             csum[0] = 0.0
             csum[1:] = np.cumsum(sq)
 
-            candidate_starts = np.arange(0, last_start + 1, step_size)
+            candidate_starts = np.arange(0, last_place_to_start_audio + 1, step_size)
             candidate_ends = candidate_starts + fg_max_len
 
             energies = csum[candidate_ends] - csum[candidate_starts]
