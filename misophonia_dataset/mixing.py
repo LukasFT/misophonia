@@ -28,6 +28,37 @@ def prepare_track_specs(
         item: SourceDataItem, audio: np.ndarray, fg_max_len: int, options: dict
     ) -> TrackAudioSpec:
 
+        def _locate_meaningful_audio(audio: np.ndaray, fg_max_len: int, last_place_to_start_audio: int) ->tuple[int, int]:
+            """
+                Takes an an array of audio, the length of the clip to be used in the mix, and the last place to start.
+                Finds the start and end of a clip of length fg_max_len that contains the most energy.
+
+                Returns:
+                    indices of start and end of clip to be used in the mix
+            """
+            step_size = 100
+            n = len(audio)
+            x = audio.astype(np.float64, copy=False)
+
+                sq = x * x
+                csum = np.empty(n + 1, dtype=np.float64)
+                csum[0] = 0.0
+                csum[1:] = np.cumsum(sq)
+
+                candidate_starts = np.arange(0, last_start + 1, step_size)
+                candidate_ends = candidate_starts + fg_max_len
+
+                energies = csum[candidate_ends] - csum[candidate_starts]
+
+                best_idx = np.argmax(energies)
+                best_energy = energies[best_idx]
+
+                if best_energy < min_energy:
+                    return None
+
+    best_start = int(candidate_starts[best_idx])
+    return best_start, best_start + fg_max_len
+
         length = audio.shape[0]
         if length == fg_max_len:
             start = 0  # No need to start at a random place
@@ -35,8 +66,7 @@ def prepare_track_specs(
         elif length > fg_max_len:
             # Crop longer clips to be the same length as fg_max_len
             last_place_to_start_audio = length - fg_max_len
-            audio_start = rng.integers(0, last_place_to_start_audio + 1)
-            audio_end = audio_start + fg_max_len
+            audio_start, audio_end = _locate_meaningful_audio(audio, fg_max_len, last_place_to_start_audio)
             audio = audio[audio_start:audio_end]
 
             start = 0
@@ -135,22 +165,22 @@ def _normalize_and_pad(
     bg_tracks: tuple[TrackAudioSpec, ...],
 ) -> tuple[tuple[TrackAudioSpec, ...], tuple[TrackAudioSpec, ...]]:
     # RMS normalization:
-    rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
-    rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
-    rms_target = np.mean(rms_fg + rms_bg)
-    fg_norm = tuple(
-        (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
-        for (item, audio), rms in zip(fg_tracks, rms_fg)
-    )
-    bg_norm = tuple(
-        (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
-        for (item, audio), rms in zip(bg_tracks, rms_bg)
-    )
+    # rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
+    # rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
+    # rms_target = np.mean(rms_fg + rms_bg)
+    # fg_norm = tuple(
+    #     (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
+    #     for (item, audio), rms in zip(fg_tracks, rms_fg)
+    # )
+    # bg_norm = tuple(
+    #     (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
+    #     for (item, audio), rms in zip(bg_tracks, rms_bg)
+    # )
 
     fg_max_end = max(track.end for track, _ in fg_norm)
     # Pad in case that the audio is shorter than max fg audio
-    fg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in fg_norm)
-    bg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in bg_norm)
+    fg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in fg_tracks)
+    bg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in bg_tracks)
 
 
     assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
