@@ -32,7 +32,6 @@ class MisophoniaANCNet(nn.Module):
         use_pos_enc=True,
         conditioning="mult",
         lookahead=True,
-        pretrained_path=None,
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
 
@@ -95,16 +94,6 @@ class MisophoniaANCNet(nn.Module):
             ),
             nn.Tanh(),
         )
-
-        if pretrained_path is not None:
-            # TODO: I think this should not be done in the constructor and does not need to be concerned about loading the checkpoint
-            state_dict = torch.load(pretrained_path)["model_state"]
-
-            # Load all the layers except label_embedding and freeze them
-            for name, param in self.named_parameters():
-                if "label_embedding" not in name:
-                    param.data = state_dict[name]
-                    param.requires_grad = False
 
     def init_buffers(self, batch_size, device):  # noqa: ANN201
         enc_buf = self.mask_gen.encoder.init_ctx_buf(batch_size, device)
