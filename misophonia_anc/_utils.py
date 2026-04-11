@@ -181,7 +181,7 @@ def custom_collate_fn(
     labels = []
     audio_lens = []
     is_controls = []
-    for mix, label, gt in batch:
+    for mix, label, gt, _ in batch:
         is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
         is_controls.append(1 if is_control else 0)
         if is_control:
@@ -210,6 +210,7 @@ def custom_collate_fn(
         "mix": torch.stack(mixes),
         "label_vector": torch.stack(labels),
         "is_control": torch.tensor(is_controls),
+        "metadata": [metadata for _, _, _, metadata in batch],
     }
     gt = torch.stack(gts)
     audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
@@ -245,7 +246,7 @@ def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers
         )
         .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
-        .to_tuple("mix.npy", "label.npy", "gt.npy")
+        .to_tuple("mix.npy", "label.npy", "gt.npy","metadata.json")
         .batched(
             batch_size,
             collation_fn=custom_collate_fn,  # Make batches of the same size, and randomly assign control sounds a class
@@ -380,6 +381,8 @@ def perform_inference(
                 _save_audio_stereo(mix_i, save_to / f"sample_{idx:03d}_mix.flac")
                 _save_audio_stereo(gt_i, save_to / f"sample_{idx:03d}_gt.flac")
                 _save_audio_stereo(pred_i, save_to / f"sample_{idx:03d}_pred.flac")
+
+                json.dump(inputs["metadata"][0], open(save_to / f"sample_{idx:03d}_metadata.json", "w"), indent=4))
 
 
 def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
