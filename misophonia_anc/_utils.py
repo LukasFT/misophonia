@@ -372,7 +372,7 @@ def perform_inference(
             inp["is_control"] = inp["is_control"].to(device)
             gt = gt.to(device)
 
-            output = model(inputs)
+            output = model(inp)
             pred = output["x"]
 
             valid_len = int(audio_len[0].item())
