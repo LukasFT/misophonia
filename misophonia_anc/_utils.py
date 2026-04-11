@@ -367,12 +367,12 @@ def perform_inference(
     with torch.no_grad():
         for idx, (inp, gt, audio_len) in enumerate(data_loader):
             # inputs = {k: v.to(device) for k, v in inp.items()}
-            inp["mix"] = inp["mix"].to(device)
-            inp["label_vector"] = inp["label_vector"].to(device)
-            inp["is_control"] = inp["is_control"].to(device)
+            inputs["mix"] = inp["mix"].to(device)
+            inputs["label_vector"] = inp["label_vector"].to(device)
+            inputs["is_control"] = inp["is_control"].to(device)
             gt = gt.to(device)
 
-            output = model(inp)
+            output = model(inputs)
             pred = output["x"]
 
             valid_len = int(audio_len[0].item())
