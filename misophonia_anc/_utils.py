@@ -386,7 +386,7 @@ def perform_inference(
                 _save_audio_stereo(gt_i, save_to / f"sample_{idx:03d}_gt.flac")
                 _save_audio_stereo(pred_i, save_to / f"sample_{idx:03d}_pred.flac")
 
-                json.dump(inputs["metadata"][0], open(save_to / f"sample_{idx:03d}_metadata.json", "w"), indent=4)
+                json.dump(inp["metadata"][0], open(save_to / f"sample_{idx:03d}_metadata.json", "w"), indent=4)
 
 
 def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
