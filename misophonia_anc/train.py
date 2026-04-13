@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor) -> torch.Tensor:
     pred = _output["x"]
-    return -0.9 * snr(pred, tgt).mean() - 0.1 * si_snr(pred, tgt).mean()
+    return -0.7 * snr(pred, tgt).mean() - 0.3 * si_snr(pred, tgt).mean()
 
 
 def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor) -> torch.Tensor:
