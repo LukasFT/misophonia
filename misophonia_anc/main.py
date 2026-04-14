@@ -330,6 +330,7 @@ def infer(
             shards_split,
             batch_size=1,  # We do inference one at a time
             num_workers=num_workers,
+            include_metadata=True,
         )
         if num_samples is not None:
             split_loader = itertools.islice(split_loader, num_samples)
