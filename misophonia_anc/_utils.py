@@ -442,8 +442,8 @@ def perform_inference(
 
     if save_to is not None:
         metadata_file = save_to / "metadata.json"
-        metadata_df = pd.DataFrame(metadatas)
-        metadata_df.to_json(metadata_file, orient="records", indent=4)
+        with metadata_file.open("w") as f:
+            json.dump(metadatas, f, indent=4)
         eliot.log_message(f"Saved metadata for {len(metadatas)} samples to {metadata_file}", level="info")
 
 
