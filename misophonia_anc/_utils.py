@@ -20,6 +20,8 @@ import webdataset as wds
 import yaml
 from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
+from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr
+from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
 from misophonia_dataset.interface import DEFAULT_LABEL_ORDER, BaseModel, MisophoniaItem, SplitT
@@ -67,11 +69,18 @@ def preprocess_to_webdataset_pt(
         gt_array = item.get_ground_truth_audio()
         label_array = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
 
+        mix_torch = torch.from_numpy(mix_array)
+        gt_torch = torch.from_numpy(gt_array)
+        si_snr_val = si_snr(mix_torch, gt_torch).item()
+        snr_val = snr(mix_torch, gt_torch).item()
+
         metadata = {
             "uuid": item.uuid,
             "fg_categories": item.foreground_categories,
             "bg_categories": item.background_categories,
             "is_trigger": item.is_trigger,
+            "si_snr": si_snr_val,
+            "snr": snr_val,
             "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
             "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
         }
@@ -181,7 +190,7 @@ def custom_collate_fn(
     labels = []
     audio_lens = []
     is_controls = []
-    for mix, label, gt in batch: # Will contain an extra field when looking at metadata
+    for mix, label, gt in batch:  # Will contain an extra field when looking at metadata
         is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
         is_controls.append(1 if is_control else 0)
         if is_control:
@@ -246,7 +255,7 @@ def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers
         )
         .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
-        .to_tuple("mix.npy", "label.npy", "gt.npy") # Add # "metadata.json" if you want to examine metadata
+        .to_tuple("mix.npy", "label.npy", "gt.npy")  # Add # "metadata.json" if you want to examine metadata
         .batched(
             batch_size,
             collation_fn=custom_collate_fn,  # Make batches of the same size, and randomly assign control sounds a class
