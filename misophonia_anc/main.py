@@ -12,7 +12,7 @@ from dotenv import load_dotenv  # type: ignore
 from typing_extensions import Annotated
 
 from misophonia_dataset._log import setup_print_logging
-from misophonia_dataset.interface import SplitT, get_data_dir
+from misophonia_dataset.interface import get_data_dir
 from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
@@ -38,8 +38,15 @@ app = typer.Typer(help="Misophonia ANC model training and evaluation CLI.")
 @app.command()
 def preprocess(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
-    split: Annotated[SplitT, typer.Argument(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
     *,
+    splits: Annotated[
+        list[str],  # list[SplitT] but that causes typer error
+        typer.Option(
+            ...,
+            "--split",
+            help="Dataset split to generate (e.g., 'train', 'val', 'test')",
+        ),
+    ] = ["train", "val", "test"],
     overwrite: Annotated[bool, typer.Option(..., help="Whether to overwrite existing preprocessed shards.")] = False,
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
     num_workers: Annotated[
@@ -58,65 +65,70 @@ def preprocess(
 
     config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
 
-    split_config = config.dataset_splits[split]
-    shards_dir = model_dir / "webdataset" / split
+    for split in splits:
+        split_config = config.dataset_splits[split]
+        shards_dir = model_dir / "webdataset" / split
 
-    if shards_dir.exists():
-        if overwrite:
-            eliot.log_message(f"Deleting existing shards in {shards_dir}...", level="warning")
-            for file in shards_dir.glob("*"):
-                file.unlink()
-            eliot.log_message(f"Deleted existing shards in {shards_dir}.", level="info")
-        else:
-            eliot.log_message(
-                f"Preprocessed dataset already exists for split {split} at {shards_dir}.", level="warning"
+        if shards_dir.exists():
+            if overwrite:
+                eliot.log_message(f"Deleting existing shards in {shards_dir}...", level="warning")
+                for file in shards_dir.glob("*"):
+                    file.unlink()
+                eliot.log_message(f"Deleted existing shards in {shards_dir}.", level="info")
+            else:
+                eliot.log_message(
+                    f"Preprocessed dataset already exists for split {split} at {shards_dir}.", level="warning"
+                )
+                eliot.log_message("Use --overwrite to overwrite existing preprocessed dataset.", level="warning")
+                return
+
+        metadata = {
+            "git_sha": get_git_sha(),
+            "timestamp": datetime.now().isoformat(),
+            "split": split,
+            "name": name,
+            "samples_per_shard": samples_per_shard,
+            "config": config.model_dump(mode="json", round_trip=True),
+        }
+
+        if split_config.from_premade:
+            assert split_config.generated_config is None, (
+                "generated_config should not be provided if from_premade is given"
             )
-            eliot.log_message("Use --overwrite to overwrite existing preprocessed dataset.", level="warning")
-            return
+            dataset = PremadeMisophoniaDataset(name=split_config.from_premade, base_save_dir=data_base_dir)
+            dataset_split = dataset.get_split(split)
+        else:
+            assert split_config.generated_source_data is not None, (
+                "source_data must be provided if from_premade is not given"
+            )
+            assert split_config.generated_config is not None, (
+                "generated_config must be provided if from_premade is not given"
+            )
 
-    metadata = {
-        "git_sha": get_git_sha(),
-        "timestamp": datetime.now().isoformat(),
-        "split": split,
-        "name": name,
-        "samples_per_shard": samples_per_shard,
-        "config": config.model_dump(mode="json", round_trip=True),
-    }
+            eliot.log_message("Generating using:", level="debug")
+            eliot.log_message(f"{split_config.generated_source_data=}", level="debug")
+            eliot.log_message(f"{split_config.generated_config=}", level="debug")
+            eliot.log_message(
+                f"Using {num_workers} workers for data loading during generation (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
+                level="debug",
+            )
+            source_data = tuple(
+                get_dataset_from_name(name, base_dir=data_base_dir) for name in split_config.generated_source_data
+            )
+            dataset = GeneratedMisophoniaDataset(source_data=source_data)
+            dataset_split = dataset.get_split(split, **split_config.generated_config)
 
-    if split_config.from_premade:
-        assert split_config.generated_config is None, "generated_config should not be provided if from_premade is given"
-        dataset = PremadeMisophoniaDataset(name=split_config.from_premade, base_save_dir=data_base_dir)
-        dataset_split = dataset.get_split(split)
-    else:
-        assert split_config.generated_source_data is not None, (
-            "source_data must be provided if from_premade is not given"
+        dataset_glob = preprocess_to_webdataset_pt(
+            shards_dir,
+            dataset_split,
+            num_workers=num_workers,
+            show_progress=not no_progress,
+            samples_per_shard=samples_per_shard,
+            metadata=metadata,
         )
-        assert split_config.generated_config is not None, (
-            "generated_config must be provided if from_premade is not given"
-        )
+        eliot.log_message(f"Saved preprocessed data to: {dataset_glob}", level="info")
 
-        eliot.log_message("Generating using:", level="debug")
-        eliot.log_message(f"{split_config.generated_source_data=}", level="debug")
-        eliot.log_message(f"{split_config.generated_config=}", level="debug")
-        eliot.log_message(
-            f"Using {num_workers} workers for data loading during generation (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
-            level="debug",
-        )
-        source_data = tuple(
-            get_dataset_from_name(name, base_dir=data_base_dir) for name in split_config.generated_source_data
-        )
-        dataset = GeneratedMisophoniaDataset(source_data=source_data)
-        dataset_split = dataset.get_split(split, **split_config.generated_config)
-
-    dataset_glob = preprocess_to_webdataset_pt(
-        shards_dir,
-        dataset_split,
-        num_workers=num_workers,
-        show_progress=not no_progress,
-        samples_per_shard=samples_per_shard,
-        metadata=metadata,
-    )
-    eliot.log_message(f"Saved preprocessed data to: {dataset_glob}", level="info")
+    eliot.log_message(f"Completed preprocessing for splits: {splits}", level="info")
 
 
 @app.command()
@@ -254,8 +266,15 @@ def train(
 @app.command()
 def infer(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
-    split: Annotated[SplitT, typer.Argument(..., help="Dataset split to generate (e.g., 'train', 'val', 'test')")],
     *,
+    splits: Annotated[
+        list[str],  # list[SplitT] but that causes typer error
+        typer.Option(
+            ...,
+            "--split",
+            help="Dataset split to generate (e.g., 'train', 'val', 'test')",
+        ),
+    ] = ["train", "val", "test"],
     checkpoint: Annotated[
         str,
         typer.Option(..., help="Name of model checkpoint to load. If 'init', a random untrained model will be used."),
@@ -280,43 +299,46 @@ def infer(
     model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    samples_dir = model_dir / "samples" / checkpoint.replace(".pt", "") / split
-    samples_dir.mkdir(parents=True, exist_ok=True)
+    for split in splits:
+        samples_dir = model_dir / "samples" / checkpoint.replace(".pt", "") / split
+        samples_dir.mkdir(parents=True, exist_ok=True)
 
-    if samples_dir.exists() and any(samples_dir.iterdir()):
-        if overwrite:
-            eliot.log_message(f"Deleting existing samples in {samples_dir}...", level="debug")
-            for file in samples_dir.glob("*"):
-                file.unlink()
-            eliot.log_message(f"Deleted existing samples in {samples_dir}.", level="debug")
-        else:
-            raise FileExistsError(
-                f"Samples already exist for checkpoint {checkpoint} at {samples_dir}. Use --overwrite to overwrite existing samples."
-            )
+        if samples_dir.exists() and any(samples_dir.iterdir()):
+            if overwrite:
+                eliot.log_message(f"Deleting existing samples in {samples_dir}...", level="debug")
+                for file in samples_dir.glob("*"):
+                    file.unlink()
+                eliot.log_message(f"Deleted existing samples in {samples_dir}.", level="debug")
+            else:
+                raise FileExistsError(
+                    f"Samples already exist for checkpoint {checkpoint} at {samples_dir}. Use --overwrite to overwrite existing samples."
+                )
 
-    checkpoint_file = model_dir / "checkpoints" / checkpoint
-    if checkpoint == "init":
-        checkpoint_file = None
-        eliot.log_message("Using random untrained model for inference.", level="info")
+        checkpoint_file = model_dir / "checkpoints" / checkpoint
+        if checkpoint == "init":
+            checkpoint_file = None
+            eliot.log_message("Using random untrained model for inference.", level="info")
 
-    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
-    model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
-    model.eval()
+        config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+        model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+        model.eval()
 
-    dataset_split_dir = model_dir / "webdataset" / split
-    eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
-    shards_split = dataset_split_dir.glob("data-*.tar")
-    split_loader = make_dataloader(
-        shards_split,
-        batch_size=1,  # We do inference one at a time
-        num_workers=num_workers,
-    )
-    if num_samples is not None:
-        split_loader = itertools.islice(split_loader, num_samples)
+        dataset_split_dir = model_dir / "webdataset" / split
+        eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
+        shards_split = dataset_split_dir.glob("data-*.tar")
+        split_loader = make_dataloader(
+            shards_split,
+            batch_size=1,  # We do inference one at a time
+            num_workers=num_workers,
+        )
+        if num_samples is not None:
+            split_loader = itertools.islice(split_loader, num_samples)
 
-    perform_inference(model, split_loader, save_to=samples_dir, device=device)
+        perform_inference(model, split_loader, save_to=samples_dir, device=device)
 
-    eliot.log_message(f"Saved {num_samples} samples to {samples_dir}", level="debug")
+        eliot.log_message(f"Saved {num_samples} {split} samples to {samples_dir}", level="debug")
+
+    eliot.log_message(f"Completed inference for checkpoint {checkpoint} on splits: {splits}", level="info")
 
 
 if __name__ == "__main__":
