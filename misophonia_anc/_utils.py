@@ -436,7 +436,7 @@ def perform_inference(
                 sample_metadata["sample_idx"] = idx
 
                 if "metadata" in inputs:
-                    sample_metadata.update(json.loads(inputs["metadata"][0]))
+                    sample_metadata.update(inputs["metadata"][0])
 
                 metadatas.append(sample_metadata)
 
