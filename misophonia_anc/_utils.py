@@ -167,75 +167,93 @@ class MisophoniaANCConfig(BaseModel):
         return cls(**data)
 
 
-def custom_collate_fn(
-    batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
-) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
-    """
-    Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
-    For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
+def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+    def custom_collate_fn(
+        batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        """
+        Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
+        For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
 
-    Also randomly assign control sounds a class in the label vector during training, since they don't have a specific class.
-    This is done by randomly assigning a 1 to one of the trigger classes in the label vector.
-    This is done because the purpose of the control sounds is to teach the model that even if a category is queried,
-        it might need to predict silence if there is no trigger sound of that category in the mix.
+        Also randomly assign control sounds a class in the label vector during training, since they don't have a specific class.
+        This is done by randomly assigning a 1 to one of the trigger classes in the label vector.
+        This is done because the purpose of the control sounds is to teach the model that even if a category is queried,
+            it might need to predict silence if there is no trigger sound of that category in the mix.
 
-    Args:
-        mixes (np.ndarray): synthetically generated binaural mixes
-        labels (np.ndarray): one-hot encoded label vectors
-        gts (np.ndarray): binaural ground truth trigger sounds (or silence)
+        Args:
+            mixes (np.ndarray): synthetically generated binaural mixes
+            labels (np.ndarray): one-hot encoded label vectors
+            gts (np.ndarray): binaural ground truth trigger sounds (or silence)
 
-    Returns:
-        inputs (dict[str, torch.Tensor]): dictionary of padded mixes and the label vectors in the form of tensors.
-        gts (torch.tensor): padded ground truth tensors.
-        audio_lens (torch.tensor): lengths of the original (unpadded) audio, used for masking in the loss function.
-    """
+        Returns:
+            inputs (dict[str, torch.Tensor]): dictionary of padded mixes and the label vectors in the form of tensors.
+            gts (torch.tensor): padded ground truth tensors.
+            audio_lens (torch.tensor): lengths of the original (unpadded) audio, used for masking in the loss function.
+        """
 
-    # Only keep chunks of length MAX_DURATION in data loader
-    chunk_size = MAX_DURATION * SAMPLE_RATE
+        # Only keep chunks of length MAX_DURATION in data loader
+        chunk_size = MAX_DURATION * SAMPLE_RATE
 
-    mixes = []
-    gts = []
-    labels = []
-    audio_lens = []
-    is_controls = []
-    for mix, label, gt in batch:  # Will contain an extra field when looking at metadata
-        is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
-        is_controls.append(1 if is_control else 0)
-        if is_control:
-            # Randomly assign a class to the control sound in the label vector
-            # See note in docstring for motivation
-            random_class = rng.integers(0, len(label))
-            label[random_class] = 1
+        mixes = []
+        gts = []
+        labels = []
+        audio_lens = []
+        is_controls = []
+        metadatas = []
 
-        L = mix.shape[-1]  # noqa: N806
-        if L >= chunk_size:
-            # generate a single random start for both mix and gt
-            start = torch.randint(0, L - chunk_size + 1, (1,)).item()
-            mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
-            gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()
-        else:
-            # audio is shorter than chunk_size → pad
-            mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
-            gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, chunk_size - L))
+        for sample in batch:  # Will contain an extra field when looking at metadata
+            if include_metadata:
+                mix, label, gt, metadata = sample
+                metadatas.append(metadata)
+            else:
+                mix, label, gt = sample
+            is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
+            is_controls.append(1 if is_control else 0)
+            if is_control:
+                # Randomly assign a class to the control sound in the label vector
+                # See note in docstring for motivation
+                random_class = rng.integers(0, len(label))
+                label[random_class] = 1
 
-        mixes.append(mix_chunk)
-        gts.append(gt_chunk)
-        labels.append(torch.from_numpy(label).float())
-        audio_lens.append(min(L, chunk_size))
+            L = mix.shape[-1]  # noqa: N806
+            if L >= chunk_size:
+                # generate a single random start for both mix and gt
+                start = torch.randint(0, L - chunk_size + 1, (1,)).item()
+                mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
+                gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()
+            else:
+                # audio is shorter than chunk_size → pad
+                mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
+                gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, chunk_size - L))
 
-    inputs = {
-        "mix": torch.stack(mixes),
-        "label_vector": torch.stack(labels),
-        "is_control": torch.tensor(is_controls),
-        # "metadata": [metadata for _, _, _, metadata in batch], # Refactored to examine metadata
-    }
-    gt = torch.stack(gts)
-    audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
+            mixes.append(mix_chunk)
+            gts.append(gt_chunk)
+            labels.append(torch.from_numpy(label).float())
+            audio_lens.append(min(L, chunk_size))
 
-    return inputs, gt, audio_lens
+        inputs = {
+            "mix": torch.stack(mixes),
+            "label_vector": torch.stack(labels),
+            "is_control": torch.tensor(is_controls),
+        }
+        if include_metadata:
+            inputs["metadata"] = metadatas
+
+        gt = torch.stack(gts)
+        audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
+
+        return inputs, gt, audio_lens
+
+    return custom_collate_fn
 
 
-def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers: int) -> wds.WebLoader:
+def make_dataloader(
+    files: Iterable[str | Path],
+    *,
+    batch_size: int,
+    num_workers: int,
+    include_metadata: bool = False,
+) -> wds.WebLoader:
     """
     Make a WebLoader from the given .tar files.
 
@@ -263,11 +281,18 @@ def make_dataloader(files: Iterable[str | Path], *, batch_size: int, num_workers
         )
         .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
-        .to_tuple("mix.npy", "label.npy", "gt.npy")  # Add # "metadata.json" if you want to examine metadata
-        .batched(
-            batch_size,
-            collation_fn=custom_collate_fn,  # Make batches of the same size, and randomly assign control sounds a class
-        )
+    )
+
+    if include_metadata:
+        data = data.to_tuple("mix.npy", "label.npy", "gt.npy", "metadata.json")
+    else:
+        data = data.to_tuple("mix.npy", "label.npy", "gt.npy")
+
+    data = data.batched(
+        batch_size,
+        collation_fn=make_custom_collate_fn(
+            include_metadata=include_metadata
+        ),  # Make batches of the same size, and randomly assign control sounds a class
     )
 
     return wds.WebLoader(
@@ -406,7 +431,11 @@ def perform_inference(
                 _save_audio_stereo(gt_i, save_to / f"sample_{idx:03d}_gt.flac")
                 _save_audio_stereo(pred_i, save_to / f"sample_{idx:03d}_pred.flac")
 
-                # json.dump(inp["metadata"][0], open(save_to / f"sample_{idx:03d}_metadata.json", "w"), indent=4)
+                if "metadata" in inputs:
+                    metadata = inputs["metadata"][0]
+                    metadata_path = save_to / f"sample_{idx:03d}_metadata.json"
+                    with open(metadata_path, "w") as f:
+                        json.dump(metadata, f, indent=4)
 
 
 def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
