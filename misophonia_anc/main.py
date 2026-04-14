@@ -1,5 +1,4 @@
 import itertools
-import json
 import os
 import subprocess
 from datetime import datetime
@@ -75,7 +74,6 @@ def preprocess(
             eliot.log_message("Use --overwrite to overwrite existing preprocessed dataset.", level="warning")
             return
 
-    metadata_file = shards_dir / "metadata.json"
     metadata = {
         "git_sha": get_git_sha(),
         "timestamp": datetime.now().isoformat(),
@@ -84,8 +82,6 @@ def preprocess(
         "samples_per_shard": samples_per_shard,
         "config": config.model_dump(mode="json", round_trip=True),
     }
-    with metadata_file.open("w") as f:
-        json.dump(metadata, f, indent=4)
 
     if split_config.from_premade:
         assert split_config.generated_config is None, "generated_config should not be provided if from_premade is given"
@@ -118,6 +114,7 @@ def preprocess(
         num_workers=num_workers,
         show_progress=not no_progress,
         samples_per_shard=samples_per_shard,
+        metadata=metadata,
     )
     eliot.log_message(f"Saved preprocessed data to: {dataset_glob}", level="info")
 

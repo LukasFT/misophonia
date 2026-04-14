@@ -46,6 +46,7 @@ def preprocess_to_webdataset_pt(
     samples_per_shard: int,
     num_workers: int = None,
     show_progress: bool = True,
+    metadata: dict | None = None,
 ) -> str:
     """
     Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading.
@@ -56,6 +57,8 @@ def preprocess_to_webdataset_pt(
         dataset_split: The dataset split to preprocess.
         samples_per_shard: Number of samples per .tar shard
         num_workers: Number of threads to use for parallel processing. If None, defaults to number of CPU cores.
+        show_progress: Whether to show a progress bar during preprocessing.
+        metadata: Optional dictionary of metadata to save alongside the dataset. Will be saved as metadata.json in the shards_dir.
 
     Returns:
         A glob pattern for the generated .tar shards. Used for loading wds.WebDataset.
@@ -99,6 +102,11 @@ def preprocess_to_webdataset_pt(
 
     shards_dir = Path(shards_dir)
     shards_dir.mkdir(parents=True, exist_ok=True)
+
+    if metadata is not None:
+        metadata_file = shards_dir / "metadata.json"
+        with metadata_file.open("w") as f:
+            json.dump(metadata, f, indent=4)
 
     pattern = str(shards_dir / "data-%06d.tar")
     with wds.ShardWriter(pattern, maxcount=samples_per_shard) as sink:
