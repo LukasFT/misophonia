@@ -82,8 +82,8 @@ def preprocess_to_webdataset_pt(
             "fg_categories": item.foreground_categories,
             "bg_categories": item.background_categories,
             "is_trigger": item.is_trigger,
-            "si_snr": si_snr_val,
-            "snr": snr_val,
+            "mix_si_snr": si_snr_val,
+            "mix_snr": snr_val,
             "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
             "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
         }
