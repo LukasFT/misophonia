@@ -74,8 +74,8 @@ def preprocess_to_webdataset_pt(
 
         mix_torch = torch.from_numpy(mix_array)
         gt_torch = torch.from_numpy(gt_array)
-        si_snr_val = si_snr(mix_torch, gt_torch).item()
-        snr_val = snr(mix_torch, gt_torch).item()
+        si_snr_val = si_snr(mix_torch, gt_torch).mean().item()
+        snr_val = snr(mix_torch, gt_torch).mean().item()
 
         metadata = {
             "uuid": item.uuid,
