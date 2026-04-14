@@ -362,7 +362,9 @@ def perform_eval(
                     # Warm up for latency test
                     output = model(*inputs)
 
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+            inputs["mix"] = inputs["mix"].to(device)
+            inputs["label_vector"] = inputs["label_vector"].to(device)
+            inputs["is_control"] = inputs["is_control"].to(device)
             gt = gt.to(device)
 
             output = model(inputs)
@@ -410,14 +412,10 @@ def perform_inference(
     metadatas = []
 
     with torch.no_grad():
-        for idx, (inp, gt, audio_len) in enumerate(data_loader):
-            inputs = {k: v.to(device) for k, v in inp.items()}
-
-            # Refactored to examine metadata
-            # inputs = {}
-            # inputs["mix"] = inp["mix"].to(device)
-            # inputs["label_vector"] = inp["label_vector"].to(device)
-            # inputs["is_control"] = inp["is_control"].to(device)
+        for idx, (inputs, gt, audio_len) in enumerate(data_loader):
+            inputs["mix"] = inputs["mix"].to(device)
+            inputs["label_vector"] = inputs["label_vector"].to(device)
+            inputs["is_control"] = inputs["is_control"].to(device)
 
             gt = gt.to(device)
 

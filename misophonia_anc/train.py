@@ -18,8 +18,6 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-from ._utils import print_mem
-
 if TYPE_CHECKING:
     from .model import MisophoniaANCNet
 
@@ -50,7 +48,11 @@ def train_epoch(
         enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"
     ):
         # in loader return mask that is [B, C, N]
-        inputs = {k: v.to(device) for k, v in inputs.items()}
+        # inputs = {k: v.to(device) for k, v in inputs.items()}
+        inputs["mix"] = inputs["mix"].to(device)
+        inputs["label_vector"] = inputs["label_vector"].to(device)
+        inputs["is_control"] = inputs["is_control"].to(device)
+
         gt = gt.to(device)
         audio_lens = audio_lens.to(device)
         _, _, T = gt.shape  # noqa: N806
@@ -107,7 +109,11 @@ def val_epoch(
         for batch_idx, (inputs, gt, audio_lens) in tqdm(
             enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"
         ):
-            inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
+            # inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
+            inputs["mix"] = inputs["mix"].to(device)
+            inputs["label_vector"] = inputs["label_vector"].to(device)
+            inputs["is_control"] = inputs["is_control"].to(device)
+
             _, _, T = gt.shape  # noqa: N806
 
             gt = gt.to(device)
