@@ -406,6 +406,9 @@ def perform_inference(
         assert save_to.is_dir()
 
     model.eval()
+
+    metadatas = []
+
     with torch.no_grad():
         for idx, (inp, gt, audio_len) in enumerate(data_loader):
             inputs = {k: v.to(device) for k, v in inp.items()}
@@ -431,11 +434,19 @@ def perform_inference(
                 _save_audio_stereo(gt_i, save_to / f"sample_{idx:03d}_gt.flac")
                 _save_audio_stereo(pred_i, save_to / f"sample_{idx:03d}_pred.flac")
 
+                sample_metadata = {}
+                sample_metadata["sample_idx"] = idx
+
                 if "metadata" in inputs:
-                    metadata = inputs["metadata"][0]
-                    metadata_path = save_to / f"sample_{idx:03d}_metadata.json"
-                    with open(metadata_path, "w") as f:
-                        json.dump(metadata, f, indent=4)
+                    sample_metadata.update(json.loads(inputs["metadata"][0]))
+
+                metadatas.append(sample_metadata)
+
+    if save_to is not None:
+        metadata_file = save_to / "metadata.json"
+        metadata_df = pd.DataFrame(metadatas)
+        metadata_df.to_json(metadata_file, orient="records", indent=4)
+        eliot.log_message(f"Saved metadata for {len(metadatas)} samples to {metadata_file}", level="info")
 
 
 def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
