@@ -62,6 +62,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
         foregrounds_per_item: tuple[int, int] = (1, 1),
         backgrounds_per_item: tuple[int, int] = (1, 3),
         trig_to_control_ratio: float = 0.5,
+        target_snr_range: tuple[float, float] = (5.0, 10.0),
         random_seed: int = 42,
     ) -> MisophoniaDatasetSplit:
         """
@@ -176,7 +177,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
                 global_params=global_params,
                 # Keep this the reference level for backgrounds.
                 # In that way, the randomness in the foreground is always relative to the same background level.
-                bg_track_options={"level": 0.2 + 0.2 / len(background_items)},
+                # bg_track_options={"level": 0.2 + 0.2 / len(background_items)},
                 rng=rng,
             )
             foreground_tracks, _ = tuple(zip(*foreground_specs))
@@ -187,6 +188,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
                 fg_specs=foreground_specs,
                 bg_specs=background_specs,
                 global_params=global_params,
+                target_snr_range=target_snr_range,
                 is_trig=is_trig,
             )
 
