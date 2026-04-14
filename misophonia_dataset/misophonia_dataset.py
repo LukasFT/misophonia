@@ -62,6 +62,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
         foregrounds_per_item: tuple[int, int] = (1, 1),
         backgrounds_per_item: tuple[int, int] = (1, 3),
         trig_to_control_ratio: float = 0.5,
+        target_snr_range: tuple[float, float] = (5.0, 10.0),
         random_seed: int = 42,
     ) -> MisophoniaDatasetSplit:
         """
@@ -187,6 +188,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
                 fg_specs=foreground_specs,
                 bg_specs=background_specs,
                 global_params=global_params,
+                target_snr_range=target_snr_range,
                 is_trig=is_trig,
             )
 

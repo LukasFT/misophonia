@@ -104,6 +104,7 @@ def binaural_mix(
     fg_specs: tuple[TrackAudioSpec, ...],
     bg_specs: tuple[TrackAudioSpec, ...],
     global_params: GlobalMixingParams,
+    target_snr_range: tuple[float, float] = (5.0, 10.0),
     *,
     is_trig: bool,
 ) -> tuple[np.ndarray, np.ndarray | None]:
@@ -114,7 +115,7 @@ def binaural_mix(
     fg_specs = tuple(fg_specs)
     bg_specs = tuple(bg_specs)
 
-    fg_specs, bg_specs = _normalize_and_pad(fg_specs, bg_specs)
+    fg_specs, bg_specs = _normalize_and_pad(fg_specs, bg_specs, target_snr_range=target_snr_range)
 
     def _make_binamix_track(spec: TrackAudioSpec) -> TrackObject:
         track, padded_audio = spec
@@ -160,6 +161,7 @@ def binaural_mix(
 def _normalize_and_pad(
     fg_tracks: tuple[TrackAudioSpec, ...],
     bg_tracks: tuple[TrackAudioSpec, ...],
+    target_snr_range: tuple[float, float] = (5.0, 10.0),
 ) -> tuple[tuple[TrackAudioSpec, ...], tuple[TrackAudioSpec, ...]]:
     """
     RMS-normalize all source clips, pad them to full clip length, then enforce
@@ -197,7 +199,7 @@ def _normalize_and_pad(
     assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
 
     # Sample target full-clip SNR in dB
-    target_snr_db = np.random.uniform(5.0, 10.0)
+    target_snr_db = np.random.uniform(target_snr_range[0], target_snr_range[1])
 
     # Build summed foreground and summed background, including track.level
     fg_sum = np.zeros(fg_max_end, dtype=np.float32)
