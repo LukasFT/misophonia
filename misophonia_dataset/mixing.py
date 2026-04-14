@@ -161,6 +161,20 @@ def _normalize_and_pad(
     fg_tracks: tuple[TrackAudioSpec, ...],
     bg_tracks: tuple[TrackAudioSpec, ...],
 ) -> tuple[tuple[TrackAudioSpec, ...], tuple[TrackAudioSpec, ...]]:
+    """
+    RMS-normalize all source clips, pad them to full clip length, then enforce
+    a full-clip SNR between the summed foreground and summed background.
+
+    The target SNR is sampled uniformly from [5, 10] dB.
+
+    Note:
+    - SNR is enforced on the pre-binauralized waveforms.
+    - track.level is included in the SNR computation, since binamix applies it later.
+    - All background tracks are scaled jointly by one factor, preserving their
+      relative balance.
+    """
+    eps = 1e-8
+
     # RMS normalization:
     rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
     rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
@@ -181,4 +195,27 @@ def _normalize_and_pad(
 
 
     assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
-    return fg_padded, bg_padded
+
+    # Sample target full-clip SNR in dB
+    target_snr_db = np.random.uniform(5.0, 10.0)
+
+    # Build summed foreground and summed background, including track.level
+    fg_sum = np.zeros(fg_max_end, dtype=np.float32)
+    for track, audio in fg_padded:
+        fg_sum += track.level * audio
+
+    bg_sum = np.zeros(fg_max_end, dtype=np.float32)
+    for track, audio in bg_padded:
+        bg_sum += track.level * audio
+
+    fg_power = np.mean(fg_sum**2) + eps
+    bg_power = np.mean(bg_sum**2) + eps
+
+    # Solve for a single background scaling factor alpha such that:
+    # 10 * log10(fg_power / (alpha^2 * bg_power)) = target_snr_db
+    desired_bg_power = fg_power / (10 ** (target_snr_db / 10.0))
+    alpha = np.sqrt(desired_bg_power / bg_power)
+
+    bg_scaled = tuple((track, audio * alpha) for track, audio in bg_padded)
+
+    return fg_padded, bg_scaled

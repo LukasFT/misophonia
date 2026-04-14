@@ -176,7 +176,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
                 global_params=global_params,
                 # Keep this the reference level for backgrounds.
                 # In that way, the randomness in the foreground is always relative to the same background level.
-                bg_track_options={"level": 0.2 + 0.2 / len(background_items)},
+                # bg_track_options={"level": 0.2 + 0.2 / len(background_items)},
                 rng=rng,
             )
             foreground_tracks, _ = tuple(zip(*foreground_specs))
