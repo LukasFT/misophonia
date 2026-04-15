@@ -610,7 +610,7 @@ def _time_and_run_model(model, inputs, *, profiling: bool = False) -> tuple[torc
 
     with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
         with record_function("model_inference"):
-            output = model(*inputs)  # noqa: F841
+            output = model(inputs)
 
     # Print profiling results
     if profiling:

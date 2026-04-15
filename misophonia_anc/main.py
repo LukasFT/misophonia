@@ -285,6 +285,7 @@ def evaluate(
         int | None,
         typer.Option(..., help="Number of samples to examine model output"),
     ] = None,
+    save_samples: Annotated[int, typer.Option(..., help="Number of examples to save to disk.")] = 0,
     num_workers: Annotated[
         int,
         typer.Option(
@@ -293,7 +294,6 @@ def evaluate(
         ),
     ] = 2,
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
-    save_samples: Annotated[int, typer.Option(..., help="Number of examples to save to disk.")] = 0,
 ) -> None:
     """
     Function to compare sample gts and mixes to model outputs.
