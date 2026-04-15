@@ -717,6 +717,8 @@ def prepare_dir_or_file(target: Path, *, is_dir: bool, overwrite: bool) -> None:
 
     if is_dir:
         target.mkdir(parents=True, exist_ok=True)
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
 
 
 # TODO: Remove unused (commented out) functions
