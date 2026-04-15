@@ -71,11 +71,17 @@ def preprocess_to_webdataset_pt(
         mix_array = item.get_mix_audio()
         gt_array = item.get_ground_truth_audio()
         label_array = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
+        sample_rate = item.global_mixing_params.sample_rate
 
-        mix_metrics = calculate_default_metrics(torch.from_numpy(mix_array), torch.from_numpy(gt_array))
+        mix_metrics = calculate_default_metrics(
+            torch.from_numpy(mix_array),
+            torch.from_numpy(gt_array),
+            sample_rate=sample_rate,
+        )
 
         metadata = {
             "uuid": item.uuid,
+            "sample_rate": sample_rate,
             "fg_categories": item.foreground_categories,
             "bg_categories": item.background_categories,
             "is_trigger": item.is_trigger,
@@ -298,11 +304,19 @@ def make_dataloader(
     )
 
 
-def calculate_default_metrics(preds: torch.Tensor, target: torch.Tensor) -> dict[str, float]:
+def calculate_default_metrics(
+    preds: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+) -> dict[str, float]:
     si_snr_both = si_snr(preds, target)
     snr_both = snr(preds, target)
-    ild = ild_diff(preds, target)
-    itd = itd_diff(preds, target)
+
+    # FIXME: Improve efficiency by implementing these functions using torch operations
+    preds_np, target_np = preds.cpu().numpy(), target.cpu().numpy()
+    ild = ild_diff(preds_np, target_np)
+    itd = itd_diff(preds_np, target_np, sr=sample_rate)
 
     return {
         "si_snr": si_snr_both.mean().item(),
@@ -471,7 +485,13 @@ def perform_eval(
             pred_i = pred[batch_idx, :, :valid_len]
             mix_i = inputs["mix"][batch_idx, :, :valid_len]
 
-            metrics = calculate_default_metrics(pred, gt)
+            sample_metdata = inputs["metadata"][batch_idx] if "metadata" in inputs else None
+
+            metrics = calculate_default_metrics(
+                pred_i,
+                gt_i,
+                sample_rate=sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE,
+            )
 
             if samples_left_to_save > 0:
                 sample_files = _save_samples(mix_i, gt_i, pred_i, save_samples_to, sample_idx)
@@ -486,7 +506,7 @@ def perform_eval(
                     "runtime_ms": runtime_ms,
                     "metrics": metrics,
                     "length": valid_len,
-                    "sample_metadata": inputs["metadata"][batch_idx] if "metadata" in inputs else None,
+                    "sample_metadata": sample_metdata,
                 }
             )
 
@@ -659,7 +679,7 @@ def compute_ild(s_left, s_right) -> np.ndarray:
     return 10 * np.log10(sum_sq_left / sum_sq_right)
 
 
-def itd_diff(s_est, s_gt, sr) -> np.ndarray:
+def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
     """
     Computes the ITD error between model estimate and ground truth
     input: (*, 2, T), (*, 2, T)
@@ -670,7 +690,7 @@ def itd_diff(s_est, s_gt, sr) -> np.ndarray:
     return np.abs(itd_est - itd_gt)
 
 
-def ild_diff(s_est, s_gt) -> np.ndarray:
+def ild_diff(s_est: np.ndarray, s_gt: np.ndarray) -> np.ndarray:
     """
     Computes the ILD error between model estimate and ground truth
     input: (*, 2, T), (*, 2, T)
