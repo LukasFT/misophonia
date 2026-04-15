@@ -365,60 +365,6 @@ def print_mem(label: str) -> None:
 ####################
 
 
-# def perform_eval(
-#     model: torch.nn.Module,
-#     data_loader: wds.WebLoader,
-#     *,
-#     device: torch.device,
-# ) -> pd.DataFrame:
-#     """
-#     Run inference on the given model and dataloader, and save the related audio.
-#     """
-#     from .train import si_snr_improvement
-
-#     model.eval()
-#     si_snr_improvements = []
-#     ild_diffs = []
-#     itd_diffs = []
-#     latencies = []
-
-#     with torch.no_grad():
-#         for idx, (inputs, gt, audio_len) in enumerate(data_loader):
-#             if idx == 0:
-#                 for _ in range(100):
-#                     # Warm up for latency test
-#                     output = model(*inputs)
-
-#             inputs["mix"] = inputs["mix"].to(device)
-#             inputs["label_vector"] = inputs["label_vector"].to(device)
-#             inputs["is_control"] = inputs["is_control"].to(device)
-#             gt = gt.to(device)
-
-#             output = model(inputs)
-#             pred = output["x"]
-
-#             si_snr_imp = si_snr_improvement(pred, gt, audio_len)
-#             ild = ild_diff(pred, gt)
-#             itd = itd_diff(pred, gt)
-#             latency = run_time(model, inputs, profiling=False)
-
-#             si_snr_improvements.append(si_snr_imp.item())
-#             ild_diffs.append(ild.item())
-#             itd_diffs.append(itd.item())
-#             latencies.append(latency)
-
-#     results = pd.DataFrame(
-#         {
-#             "si_snr_improvement": np.mean(si_snr_improvements),
-#             "ild_diff": np.mean(ild_diffs),
-#             "itd_diff": np.mean(itd_diffs),
-#             "latency_ms": np.mean(latencies),
-#         }
-#     )
-#     eliot.log_message(f"Evaluation results:\n{results}", level="info")
-#     return results
-
-
 def perform_eval(
     model: torch.nn.Module,
     data_loader: wds.WebLoader,
