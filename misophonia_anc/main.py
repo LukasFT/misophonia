@@ -1,4 +1,5 @@
 import itertools
+import math
 import os
 import subprocess
 from datetime import datetime
@@ -337,9 +338,9 @@ def evaluate(
             include_metadata=True,
         )
         if limit_samples is not None:
-            split_loader = itertools.islice(split_loader, limit_samples)
+            split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
 
-        perform_eval(
+        res, _ = perform_eval(
             model,
             split_loader,
             save_results_to=results_file,
@@ -349,7 +350,7 @@ def evaluate(
             device=device,
         )
 
-        eliot.log_message(f"Evaluated {limit_samples} {split} samples", level="debug")
+        eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
 
     eliot.log_message(f"Completed evaluation for checkpoint {checkpoint} on splits: {splits}", level="info")
 
