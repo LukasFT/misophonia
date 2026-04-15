@@ -285,7 +285,7 @@ def evaluate(
         int | None,
         typer.Option(..., help="Number of samples to examine model output"),
     ] = None,
-    save_samples: Annotated[int, typer.Option(..., help="Number of examples to save to disk.")] = 0,
+    save_samples: Annotated[int, typer.Option(..., help="Number of examples to save to disk.")] = 50,
     batch_size: Annotated[int, typer.Option(..., help="Batch size for evaluation.")] = 4,
     num_workers: Annotated[
         int,
