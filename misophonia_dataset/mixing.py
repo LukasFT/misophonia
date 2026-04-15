@@ -28,13 +28,15 @@ def prepare_track_specs(
         item: SourceDataItem, audio: np.ndarray, fg_max_len: int, options: dict
     ) -> TrackAudioSpec:
 
-        def _locate_meaningful_audio(audio: np.ndarray, fg_max_len: int, last_place_to_start_audio: int) ->tuple[int, int]:
+        def _locate_meaningful_audio(
+            audio: np.ndarray, fg_max_len: int, last_place_to_start_audio: int
+        ) -> tuple[int, int]:
             """
-                Takes an an array of audio, the length of the clip to be used in the mix, and the last place to start.
-                Finds the start and end of a clip of length fg_max_len that contains the most energy.
+            Takes an an array of audio, the length of the clip to be used in the mix, and the last place to start.
+            Finds the start and end of a clip of length fg_max_len that contains the most energy.
 
-                Returns:
-                    indices of start and end of clip to be used in the mix
+            Returns:
+                indices of start and end of clip to be used in the mix
             """
             step_size = 100
             n = len(audio)
@@ -51,7 +53,7 @@ def prepare_track_specs(
             energies = csum[candidate_ends] - csum[candidate_starts]
 
             best_idx = np.argmax(energies)
-            best_energy = energies[best_idx]
+            # best_energy = energies[best_idx]
 
             best_start = int(candidate_starts[best_idx])
             return best_start, best_start + fg_max_len
@@ -107,6 +109,7 @@ def binaural_mix(
     target_snr_range: tuple[float, float] = (5.0, 10.0),
     *,
     is_trig: bool,
+    gt_is_isolated_trigger: bool,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """
     Max a binaural mix of a foreground (trigger) and background sound.
@@ -141,9 +144,25 @@ def binaural_mix(
         reverb_type=global_params.reverb_type,
     )
 
-    if is_trig:
+    if gt_is_isolated_trigger:  # gt = isolated trigger
+        if is_trig:
+            ground_truth = custom_mix_tracks_binaural(
+                tracks=fg_binamix_tracks,
+                subject_id=global_params.subject_id,
+                sample_rate=global_params.sample_rate,
+                ir_type=global_params.ir_type,
+                speaker_layout=global_params.speaker_layout,
+                mode=global_params.mode,
+                reverb_type=global_params.reverb_type,
+            )
+            assert ground_truth.shape == mix.shape, "Ground truth and mix shapes do not match."
+
+            return mix, ground_truth
+        else:
+            return mix, None  # silence for control sound
+    else:  # gt = mix of all backgrounds
         ground_truth = custom_mix_tracks_binaural(
-            tracks=fg_binamix_tracks,
+            tracks=bg_binamix_tracks,
             subject_id=global_params.subject_id,
             sample_rate=global_params.sample_rate,
             ir_type=global_params.ir_type,
@@ -152,10 +171,7 @@ def binaural_mix(
             reverb_type=global_params.reverb_type,
         )
         assert ground_truth.shape == mix.shape, "Ground truth and mix shapes do not match."
-
         return mix, ground_truth
-    else:
-        return mix, None  # silence for control sound
 
 
 def _normalize_and_pad(
@@ -178,23 +194,22 @@ def _normalize_and_pad(
     eps = 1e-8
 
     # RMS normalization:
-    rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
-    rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
-    rms_target = np.mean(rms_fg + rms_bg)
-    fg_norm = tuple(
-        (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
-        for (item, audio), rms in zip(fg_tracks, rms_fg)
-    )
-    bg_norm = tuple(
-        (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
-        for (item, audio), rms in zip(bg_tracks, rms_bg)
-    )
+    # rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
+    # rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
+    # rms_target = np.mean(rms_fg + rms_bg)
+    # fg_norm = tuple(
+    #     (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
+    #     for (item, audio), rms in zip(fg_tracks, rms_fg)
+    # )
+    # bg_norm = tuple(
+    #     (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
+    #     for (item, audio), rms in zip(bg_tracks, rms_bg)
+    # )
 
     fg_max_end = max(track.end for track, _ in fg_tracks)
     # Pad in case that the audio is shorter than max fg audio
     fg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in fg_tracks)
     bg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in bg_tracks)
-
 
     assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
 

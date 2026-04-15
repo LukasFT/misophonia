@@ -279,6 +279,10 @@ class MisophoniaItem(BaseModel):
 
     See get_ground_truth_audio() to load the audio data from the file if it is a Path.
     """
+
+    gt_is_isolated_trigger: bool = True
+    """Whether the ground truth is the isolated trigger sound (if True) or the mix of all backgrounds (if False)."""
+
     length: int
     """Duration in number of samples."""
 
