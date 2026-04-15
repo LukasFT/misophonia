@@ -313,18 +313,19 @@ def calculate_default_metrics(
     si_snr_both = si_snr(preds, target)
     snr_both = snr(preds, target)
 
-    # FIXME: Improve efficiency by implementing these functions using torch operations
-    preds_np, target_np = preds.cpu().numpy(), target.cpu().numpy()
-    ild = ild_diff(preds_np, target_np)
-    itd = itd_diff(preds_np, target_np, sr=sample_rate)
+    # FIXME: ild and itd encounter divide by zero etc.
+    # # FIXME: Improve efficiency by implementing these functions using torch operations
+    # preds_np, target_np = preds.cpu().numpy(), target.cpu().numpy()
+    # ild = ild_diff(preds_np, target_np)
+    # itd = itd_diff(preds_np, target_np, sr=sample_rate)
 
     return {
         "si_snr": si_snr_both.mean().item(),
         "snr": snr_both.mean().item(),
         "snr_left": snr_both[..., 0].mean().item(),
         "snr_right": snr_both[..., 1].mean().item(),
-        "ild": ild.item(),
-        "itd": itd.item(),
+        # "ild": ild,
+        # "itd": itd,
     }
 
 
@@ -626,9 +627,8 @@ def _time_and_run_model(model, inputs, *, profiling: bool = False) -> tuple[torc
         A tuple of (model output, latency in milliseconds).
 
     """
-    # Warmup
 
-    with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+    with profile(activities=[ProfilerActivity.CPU], record_shapes=True, acc_events=True) as prof:
         with record_function("model_inference"):
             output = model(inputs)
 
