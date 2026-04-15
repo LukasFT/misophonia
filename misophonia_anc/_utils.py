@@ -406,10 +406,11 @@ def perform_eval(
     )
     has_wamed_up = False
 
+    total_idx = 0
+
     with torch.no_grad():
-        for idx, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" samples"):
+        for batch_idx, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" samples"):
             # Load data to device:
-            batch_idx = 0  # We assume batch size of 1
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
@@ -424,38 +425,41 @@ def perform_eval(
             output, runtime_ms = _time_and_run_model(model, inputs, profiling=False)
             pred = output["x"]
 
-            sample_idx = f"{idx:03d}"
-            valid_len = int(audio_len[batch_idx].item())
+            batch_size = gt.shape[0]
+            for i in range(batch_size):
+                sample_idx = f"{total_idx + i:03d}"
+                valid_len = int(audio_len[i].item())
 
-            # Chop to valid length (removing padding) for evaluation and saving
-            gt_i = gt[batch_idx, :, :valid_len]
-            pred_i = pred[batch_idx, :, :valid_len]
-            mix_i = inputs["mix"][batch_idx, :, :valid_len]
+                # Chop to valid length (removing padding) for evaluation and saving
+                gt_i = gt[i, :, :valid_len]
+                pred_i = pred[i, :, :valid_len]
+                mix_i = inputs["mix"][i, :, :valid_len]
 
-            sample_metdata = inputs["metadata"][batch_idx] if "metadata" in inputs else None
+                sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
 
-            metrics = calculate_default_metrics(
-                pred_i,
-                gt_i,
-                sample_rate=sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE,
-            )
+                metrics = calculate_default_metrics(
+                    pred_i,
+                    gt_i,
+                    sample_rate=sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE,
+                )
 
-            if samples_left_to_save > 0:
-                sample_files = _save_samples(mix_i, gt_i, pred_i, save_samples_to, sample_idx)
-                samples_left_to_save -= 1
-            else:
-                sample_files = None
+                if samples_left_to_save > 0:
+                    sample_files = _save_samples(mix_i, gt_i, pred_i, save_samples_to, sample_idx)
+                    samples_left_to_save -= 1
+                else:
+                    sample_files = None
 
-            results.append(
-                {
-                    "idx": sample_idx,
-                    "sample_files": sample_files,
-                    "runtime_ms": runtime_ms,
-                    "metrics": metrics,
-                    "length": valid_len,
-                    "sample_metadata": sample_metdata,
-                }
-            )
+                results.append(
+                    {
+                        "idx": sample_idx,
+                        "sample_files": sample_files,
+                        "runtime_ms": runtime_ms,
+                        "metrics": metrics,
+                        "batch_length": gt.shape[-1],
+                        "sample_length": valid_len,
+                        "sample_metadata": sample_metdata,
+                    }
+                )
 
     eliot.log_message(f"Saving results for {len(results)} samples to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
@@ -480,9 +484,19 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
         results: A list of dictionaries containing metrics for each sample, as output by perform_eval.
     """
     df = pd.DataFrame(
-        [{**result["metrics"], "runtime_ms": result["runtime_ms"], "length": result["length"]} for result in results]
+        [
+            {
+                **result["metrics"],
+                "runtime_ms": result["runtime_ms"],
+                "batch_length": result["batch_length"],
+                "sample_length": result["sample_length"],
+            }
+            for result in results
+        ]
     )
-    df["runtime_ms_pr_length"] = df["runtime_ms"] / df["length"]
+    df["runtime_ms_pr_length"] = (
+        df["runtime_ms"] / df["batch_length"]
+    )  # Model is run on batch-level, so normalize on that
     agg_metrics = df.mean().to_dict()
     return agg_metrics
 
