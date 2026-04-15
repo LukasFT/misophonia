@@ -18,13 +18,26 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
+from .confidential_losses import MultiResolutionCCMSE  # noqa: F401
+
 if TYPE_CHECKING:
     from .model import MisophoniaANCNet
 
 
-def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor) -> torch.Tensor:
+def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor, loss_option: str = "time") -> torch.Tensor:
     pred = _output["x"]
-    return -0.7 * snr(pred, tgt).mean() - 0.3 * si_snr(pred, tgt).mean()
+
+    def time_loss(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+        return -0.7 * snr(pred, tgt).mean() - 0.3 * si_snr(pred, tgt).mean()
+
+    if loss_option == "time":
+        return time_loss(pred, tgt)
+    elif loss_option == "freq":
+        return MultiResolutionCCMSE()(pred, tgt)
+    elif loss_option == "combined":
+        return 0.5 * MultiResolutionCCMSE()(pred, tgt) + 0.5 * time_loss(pred, tgt)
+    else:
+        raise ValueError(f"Invalid loss option: {loss_option}")
 
 
 def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor) -> torch.Tensor:
@@ -39,6 +52,7 @@ def train_epoch(
     train_loader: torch.utils.data.DataLoader,
     start_global_step: int = 0,
     epoch: int = 0,
+    loss_option: str = "time",
 ) -> tuple[float, int]:
     model = model.train()
 
@@ -66,7 +80,7 @@ def train_epoch(
         mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
         output["x"] = pred * mask
 
-        loss = loss_fn(output, gt)
+        loss = loss_fn(output, gt, loss_option=loss_option)
         loss.backward()
         optimizer.step()
 
@@ -86,6 +100,7 @@ def val_epoch(
     *,
     start_global_step: int = 0,
     epoch: int = 0,
+    loss_option: str = "time",
 ) -> tuple[float, float, int]:
     """
     Function to evaluate model on validation set each epoch.
@@ -126,7 +141,7 @@ def val_epoch(
             mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
             output["x"] = pred * mask
 
-            loss = loss_fn(output, gt)
+            loss = loss_fn(output, gt, loss_option=loss_option)
 
             loss_value = loss.item()
             val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
@@ -158,6 +173,7 @@ def train_model(
     n_epochs: int,
     checkpoint_epoch: int = 0,
     device: torch.device,
+    loss_option: str,
     save_dir: Path,
     lr: float = 0.0005,
     weight_decay: float = 0.0,
@@ -200,6 +216,7 @@ def train_model(
             device=device,
             optimizer=optimizer,
             train_loader=train_loader,
+            loss_option=loss_option,
             start_global_step=global_step_train,
             epoch=epoch,
         )
@@ -209,6 +226,7 @@ def train_model(
             model,
             device,
             val_loader,
+            loss_option=loss_option,
             start_global_step=global_step_val,
             epoch=epoch,
         )

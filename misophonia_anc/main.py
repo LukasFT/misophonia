@@ -248,6 +248,9 @@ def train(
             eliot.log_message(f"Tracking using MLflow '{run_name}': {run_link}", level="info")
 
     try:
+        assert config.loss_option in ["time", "frequency", "combined"], (
+            "Invalid loss option. Must be 'time', 'frequency' or 'combined'."
+        )
         train_model(
             model,
             device=device,
@@ -255,6 +258,7 @@ def train(
             val_loader=val_loader,
             n_epochs=config.num_epochs,
             checkpoint_epoch=checkpoint_metadata.get("epoch", 0),
+            loss_option=config.loss_option,
             save_dir=Path(model_dir),
             global_step_train=checkpoint_metadata.get("global_step_train", 0),
             global_step_val=checkpoint_metadata.get("global_step_val", 0),
