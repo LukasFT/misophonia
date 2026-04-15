@@ -63,6 +63,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
         backgrounds_per_item: tuple[int, int] = (1, 3),
         trig_to_control_ratio: float = 0.5,
         target_snr_range: tuple[float, float] = (5.0, 10.0),
+        gt_is_isolated_trigger: bool = True,
         random_seed: int = 42,
     ) -> MisophoniaDatasetSplit:
         """
@@ -76,6 +77,8 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
             trig_to_control_ratio: Ratio of trigger to control sounds in the generated items.
                                         I.e, the percent of items that will contain a trigger sound rather than a control sound.
                                         Must be between 0 and 1.
+            gt_is_isolated_trigger: If True, then ground truth will be the isolated trigger sound (if present).
+                                    If False, then ground truth will be the mix of all backgrounds.
             random_seed: Random seed for sampling.
                             Given the same seed, parameters, source data and code version, the same dataset will be generated.
 
@@ -190,6 +193,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
                 global_params=global_params,
                 target_snr_range=target_snr_range,
                 is_trig=is_trig,
+                gt_is_isolated_trigger=gt_is_isolated_trigger,
             )
 
             return MisophoniaItem(
@@ -201,6 +205,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
                 global_mixing_params=global_params,
                 foregrounds=foreground_tracks,
                 backgrounds=background_tracks,
+                gt_is_isolated_trigger=gt_is_isolated_trigger,
             )
 
         # Split view will call _generate_one as needed
