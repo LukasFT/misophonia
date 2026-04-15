@@ -407,7 +407,7 @@ def perform_eval(
     has_wamed_up = False
 
     with torch.no_grad():
-        for idx, (inputs, gt, audio_len) in enumerate(data_loader):
+        for idx, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" samples"):
             # Load data to device:
             batch_idx = 0  # We assume batch size of 1
             inputs["mix"] = inputs["mix"].to(device)
