@@ -409,7 +409,7 @@ def perform_eval(
     total_idx = 0
 
     with torch.no_grad():
-        for batch_idx, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" samples"):
+        for _, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
             # Load data to device:
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
@@ -427,7 +427,7 @@ def perform_eval(
 
             batch_size = gt.shape[0]
             for i in range(batch_size):
-                sample_idx = f"{total_idx + i:03d}"
+                sample_idx = f"{total_idx:03d}"
                 valid_len = int(audio_len[i].item())
 
                 # Chop to valid length (removing padding) for evaluation and saving
@@ -460,8 +460,9 @@ def perform_eval(
                         "sample_metadata": sample_metdata,
                     }
                 )
+                total_idx += 1
 
-    eliot.log_message(f"Saving results for {len(results)} samples to {save_results_to}", level="info")
+    eliot.log_message(f"Saving results to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
         json.dump(results, f)
 
