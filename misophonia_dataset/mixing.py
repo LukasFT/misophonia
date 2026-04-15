@@ -161,17 +161,20 @@ def binaural_mix(
         else:
             return mix, None  # silence for control sound
     else:  # gt = mix of all backgrounds
-        ground_truth = custom_mix_tracks_binaural(
-            tracks=bg_binamix_tracks,
-            subject_id=global_params.subject_id,
-            sample_rate=global_params.sample_rate,
-            ir_type=global_params.ir_type,
-            speaker_layout=global_params.speaker_layout,
-            mode=global_params.mode,
-            reverb_type=global_params.reverb_type,
-        )
-        assert ground_truth.shape == mix.shape, "Ground truth and mix shapes do not match."
-        return mix, ground_truth
+        if is_trig:
+            ground_truth = custom_mix_tracks_binaural(
+                tracks=bg_binamix_tracks,
+                subject_id=global_params.subject_id,
+                sample_rate=global_params.sample_rate,
+                ir_type=global_params.ir_type,
+                speaker_layout=global_params.speaker_layout,
+                mode=global_params.mode,
+                reverb_type=global_params.reverb_type,
+            )
+            assert ground_truth.shape == mix.shape, "Ground truth and mix shapes do not match."
+            return mix, ground_truth
+        else:
+            return mix, mix  # for control sounds, gt is the same as the mix
 
 
 def _normalize_and_pad(
