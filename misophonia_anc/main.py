@@ -286,6 +286,7 @@ def evaluate(
         typer.Option(..., help="Number of samples to examine model output"),
     ] = None,
     save_samples: Annotated[int, typer.Option(..., help="Number of examples to save to disk.")] = 0,
+    batch_size: Annotated[int, typer.Option(..., help="Batch size for evaluation.")] = 4,
     num_workers: Annotated[
         int,
         typer.Option(
@@ -331,7 +332,7 @@ def evaluate(
         shards_split = dataset_split_dir.glob("data-*.tar")
         split_loader = make_dataloader(
             shards_split,
-            batch_size=1,  # We do inference one at a time
+            batch_size=batch_size,
             num_workers=num_workers,
             include_metadata=True,
         )
