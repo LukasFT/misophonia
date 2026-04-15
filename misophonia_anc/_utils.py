@@ -471,7 +471,7 @@ def perform_eval(
             pred_i = pred[batch_idx, :, :valid_len]
             mix_i = inputs["mix"][batch_idx, :, :valid_len]
 
-            metrics = calculate_default_metrics(pred, gt, audio_len)
+            metrics = calculate_default_metrics(pred, gt)
 
             if samples_left_to_save > 0:
                 sample_files = _save_samples(mix_i, gt_i, pred_i, save_samples_to, sample_idx)
