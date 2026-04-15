@@ -72,18 +72,14 @@ def preprocess_to_webdataset_pt(
         gt_array = item.get_ground_truth_audio()
         label_array = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
 
-        mix_torch = torch.from_numpy(mix_array)
-        gt_torch = torch.from_numpy(gt_array)
-        si_snr_val = si_snr(mix_torch, gt_torch).mean().item()
-        snr_val = snr(mix_torch, gt_torch).mean().item()
+        mix_metrics = calculate_default_metrics(torch.from_numpy(mix_array), torch.from_numpy(gt_array))
 
         metadata = {
             "uuid": item.uuid,
             "fg_categories": item.foreground_categories,
             "bg_categories": item.background_categories,
             "is_trigger": item.is_trigger,
-            "mix_si_snr": si_snr_val,
-            "mix_snr": snr_val,
+            "mix_vs_gt_metrics": mix_metrics,
             "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
             "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
         }
@@ -302,6 +298,22 @@ def make_dataloader(
     )
 
 
+def calculate_default_metrics(preds: torch.Tensor, target: torch.Tensor) -> dict[str, float]:
+    si_snr_both = si_snr(preds, target)
+    snr_both = snr(preds, target)
+    ild = ild_diff(preds, target)
+    itd = itd_diff(preds, target)
+
+    return {
+        "si_snr": si_snr_both.mean().item(),
+        "snr": snr_both.mean().item(),
+        "snr_left": snr_both[..., 0].mean().item(),
+        "snr_right": snr_both[..., 1].mean().item(),
+        "ild": ild.item(),
+        "itd": itd.item(),
+    }
+
+
 ############################
 # Resource Tracking Utils #
 ############################
@@ -338,113 +350,200 @@ def print_mem(label: str) -> None:
 ####################
 
 
+# def perform_eval(
+#     model: torch.nn.Module,
+#     data_loader: wds.WebLoader,
+#     *,
+#     device: torch.device,
+# ) -> pd.DataFrame:
+#     """
+#     Run inference on the given model and dataloader, and save the related audio.
+#     """
+#     from .train import si_snr_improvement
+
+#     model.eval()
+#     si_snr_improvements = []
+#     ild_diffs = []
+#     itd_diffs = []
+#     latencies = []
+
+#     with torch.no_grad():
+#         for idx, (inputs, gt, audio_len) in enumerate(data_loader):
+#             if idx == 0:
+#                 for _ in range(100):
+#                     # Warm up for latency test
+#                     output = model(*inputs)
+
+#             inputs["mix"] = inputs["mix"].to(device)
+#             inputs["label_vector"] = inputs["label_vector"].to(device)
+#             inputs["is_control"] = inputs["is_control"].to(device)
+#             gt = gt.to(device)
+
+#             output = model(inputs)
+#             pred = output["x"]
+
+#             si_snr_imp = si_snr_improvement(pred, gt, audio_len)
+#             ild = ild_diff(pred, gt)
+#             itd = itd_diff(pred, gt)
+#             latency = run_time(model, inputs, profiling=False)
+
+#             si_snr_improvements.append(si_snr_imp.item())
+#             ild_diffs.append(ild.item())
+#             itd_diffs.append(itd.item())
+#             latencies.append(latency)
+
+#     results = pd.DataFrame(
+#         {
+#             "si_snr_improvement": np.mean(si_snr_improvements),
+#             "ild_diff": np.mean(ild_diffs),
+#             "itd_diff": np.mean(itd_diffs),
+#             "latency_ms": np.mean(latencies),
+#         }
+#     )
+#     eliot.log_message(f"Evaluation results:\n{results}", level="info")
+#     return results
+
+
 def perform_eval(
     model: torch.nn.Module,
     data_loader: wds.WebLoader,
     *,
     device: torch.device,
-) -> pd.DataFrame:
+    save_results_to: Path,
+    save_aggregated_results_to: Path | None = None,
+    save_samples_to: Path | None = None,
+    save_num_samples: int = 0,
+) -> tuple[dict, dict | None]:
     """
-    Run inference on the given model and dataloader, and save the related audio.
+    Run inference on the given model and dataloader and evaluate.
+
+    Args:
+        model: The PyTorch model to evaluate.
+        data_loader: A WebLoader that yields batches of data for evaluation.
+        device: The torch.device to run inference on.
+        save_results_to: A path to save the evaluation results as a JSON file. Will include metrics and metadata for each sample.
+        save_aggregated_results_to: If not None, a path to save aggregated evaluation results (e.g. average metrics across all samples) as a JSON file.
+        save_samples_to: If not None, a directory to save example audio files of the mixes, gts, and predictions. Will save as .flac files.
+        save_num_samples: If save_samples_to is not None, the maximum number of samples to save to disk. If 0, do not save any.
+
+    Returns:
+        A tuple containing the individual sample results and the aggregated results.
+
     """
-    from .train import si_snr_improvement
+
+    if save_samples_to is not None:
+        save_samples_to.mkdir(parents=True, exist_ok=True)
+        assert save_samples_to.is_dir()
 
     model.eval()
-    si_snr_improvements = []
-    ild_diffs = []
-    itd_diffs = []
-    latencies = []
 
-    with torch.no_grad():
-        for idx, (inputs, gt, audio_len) in enumerate(data_loader):
-            if idx == 0:
-                for _ in range(100):
-                    # Warm up for latency test
-                    output = model(*inputs)
+    results = []
 
-            inputs["mix"] = inputs["mix"].to(device)
-            inputs["label_vector"] = inputs["label_vector"].to(device)
-            inputs["is_control"] = inputs["is_control"].to(device)
-            gt = gt.to(device)
-
-            output = model(inputs)
-            pred = output["x"]
-
-            si_snr_imp = si_snr_improvement(pred, gt, audio_len)
-            ild = ild_diff(pred, gt)
-            itd = itd_diff(pred, gt)
-            latency = run_time(model, inputs, profiling=False)
-
-            si_snr_improvements.append(si_snr_imp.item())
-            ild_diffs.append(ild.item())
-            itd_diffs.append(itd.item())
-            latencies.append(latency)
-
-    results = pd.DataFrame(
-        {
-            "si_snr_improvement": np.mean(si_snr_improvements),
-            "ild_diff": np.mean(ild_diffs),
-            "itd_diff": np.mean(itd_diffs),
-            "latency_ms": np.mean(latencies),
-        }
+    samples_left_to_save = save_num_samples
+    assert save_num_samples == 0 or save_samples_to is not None, (
+        "If save_num_samples is greater than 0, save_samples_to must be provided."
     )
-    eliot.log_message(f"Evaluation results:\n{results}", level="info")
-    return results
-
-
-def perform_inference(
-    model: torch.nn.Module,
-    data_loader: wds.WebLoader,
-    *,
-    device: torch.device,
-    save_to: Path | None = None,
-) -> None:
-    """
-    Run inference on the given model and dataloader, and save the related audio.
-    """
-
-    if save_to is not None:
-        save_to.mkdir(parents=True, exist_ok=True)
-        assert save_to.is_dir()
-
-    model.eval()
-
-    metadatas = []
+    has_wamed_up = False
 
     with torch.no_grad():
         for idx, (inputs, gt, audio_len) in enumerate(data_loader):
+            # Load data to device:
+            batch_idx = 0  # We assume batch size of 1
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
-
             gt = gt.to(device)
 
-            output = model(inputs)
+            # Warm up on the first round to get better latency measurements
+            if has_wamed_up is False:
+                _warm_up_model(model, inputs)
+                has_wamed_up = True
+
+            # Run model and measure latency
+            output, runtime_ms = _time_and_run_model(model, inputs, profiling=False)
             pred = output["x"]
 
-            valid_len = int(audio_len[0].item())
-            gt_i = gt[0, :, :valid_len]
-            pred_i = pred[0, :, :valid_len]
-            mix_i = inputs["mix"][0, :, :valid_len]
+            sample_idx = f"{idx:03d}"
+            valid_len = int(audio_len[batch_idx].item())
 
-            if save_to is not None:
-                _save_audio_stereo(mix_i, save_to / f"sample_{idx:03d}_mix.flac")
-                _save_audio_stereo(gt_i, save_to / f"sample_{idx:03d}_gt.flac")
-                _save_audio_stereo(pred_i, save_to / f"sample_{idx:03d}_pred.flac")
+            # Chop to valid length (removing padding) for evaluation and saving
+            gt_i = gt[batch_idx, :, :valid_len]
+            pred_i = pred[batch_idx, :, :valid_len]
+            mix_i = inputs["mix"][batch_idx, :, :valid_len]
 
-                sample_metadata = {}
-                sample_metadata["sample_idx"] = idx
+            metrics = calculate_default_metrics(pred, gt, audio_len)
 
-                if "metadata" in inputs:
-                    sample_metadata.update(inputs["metadata"][0])
+            if samples_left_to_save > 0:
+                sample_files = _save_samples(mix_i, gt_i, pred_i, save_samples_to, sample_idx)
+                samples_left_to_save -= 1
+            else:
+                sample_files = None
 
-                metadatas.append(sample_metadata)
+            results.append(
+                {
+                    "idx": sample_idx,
+                    "sample_files": sample_files,
+                    "runtime_ms": runtime_ms,
+                    "metrics": metrics,
+                    "length": valid_len,
+                    "sample_metadata": inputs["metadata"][batch_idx] if "metadata" in inputs else None,
+                }
+            )
 
-    if save_to is not None:
-        metadata_file = save_to / "metadata.json"
-        with metadata_file.open("w") as f:
-            json.dump(metadatas, f, indent=4)
-        eliot.log_message(f"Saved metadata for {len(metadatas)} samples to {metadata_file}", level="info")
+    eliot.log_message(f"Saving results for {len(results)} samples to {save_results_to}", level="info")
+    with save_results_to.open("w") as f:
+        json.dump(results, f)
+
+    if save_aggregated_results_to is None:
+        return results, None
+
+    eliot.log_message(f"Aggregating results and saving to {save_aggregated_results_to}", level="info")
+    agg_res = aggregate_results(results)
+    eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
+    with save_aggregated_results_to.open("w") as f:
+        json.dump(agg_res, f, indent=4)
+    return results, agg_res
+
+
+def aggregate_results(results: list[dict[str, object]]) -> dict:
+    """
+    Aggregate the results from perform_eval into overall metrics.
+
+    Args:
+        results: A list of dictionaries containing metrics for each sample, as output by perform_eval.
+    """
+    df = pd.DataFrame(
+        [{**result["metrics"], "runtime_ms": result["runtime_ms"], "length": result["length"]} for result in results]
+    )
+    df["runtime_ms_pr_length"] = df["runtime_ms"] / df["length"]
+    agg_metrics = df.mean().to_dict()
+    return agg_metrics
+
+
+def _save_samples(
+    mix: torch.Tensor, gt: torch.Tensor, pred: torch.Tensor, save_dir: Path, sample_idx: str
+) -> dict[str, str]:
+    """
+    Save the given mix, gt, and pred tensors as .flac files in the given directory with the given sample index.
+    """
+    sample_files = {
+        "mix": (mix, save_dir / f"sample_{sample_idx}_mix.flac"),
+        "gt": (gt, save_dir / f"sample_{sample_idx}_gt.flac"),
+        "pred": (pred, save_dir / f"sample_{sample_idx}_pred.flac"),
+    }
+    for _, (audio_tensor, path) in sample_files.items():
+        _save_audio_stereo(audio_tensor, path)
+    return {key: str(path.name) for key, (_, path) in sample_files.items()}
+
+
+def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int = 50) -> None:
+    """
+    Run a few forward passes to warm up the model (e.g. for more accurate latency measurements).
+    """
+    model.eval()
+    with torch.no_grad():
+        for _ in range(num_iters):
+            _ = model(inputs)
 
 
 def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
@@ -494,9 +593,18 @@ def model_size(model) -> float:
     return num_train_params / 1e6
 
 
-def run_time(model, inputs, *, profiling: bool = False) -> float:
+def _time_and_run_model(model, inputs, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
     """
-    Returns runtime of a model in ms.
+    Run a model while measuring the time taken for the forward pass. If `profiling` is True, also prints a detailed profiling report.
+
+    Args:
+        model: The PyTorch model to run.
+        inputs: A dictionary of input tensors to pass to the model.
+        profiling: Whether to print a detailed profiling report.
+
+    Returns:
+        A tuple of (model output, latency in milliseconds).
+
     """
     # Warmup
 
@@ -508,8 +616,7 @@ def run_time(model, inputs, *, profiling: bool = False) -> float:
     if profiling:
         print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=20))
 
-    # Return runtime in ms
-    return prof.profiler.self_cpu_time_total / 1000
+    return output, prof.profiler.self_cpu_time_total / 1000
 
 
 def get_git_sha() -> str | None:
@@ -571,6 +678,25 @@ def ild_diff(s_est, s_gt) -> np.ndarray:
     ild_est = compute_ild(s_est[..., 0, :], s_est[..., 1, :])
     ild_gt = compute_ild(s_gt[..., 0, :], s_gt[..., 1, :])
     return np.abs(ild_est - ild_gt)
+
+
+def prepare_dir_or_file(target: Path, *, is_dir: bool, overwrite: bool) -> None:
+    """Prepare a directory or file for writing. If it already exists, either overwrite it or raise an error based on the `overwrite` flag."""
+
+    if target.exists():
+        if overwrite:
+            if is_dir:
+                eliot.log_message(f"Deleting existing directory at {target}", level="warning")
+                for file in target.glob("*"):
+                    file.unlink()
+            else:
+                eliot.log_message(f"Overwriting existing file at {target}", level="warning")
+                target.unlink()
+        else:
+            raise FileExistsError(f"Directory already exists at {target}. Use --overwrite to overwrite.")
+
+    if is_dir:
+        target.mkdir(parents=True, exist_ok=True)
 
 
 # TODO: Remove unused (commented out) functions

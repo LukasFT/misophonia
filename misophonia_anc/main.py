@@ -21,7 +21,8 @@ from ._utils import (
     get_allocated_cpus,
     get_git_sha,
     make_dataloader,
-    perform_inference,
+    perform_eval,
+    prepare_dir_or_file,
     preprocess_to_webdataset_pt,
     print_mem,
 )
@@ -264,7 +265,7 @@ def train(
 
 
 @app.command()
-def infer(
+def evaluate(
     name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
     *,
     splits: Annotated[
@@ -280,7 +281,7 @@ def infer(
         typer.Option(..., help="Name of model checkpoint to load. If 'init', a random untrained model will be used."),
     ] = "best_weights.pt",
     overwrite: Annotated[bool, typer.Option(..., help="Whether to overwrite existing samples.")] = False,
-    num_samples: Annotated[
+    limit_samples: Annotated[
         int | None,
         typer.Option(..., help="Number of samples to examine model output"),
     ] = None,
@@ -292,6 +293,7 @@ def infer(
         ),
     ] = 2,
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+    save_samples: Annotated[int, typer.Option(..., help="Number of examples to save to disk.")] = 0,
 ) -> None:
     """
     Function to compare sample gts and mixes to model outputs.
@@ -300,19 +302,20 @@ def infer(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     for split in splits:
-        samples_dir = model_dir / "samples" / checkpoint.replace(".pt", "") / split
-        samples_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_without_pt = checkpoint.replace(".pt", "")
 
-        if samples_dir.exists() and any(samples_dir.iterdir()):
-            if overwrite:
-                eliot.log_message(f"Deleting existing samples in {samples_dir}...", level="debug")
-                for file in samples_dir.glob("*"):
-                    file.unlink()
-                eliot.log_message(f"Deleted existing samples in {samples_dir}.", level="debug")
-            else:
-                raise FileExistsError(
-                    f"Samples already exist for checkpoint {checkpoint} at {samples_dir}. Use --overwrite to overwrite existing samples."
-                )
+        results_file = model_dir / "eval_results" / f"{checkpoint_without_pt}_{split}_results.json"
+        aggregated_results_file = (
+            model_dir / "eval_results" / f"{checkpoint_without_pt}_{split}_aggregated_results.json"
+        )
+        prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
+        prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
+
+        if save_samples == 0:
+            samples_dir = None
+        else:
+            samples_dir = model_dir / "samples" / checkpoint_without_pt / split
+            prepare_dir_or_file(samples_dir, overwrite=overwrite, is_dir=True)
 
         checkpoint_file = model_dir / "checkpoints" / checkpoint
         if checkpoint == "init":
@@ -332,14 +335,22 @@ def infer(
             num_workers=num_workers,
             include_metadata=True,
         )
-        if num_samples is not None:
-            split_loader = itertools.islice(split_loader, num_samples)
+        if limit_samples is not None:
+            split_loader = itertools.islice(split_loader, limit_samples)
 
-        perform_inference(model, split_loader, save_to=samples_dir, device=device)
+        perform_eval(
+            model,
+            split_loader,
+            save_results_to=results_file,
+            save_aggregated_results_to=aggregated_results_file,
+            save_num_samples=save_samples,
+            save_samples_to=samples_dir,
+            device=device,
+        )
 
-        eliot.log_message(f"Saved {num_samples} {split} samples to {samples_dir}", level="debug")
+        eliot.log_message(f"Evaluated {limit_samples} {split} samples", level="debug")
 
-    eliot.log_message(f"Completed inference for checkpoint {checkpoint} on splits: {splits}", level="info")
+    eliot.log_message(f"Completed evaluation for checkpoint {checkpoint} on splits: {splits}", level="info")
 
 
 if __name__ == "__main__":
