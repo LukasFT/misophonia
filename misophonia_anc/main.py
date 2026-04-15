@@ -306,10 +306,11 @@ def evaluate(
     for split in splits:
         checkpoint_without_pt = checkpoint.replace(".pt", "")
 
-        results_file = model_dir / "eval_results" / f"{checkpoint_without_pt}_{split}_results.json"
-        aggregated_results_file = (
-            model_dir / "eval_results" / f"{checkpoint_without_pt}_{split}_aggregated_results.json"
+        filename_prefix = (
+            f"{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
         )
+        results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
+        aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
         prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
         prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
 
