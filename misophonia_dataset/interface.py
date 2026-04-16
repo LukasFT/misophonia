@@ -370,8 +370,14 @@ class MisophoniaItem(BaseModel):
         """Validate that iff is_trigger then ground_truth is not None"""
         if self.is_trigger and self.ground_truth is None:
             raise ValueError("If is_trigger is True, ground_truth must not be None.")
-        if not self.is_trigger and self.ground_truth is not None:
-            raise ValueError("If is_trigger is False, ground_truth must be None.")
+        if self.gt_is_isolated_trigger:
+            if not self.is_trigger and self.ground_truth is not None:
+                raise ValueError("If is_trigger is False, ground_truth must be None.")
+        else:
+            if not self.is_trigger and self.ground_truth is None:
+                raise ValueError(
+                    "If gt_is_isolated_trigger is False and is_trigger is False, ground_truth must be mix."
+                )
         return self
 
     @pydantic.model_validator(mode="before")
