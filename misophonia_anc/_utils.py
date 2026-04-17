@@ -159,13 +159,18 @@ class MisophoniaANCConfig(BaseModel):
         {}, description="Dictionary of parameters to initialize the model. See the train_model() for options."
     )
 
+    subtract_using: list[str] | tuple[str, ...] | None = pydantic.Field(
+        None,
+        description="Whether to perform post-hoc subtraction using the original mix and the model's prediction, and if so, which method to use for subtraction. "
+        "See the _subtraction() method in model.py for details.",
+    )
+
     mlflow_experiment: str | None = pydantic.Field(
         None, description="MLflow experiment name to log training metrics to."
     )
 
     @classmethod
     def from_yaml(cls, yaml_path: str | Path, *, defaults={}) -> "MisophoniaANCConfig":
-
         if not Path(yaml_path).exists():
             raise FileNotFoundError(f"Cannot load config since file does not exist: {yaml_path}")
         with open(yaml_path, "r") as f:
@@ -379,6 +384,7 @@ def perform_eval(
     save_aggregated_results_to: Path | None = None,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
+    subtract_using: tuple[str, ...] | None = None,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -427,45 +433,59 @@ def perform_eval(
                 has_wamed_up = True
 
             # Run model and measure latency
-            output, runtime_ms = _time_and_run_model(model, inputs, profiling=False)
-            pred = output["x"]
+            output, runtime_ms = _time_and_run_model(
+                model,
+                args=inputs,
+                kwargs={"subtract_using": subtract_using},
+                profiling=False,
+            )
 
-            batch_size = gt.shape[0]
-            for i in range(batch_size):
-                sample_idx = f"{total_idx:03d}"
-                valid_len = int(audio_len[i].item())
+            for pred_name, pred in output.items():
+                batch_size = gt.shape[0]
+                for i in range(batch_size):
+                    sample_idx = f"{total_idx:03d}"
+                    valid_len = int(audio_len[i].item())
 
-                # Chop to valid length (removing padding) for evaluation and saving
-                gt_i = gt[i, :, :valid_len]
-                pred_i = pred[i, :, :valid_len]
-                mix_i = inputs["mix"][i, :, :valid_len]
+                    # Chop to valid length (removing padding) for evaluation and saving
+                    gt_i = gt[i, :, :valid_len]
+                    pred_i = pred[i, :, :valid_len]
+                    mix_i = inputs["mix"][i, :, :valid_len]
 
-                sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
+                    sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
 
-                metrics = calculate_default_metrics(
-                    pred_i,
-                    gt_i,
-                    sample_rate=sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE,
-                )
+                    metrics = calculate_default_metrics(
+                        pred_i,
+                        gt_i,
+                        sample_rate=sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE,
+                    )
 
-                if samples_left_to_save > 0:
-                    sample_files = _save_samples(mix_i, gt_i, pred_i, save_samples_to, sample_idx)
-                    samples_left_to_save -= 1
-                else:
-                    sample_files = None
+                    if samples_left_to_save > 0:
+                        sample_files = _save_samples(
+                            save_dir=save_samples_to,
+                            sample_idx=sample_idx,
+                            files={
+                                "mix": mix_i,
+                                "gt": gt_i,
+                                pred_name: pred_i,
+                            },
+                        )
+                        samples_left_to_save -= 1
+                    else:
+                        sample_files = None
 
-                results.append(
-                    {
-                        "idx": sample_idx,
-                        "sample_files": sample_files,
-                        "runtime_ms": runtime_ms,
-                        "metrics": metrics,
-                        "batch_length": gt.shape[-1],
-                        "sample_length": valid_len,
-                        "sample_metadata": sample_metdata,
-                    }
-                )
-                total_idx += 1
+                    results.append(
+                        {
+                            "idx": sample_idx,
+                            "pred_name": pred_name,
+                            "sample_files": sample_files,
+                            "runtime_ms": runtime_ms,
+                            "metrics": metrics,
+                            "batch_length": gt.shape[-1],
+                            "sample_length": valid_len,
+                            "sample_metadata": sample_metdata,
+                        }
+                    )
+                    total_idx += 1
 
     eliot.log_message(f"Saving results to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
@@ -493,6 +513,7 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
         [
             {
                 **result["metrics"],
+                "pred_name": result["pred_name"],
                 "runtime_ms": result["runtime_ms"],
                 "batch_length": result["batch_length"],
                 "sample_length": result["sample_length"],
@@ -500,27 +521,21 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
             for result in results
         ]
     )
-    df["runtime_ms_pr_length"] = (
-        df["runtime_ms"] / df["batch_length"]
-    )  # Model is run on batch-level, so normalize on that
-    agg_metrics = df.mean().to_dict()
+    if "runtime_ms" in df.columns and "batch_length" in df.columns:
+        df["runtime_ms_pr_length"] = (
+            df["runtime_ms"] / df["batch_length"]
+        )  # Model is run on batch-level, so normalize on that
+    agg_metrics = df.groupby("pred_name").mean().to_dict()
     return agg_metrics
 
 
-def _save_samples(
-    mix: torch.Tensor, gt: torch.Tensor, pred: torch.Tensor, save_dir: Path, sample_idx: str
-) -> dict[str, str]:
-    """
-    Save the given mix, gt, and pred tensors as .flac files in the given directory with the given sample index.
-    """
-    sample_files = {
-        "mix": (mix, save_dir / f"sample_{sample_idx}_mix.flac"),
-        "gt": (gt, save_dir / f"sample_{sample_idx}_gt.flac"),
-        "pred": (pred, save_dir / f"sample_{sample_idx}_pred.flac"),
-    }
-    for _, (audio_tensor, path) in sample_files.items():
+def _save_samples(*, save_dir: Path, sample_idx: str, files: torch.Tensor) -> dict[str, str]:
+    sample_files = {}
+    for f_key, audio_tensor in files.items():
+        path = save_dir / f"sample_{sample_idx}_{f_key}.flac"
         _save_audio_stereo(audio_tensor, path)
-    return {key: str(path.name) for key, (_, path) in sample_files.items()}
+        sample_files[f_key] = str(path.name)
+    return sample_files
 
 
 def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int = 50) -> None:
@@ -580,7 +595,7 @@ def model_size(model) -> float:
     return num_train_params / 1e6
 
 
-def _time_and_run_model(model, inputs, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
+def _time_and_run_model(model, args, kwargs, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
     """
     Run a model while measuring the time taken for the forward pass. If `profiling` is True, also prints a detailed profiling report.
 
@@ -596,7 +611,7 @@ def _time_and_run_model(model, inputs, *, profiling: bool = False) -> tuple[torc
 
     with profile(activities=[ProfilerActivity.CPU], record_shapes=True, acc_events=True) as prof:
         with record_function("model_inference"):
-            output = model(inputs)
+            output = model(args, **kwargs)
 
     # Print profiling results
     if profiling:
