@@ -130,6 +130,7 @@ class MisophoniaANCNet(nn.Module):
         init_dec_buf=None,
         init_out_buf=None,
         pad=True,
+        subtract_using: tuple[str, ...] | None = None,
         # TODO: The below are unused?
         writer=None,
         step=None,
@@ -170,10 +171,23 @@ class MisophoniaANCNet(nn.Module):
 
         out = {"x": x}
 
+        if subtract_using is not None:
+            for method in subtract_using:
+                out[f"x_sub_{method}"] = self._subtraction(inputs["mix"], x, method)
+
         if init_enc_buf is None:
             return out
         else:
             return out, enc_buf, dec_buf, out_buf
+
+    def _subtraction(self, mix: torch.Tensor, x: torch.Tensor, method: str) -> torch.Tensor:
+        assert self._hyperparameters["gt_is_isolated_trigger"], (
+            "Subtraction can only be applied if gt_is_isolated_trigger is True"
+        )
+        if method == "simple":
+            return mix - x
+        else:
+            raise ValueError(f"Unsupported subtraction method: {method}")
 
     #### UTILITY FUNCTIONS ####
     @property
