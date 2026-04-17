@@ -685,6 +685,30 @@ def prepare_dir_or_file(target: Path, *, is_dir: bool, overwrite: bool) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
 
 
+def model_diffs(
+    a: pydantic.BaseModel | dict,
+    b: pydantic.BaseModel | dict,
+    *,
+    a_name: str = "a",
+    b_name: str = "b",
+) -> dict:
+    """Recursively compute the differences between two pydantic models and return a dictionary of the differences."""
+    a_dict = a.model_dump(mode="python") if isinstance(a, pydantic.BaseModel) else a
+    b_dict = b.model_dump(mode="python") if isinstance(b, pydantic.BaseModel) else b
+    diffs = {}
+    for key in set(a_dict.keys()).union(b_dict.keys()):
+        a_val = a_dict.get(key, "<MISSING>")
+        b_val = b_dict.get(key, "<MISSING>")
+
+        if isinstance(a_val, dict) and isinstance(b_val, dict):
+            nested_diffs = model_diffs(a_val, b_val, a_name=a_name, b_name=b_name)
+            if len(nested_diffs) > 0:
+                diffs[key] = nested_diffs
+        elif a_val != b_val:
+            diffs[key] = {a_name: a_val, b_name: b_val}
+    return diffs
+
+
 # TODO: Remove unused (commented out) functions
 
 # import numpy.fft as fft  # Semantic Hearinc also used mklfft, which is optimized for Intel
