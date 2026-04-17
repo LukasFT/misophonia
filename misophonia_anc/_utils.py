@@ -709,6 +709,36 @@ def model_diffs(
     return diffs
 
 
+def log_dataset_config_diffs(
+    current: pydantic.BaseModel | dict,
+    preprocessed_file: Path,
+    split: SplitT,
+) -> None:
+    """Log the differences between the current config and the config used to preprocess the dataset."""
+    try:
+        with preprocessed_file.open("r") as f:
+            preprocessed_config = json.load(f)
+    except:
+        eliot.log_message(f"Could not load preprocessed config from {preprocessed_file}", level="error")
+        return
+
+    try:
+        diffs = model_diffs(
+            current,
+            preprocessed_config["config"]["dataset_splits"][split],
+            a_name="current",
+            b_name="preprocessed",
+        )
+        if len(diffs):
+            pretty_diffs = json.dumps(diffs, indent=4)
+            eliot.log_message(
+                f"Config for {split} dataset has changed since preprocessing:\n{pretty_diffs}",
+                level="warning",
+            )
+    except:
+        eliot.log_message(f"Error occurred while comparing dataset configs for {split}.", level="error")
+
+
 # TODO: Remove unused (commented out) functions
 
 # import numpy.fft as fft  # Semantic Hearinc also used mklfft, which is optimized for Intel

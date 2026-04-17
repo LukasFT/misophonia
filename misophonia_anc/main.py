@@ -6,10 +6,10 @@ from datetime import datetime
 from pathlib import Path
 
 import eliot
-import mlflow  # type: ignore
+import mlflow
 import torch
 import typer
-from dotenv import load_dotenv  # type: ignore
+from dotenv import load_dotenv
 from typing_extensions import Annotated
 
 from misophonia_dataset._log import setup_print_logging
@@ -21,6 +21,7 @@ from ._utils import (
     MisophoniaANCConfig,
     get_allocated_cpus,
     get_git_sha,
+    log_dataset_config_diffs,
     make_dataloader,
     perform_eval,
     prepare_dir_or_file,
@@ -191,8 +192,12 @@ def train(
         subprocess.run(["rsync", "-a", "--delete", str(dataset_dir_orig) + "/", str(dataset_dir) + "/"], check=True)
         eliot.log_message(f"Copied preprocessed data to {dataset_dir}.", level="debug")
 
-    shards_train = (dataset_dir / "train").glob("data-*.tar")
-    shards_val = (dataset_dir / "val").glob("data-*.tar")
+    train_dir = dataset_dir / "train"
+    val_dir = dataset_dir / "val"
+    shards_train = train_dir.glob("data-*.tar")
+    shards_val = val_dir.glob("data-*.tar")
+    log_dataset_config_diffs(config, val_dir / "metadata.json", "val")
+    log_dataset_config_diffs(config, train_dir / "metadata.json", "train")
 
     train_loader = make_dataloader(shards_train, batch_size=config.batch_size, num_workers=num_workers)
     val_loader = make_dataloader(shards_val, batch_size=config.batch_size, num_workers=num_workers)
@@ -336,6 +341,7 @@ def evaluate(
         dataset_split_dir = model_dir / "webdataset" / split
         eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
         shards_split = dataset_split_dir.glob("data-*.tar")
+        log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
         split_loader = make_dataloader(
             shards_split,
             batch_size=batch_size,
