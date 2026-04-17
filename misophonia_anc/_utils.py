@@ -526,7 +526,7 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
         df["runtime_ms_pr_length"] = (
             df["runtime_ms"] / df["batch_length"]
         )  # Model is run on batch-level, so normalize on that
-    agg_metrics = df.groupby("pred_name").mean().to_dict()
+    agg_metrics = df.groupby("pred_name").mean().T.to_dict()
     return agg_metrics
 
 
