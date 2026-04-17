@@ -171,12 +171,13 @@ class MisophoniaANCConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, yaml_path: str | Path, *, defaults={}) -> "MisophoniaANCConfig":
+        conf = dict(defaults)
         if not Path(yaml_path).exists():
             raise FileNotFoundError(f"Cannot load config since file does not exist: {yaml_path}")
         with open(yaml_path, "r") as f:
             data = yaml.safe_load(f)
-        data = dict(defaults).update(data)
-        return cls(**data)
+        conf.update(data)
+        return cls(**conf)
 
 
 def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
