@@ -410,6 +410,8 @@ def perform_eval(
 
     model.eval()
 
+    print(f"DEBUG: {subtract_using=}")
+
     results = []
 
     samples_left_to_save = save_num_samples
@@ -436,7 +438,7 @@ def perform_eval(
             # Run model and measure latency
             output, runtime_ms = _time_and_run_model(
                 model,
-                args=inputs,
+                args=(inputs,),
                 kwargs={"subtract_using": subtract_using},
                 profiling=False,
             )
@@ -612,7 +614,7 @@ def _time_and_run_model(model, args, kwargs, *, profiling: bool = False) -> tupl
 
     with profile(activities=[ProfilerActivity.CPU], record_shapes=True, acc_events=True) as prof:
         with record_function("model_inference"):
-            output = model(args, **kwargs)
+            output = model(*args, **kwargs)
 
     # Print profiling results
     if profiling:
