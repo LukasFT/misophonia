@@ -753,8 +753,8 @@ def log_dataset_config_diffs(
                 f"Config for {split} dataset has changed since preprocessing:\n{pretty_diffs}",
                 level="warning",
             )
-    except:
-        eliot.log_message(f"Error occurred while comparing dataset configs for {split}.", level="error")
+    except Exception as e:
+        eliot.log_message(f"Error occurred while comparing dataset configs for {split}: {e}", level="error")
 
 
 # TODO: Remove unused (commented out) functions
