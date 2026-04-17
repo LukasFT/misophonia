@@ -32,6 +32,7 @@ class MisophoniaANCNet(nn.Module):
         use_pos_enc=True,
         conditioning="mult",
         lookahead=True,
+        gt_is_isolated_trigger: bool = True,
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
 
@@ -47,6 +48,7 @@ class MisophoniaANCNet(nn.Module):
             "use_pos_enc": use_pos_enc,
             "conditioning": conditioning,
             "lookahead": lookahead,
+            "gt_is_isolated_trigger": gt_is_isolated_trigger,
         }
 
         self.L = L
