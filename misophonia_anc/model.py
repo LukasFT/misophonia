@@ -247,6 +247,14 @@ class MisophoniaANCNet(nn.Module):
                             level="warning",
                         )
                         model_params[key] = value
+                for key in metadata["hyperparameters"]:
+                    if key not in model_params:
+                        eliot.log_message(
+                            f"Checkpoint contains hyperparameter {key} which is not present in the config.",
+                            level="debug",
+                        )
+                        model_params[key] = metadata["hyperparameters"][key]
+
             else:
                 eliot.log_message(f"Checkpoint {checkpoint} does not contain hyperparameters.", level="warning")
 
