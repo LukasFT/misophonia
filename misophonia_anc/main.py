@@ -2,6 +2,7 @@ import itertools
 import math
 import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -231,6 +232,7 @@ def train(
                 "timestamp": datetime.now().isoformat(),
                 "checkpoint_metadata": checkpoint_metadata,
                 "git_sha": get_git_sha(),
+                "command": sys.argv,
                 "hostname": os.uname().nodename,
                 "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
                 "config": config.model_dump(mode="json", round_trip=True),
