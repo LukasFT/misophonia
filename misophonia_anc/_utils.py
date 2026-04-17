@@ -164,11 +164,13 @@ class MisophoniaANCConfig(BaseModel):
     )
 
     @classmethod
-    def from_yaml(cls, yaml_path: str | Path) -> "MisophoniaANCConfig":
+    def from_yaml(cls, yaml_path: str | Path, *, defaults={}) -> "MisophoniaANCConfig":
+
         if not Path(yaml_path).exists():
             raise FileNotFoundError(f"Cannot load config since file does not exist: {yaml_path}")
         with open(yaml_path, "r") as f:
             data = yaml.safe_load(f)
+        data = dict(defaults).update(data)
         return cls(**data)
 
 

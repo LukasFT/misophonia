@@ -66,7 +66,7 @@ def preprocess(
     """
     model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
 
-    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
 
     for split in splits:
         split_config = config.dataset_splits[split]
@@ -178,7 +178,7 @@ def train(
     print_mem("start")
     model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
 
-    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
 
     dataset_dir = model_dir / "webdataset"
     if fast_data_dir is not None:
@@ -334,7 +334,7 @@ def evaluate(
             checkpoint_file = None
             eliot.log_message("Using random untrained model for inference.", level="info")
 
-        config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+        config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
         model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
         model.eval()
 
