@@ -18,7 +18,13 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-from .confidential_losses import MultiResolutionCCMSE  # noqa: F401
+try:
+    from .confidential_losses import MultiResolutionCCMSE  # noqa: F401
+except ImportError:
+    eliot.log_message(
+        "Could not import MultiResolutionCCMSE loss. Make sure you have access to the private repository containing confidential losses and that it is properly installed.",
+        level="warning",
+    )
 
 if TYPE_CHECKING:
     from .model import MisophoniaANCNet
