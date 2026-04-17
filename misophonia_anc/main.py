@@ -163,6 +163,13 @@ def train(
             envvar="FAST_DATA_DIR",
         ),
     ] = None,
+    resume_mlflow: Annotated[
+        bool,
+        typer.Option(
+            ...,
+            help="Whether to resume MLflow run from checkpoint if MLflow tracking is enabled and checkpoint contains MLflow run ID. If false, will always start a new MLflow run.",
+        ),
+    ] = True,
     mlflow_uri: Annotated[
         str | None, typer.Option(..., help="MLflow tracking URI.", envvar="MLFLOW_TRACKING_URI")
     ] = None,
@@ -221,7 +228,7 @@ def train(
             mlflow.set_tracking_uri(mlflow_uri)
             mlflow.set_experiment(config.mlflow_experiment)
 
-            mlflow_existing_id = checkpoint_metadata.get("mlflow_run_id", None)
+            mlflow_existing_id = checkpoint_metadata.get("mlflow_run_id", None) if resume_mlflow else None
             mlflow.start_run(
                 run_id=mlflow_existing_id,  # If resuming from checkpoint, continue the same MLflow run
                 run_name=f"Train at {datetime.now().isoformat()}",  # Name if starting new run
