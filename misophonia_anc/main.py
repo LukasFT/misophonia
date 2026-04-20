@@ -368,7 +368,7 @@ def evaluate(
             save_num_samples=save_samples,
             save_samples_to=samples_dir,
             device=device,
-            subtract_using=config.model_hyperparams.get("subtract_using", None),
+            subtract_using=config.subtract_using,
         )
 
         eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
