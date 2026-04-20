@@ -157,7 +157,7 @@ class MisophoniaANCConfig(BaseModel):
         "time", description="Domain in which to apply loss. Options are 'time', 'freq', 'combined'."
     )
     gt_is_isolated_trigger: bool = pydantic.Field(
-        True,
+        True,  # noqa: FBT003
         description="Whether the ground truth audio is the isolated trigger sound (True) or the clean mix without the trigger (False).",
     )
 
@@ -190,10 +190,15 @@ class MisophoniaANCConfig(BaseModel):
         return cls(**conf)
 
 
-def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+def make_custom_collate_fn(
+    *,
+    include_metadata: bool,
+    include_isolated_trigger: bool = True,
+    include_clean_mix: bool = True,
+) -> callable:
     def custom_collate_fn(
-        batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        batch: dict,
+    ) -> dict:
         """
         Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
         For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
@@ -202,23 +207,16 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
         This is done by randomly assigning a 1 to one of the trigger classes in the label vector.
         This is done because the purpose of the control sounds is to teach the model that even if a category is queried,
             it might need to predict silence if there is no trigger sound of that category in the mix.
-
-        Args:
-            mixes (np.ndarray): synthetically generated binaural mixes
-            labels (np.ndarray): one-hot encoded label vectors
-            gts (np.ndarray): binaural ground truth trigger sounds (or silence) TODO
-
-        Returns:
-            inputs (dict[str, torch.Tensor]): dictionary of padded mixes and the label vectors in the form of tensors.
-            gts (torch.tensor): padded ground truth tensors. TODO
-            audio_lens (torch.tensor): lengths of the original (unpadded) audio, used for masking in the loss function.
         """
 
         # Only keep chunks of length MAX_DURATION in data loader
         chunk_size = MAX_DURATION * SAMPLE_RATE
 
         mixes = []
-        gts = []
+        if include_isolated_trigger:
+            isolated_triggers = []
+        if include_clean_mix:
+            clean_mixes = []
         labels = []
         audio_lens = []
         is_controls = []
@@ -228,18 +226,13 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
 
         dts["batch"] = type(batch)
 
-        for sample in batch:  # Will contain an extra field when looking at metadata
+        for sample in batch:
+            label = sample["label.npy"]
+            mix = sample["mix.npy"]
+
             if include_metadata:
-                mix, label, gt, metadata = sample
-                metadatas.append(metadata)
-            else:
-                mix, label, gt = sample
-            
-            dts["sample"] = type(sample)
-            dts["mix"] = type(mix)
-            dts["label"] = type(label)
-            dts["gt"] = type(gt)
-            
+                metadatas.append(sample["metadata.json"])
+
             is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
             is_controls.append(1 if is_control else 0)
             if is_control:
@@ -248,36 +241,51 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
                 random_class = rng.integers(0, len(label))
                 label[random_class] = 1
 
+            labels.append(torch.from_numpy(label).float())
+
             L = mix.shape[-1]  # noqa: N806
+            audio_lens.append(min(L, chunk_size))
             if L >= chunk_size:
                 # generate a single random start for both mix and gt
                 start = torch.randint(0, L - chunk_size + 1, (1,)).item()
                 mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
-                gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()  # TODO
+
+                if include_isolated_trigger:
+                    isolated_trigger = sample["isolated_trigger.npy"]
+                    # TODO: Use torch.from_numpy (also in the other places in this function)? Or remove?
+                    isolated_triggers.append(isolated_trigger[..., start : start + chunk_size].float())
+                if include_clean_mix:
+                    clean_mix = sample["clean_mix.npy"]
+                    clean_mixes.append(clean_mix[..., start : start + chunk_size].float())
             else:
                 # audio is shorter than chunk_size → pad
                 mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
-                gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, chunk_size - L))  # TODO
+
+                if include_isolated_trigger:
+                    isolated_trigger = sample["isolated_trigger.npy"]
+                    isolated_triggers.append(F.pad(isolated_trigger.float(), (0, chunk_size - L)))
+                if include_clean_mix:
+                    clean_mix = sample["clean_mix.npy"]
+                    clean_mixes.append(F.pad(clean_mix.float(), (0, chunk_size - L)))
 
             mixes.append(mix_chunk)
-            gts.append(gt_chunk)
-            labels.append(torch.from_numpy(label).float())
-            audio_lens.append(min(L, chunk_size))
 
-        inputs = {
-            "mix": torch.stack(mixes),
-            "label_vector": torch.stack(labels),
-            "is_control": torch.tensor(is_controls),
+        res = {
+            "inputs": {
+                "mix": torch.stack(mixes),
+                "label_vector": torch.stack(labels),
+                "is_control": torch.tensor(is_controls),
+            },
+            "audio_lens": torch.tensor(audio_lens),  # Mask to indicate padded parts of the audio
         }
         if include_metadata:
-            inputs["metadata"] = metadatas
+            res["metadata"] = metadatas
+        if include_isolated_trigger:
+            res["isolated_trigger"] = torch.stack(isolated_triggers)
+        if include_clean_mix:
+            res["clean_mix"] = torch.stack(clean_mixes)
 
-        gt = torch.stack(gts)  # TODO
-        audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
-
-        raise NotImplementedError(f"{dts=}")  # TODO
-
-        return inputs, gt, audio_lens
+        return res
 
     return custom_collate_fn
 
@@ -287,6 +295,8 @@ def make_dataloader(
     *,
     batch_size: int,
     num_workers: int,
+    include_isolated_trigger: bool = True,
+    include_clean_mix: bool = True,
     include_metadata: bool = False,
 ) -> wds.WebLoader:
     """
@@ -308,26 +318,32 @@ def make_dataloader(
         f"Using {num_workers} workers loading WebDataset (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
         level="debug",
     )
+
+    included_filenames = {"mix.npy", "label.npy", "metadata.json"}
+    if include_isolated_trigger:
+        included_filenames.add("isolated_trigger.npy")
+    if include_clean_mix:
+        included_filenames.add("clean_mix.npy")
+
     data = (
         wds.WebDataset(
             files,
             empty_check=False,
             shardshuffle=1,  # Number of shards to keep in memory at the time (as I understand it)
+            select_files=lambda fname: fname in included_filenames,
         )
         .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
     )
 
-    if include_metadata:
-        data = data.to_tuple("mix.npy", "label.npy", "gt.npy", "metadata.json")  # TODO
-    else:
-        data = data.to_tuple("mix.npy", "label.npy", "gt.npy")  # TODO
-
     data = data.batched(
         batch_size,
+        # Make batches of the same size, and randomly assign control sounds a class
         collation_fn=make_custom_collate_fn(
-            include_metadata=include_metadata
-        ),  # Make batches of the same size, and randomly assign control sounds a class
+            include_metadata=include_metadata,
+            include_isolated_trigger=include_isolated_trigger,
+            include_clean_mix=include_clean_mix,
+        ),
     )
 
     return wds.WebLoader(
@@ -491,7 +507,9 @@ def perform_eval(
                 gt_i = gt[i, :, :valid_len]  # TODO
                 mix_i = inputs["mix"][i, :, :valid_len]
 
-                sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
+                sample_metdata = (
+                    inputs["metadata"][i] if "metadata" in inputs else None
+                )  # TODO: Metadata is its own now
                 sample_rate = sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE
 
                 if samples_left_to_save > 0:
@@ -622,7 +640,7 @@ def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate
     )
 
 
-def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO
+def mod_pad(x, chunk_size, pad):  # noqa: ANN202
     # Mod pad the input to perform integer number of
     # inferences
     mod = 0
@@ -807,7 +825,7 @@ def log_dataset_config_diffs(
         eliot.log_message(f"Error occurred while comparing dataset configs for {split}: {e}", level="error")
 
 
-# TODO: Remove unused (commented out) functions
+# FIXME: Remove unused (commented out) functions
 
 # import numpy.fft as fft  # Semantic Hearinc also used mklfft, which is optimized for Intel
 # import pyroomacoustics as pra  # Not installed, do we need it?
