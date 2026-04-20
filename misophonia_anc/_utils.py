@@ -463,6 +463,7 @@ def perform_eval(
             batch_size = gt.shape[0]
             output_items = output.items()
             for i in range(batch_size):
+                total_idx += 1
                 sample_idx = f"{total_idx:06d}"
                 valid_len = int(audio_len[i].item())  # To remove padding
                 gt_i = gt[i, :, :valid_len]
@@ -515,7 +516,6 @@ def perform_eval(
                             "sample_files": sample_files,
                         }
                     )
-                    total_idx += 1
 
     eliot.log_message(f"Saving results to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
