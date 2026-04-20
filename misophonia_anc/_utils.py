@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Literal
 
 import eliot
 import numpy as np
@@ -146,6 +147,9 @@ class MisophoniaDatasetPreprocessedConfig(BaseModel):
     )
 
 
+GtTargets = Literal["isolated_trigger", "clean_mix"]
+
+
 class MisophoniaANCConfig(BaseModel):
     dataset_splits: dict[SplitT, MisophoniaDatasetPreprocessedConfig] = pydantic.Field(
         ..., description="For each split, the config for the preprocessed dataset to use for training/eval."
@@ -156,9 +160,9 @@ class MisophoniaANCConfig(BaseModel):
     loss_option: str = pydantic.Field(
         "time", description="Domain in which to apply loss. Options are 'time', 'freq', 'combined'."
     )
-    gt_is_isolated_trigger: bool = pydantic.Field(
-        True,  # noqa: FBT003
-        description="Whether the ground truth audio is the isolated trigger sound (True) or the clean mix without the trigger (False).",
+    ground_truth_target: GtTargets = pydantic.Field(
+        "isolated_trigger",
+        description="Whether the model's predictions should be compared against the isolated trigger or the clean mix when computing the loss and evaluation metrics. Options are 'isolated_trigger' or 'clean_mix'.",
     )
 
     model_params: dict = pydantic.Field(
@@ -193,8 +197,8 @@ class MisophoniaANCConfig(BaseModel):
 def make_custom_collate_fn(
     *,
     include_metadata: bool,
-    include_isolated_trigger: bool = True,
-    include_clean_mix: bool = True,
+    include_isolated_trigger: bool,
+    include_clean_mix: bool,
 ) -> callable:
     def custom_collate_fn(
         batch: dict,
@@ -221,12 +225,14 @@ def make_custom_collate_fn(
         audio_lens = []
         is_controls = []
         metadatas = []
+        idxs = []
 
         dts = {}
 
         dts["batch"] = type(batch)
 
         for sample in batch:
+            idxs.append(sample["__key__"])
             label = sample["label.npy"]
             mix = sample["mix.npy"]
 
@@ -271,6 +277,7 @@ def make_custom_collate_fn(
             mixes.append(mix_chunk)
 
         res = {
+            "idxs": idxs,
             "inputs": {
                 "mix": torch.stack(mixes),
                 "label_vector": torch.stack(labels),
@@ -441,6 +448,7 @@ def perform_eval(
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
     subtract_using: tuple[str, ...] | None = None,
+    ground_truth_target: GtTargets = "isolated_trigger",
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -475,15 +483,12 @@ def perform_eval(
     )
     has_wamed_up = False
 
-    total_idx = 0
-
     with torch.no_grad():
-        for _, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):  # TODO
-            # Load data to device:
+        for batch in tqdm(data_loader, desc="Evaluating", unit=" batches"):
+            inputs = batch["inputs"]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
-            gt = gt.to(device)  # TODO
 
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
@@ -498,44 +503,50 @@ def perform_eval(
                 profiling=False,
             )
 
-            batch_size = gt.shape[0]  # TODO
+            batch_size = inputs["mix"].shape[0]
             output_items = output.items()
             for i in range(batch_size):
-                total_idx += 1
-                sample_idx = f"{total_idx:06d}"
-                valid_len = int(audio_len[i].item())  # To remove padding
-                gt_i = gt[i, :, :valid_len]  # TODO
+                sample_idx = batch["idxs"][i]
+                valid_len = int(batch["audio_lens"][i].item())  # To remove padding
+                clean_mix_i = batch["clean_mix"][i, :, :valid_len]
+                isolated_trigger_i = batch["isolated_trigger"][i, :, :valid_len]
                 mix_i = inputs["mix"][i, :, :valid_len]
 
-                sample_metdata = (
-                    inputs["metadata"][i] if "metadata" in inputs else None
-                )  # TODO: Metadata is its own now
+                sample_metdata = batch["metadata"][i] if "metadata" in batch else None
                 sample_rate = sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE
 
                 if samples_left_to_save > 0:
                     save_sample = True
                     samples_left_to_save -= 1
                     mix_file = save_samples_to / f"sample_{sample_idx}_mix.flac"
-                    gt_file = save_samples_to / f"sample_{sample_idx}_gt.flac"  # TODO
+                    clean_mix_file = save_samples_to / f"sample_{sample_idx}_clean_mix.flac"
+                    isolated_trigger_file = save_samples_to / f"sample_{sample_idx}_isolated_trigger.flac"
+
                     _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
-                    _save_audio_stereo(gt_i, gt_file, sample_rate=sample_rate)
+                    _save_audio_stereo(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
+                    _save_audio_stereo(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
                 else:
                     save_sample = False
 
                 for pred_name, pred in output_items:
                     pred_i = pred[i, :, :valid_len]
 
-                    if pred_name == "x":
+                    if pred_name == "x" and ground_truth_target == "isolated_trigger":
                         metrics = calculate_default_metrics(
                             pred_i,
-                            gt_i,  # TODO: Change
+                            isolated_trigger_i,
                             sample_rate=sample_rate,
-                            mix_metrics=sample_metdata.get("mix_vs_gt_metrics")  # TODO: Change
+                            mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
                             if sample_metdata
                             else None,
                         )
                     else:
-                        metrics = {}  # TODO: Implement metrics for subtraction outputs
+                        metrics = calculate_default_metrics(
+                            pred_i,
+                            clean_mix_i,
+                            sample_rate=sample_rate,
+                            mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
+                        )
 
                     if save_sample:
                         pred_file = save_samples_to / f"sample_{sample_idx}_{pred_name}.flac"
@@ -543,7 +554,8 @@ def perform_eval(
 
                         sample_files = {
                             "mix_file": str(mix_file.name),
-                            "gt_file": str(gt_file.name),  # TODO
+                            "clean_mix_file": str(clean_mix_file.name),
+                            "isolated_trigger_file": str(isolated_trigger_file.name),
                             "pred_file": str(pred_file.name),
                         }
                     else:
@@ -555,7 +567,7 @@ def perform_eval(
                             "pred_name": pred_name,
                             "runtime_ms": runtime_ms,
                             "metrics": metrics,
-                            "batch_length": gt.shape[-1],  # TODO
+                            "batch_length": inputs["mix"].shape[-1],
                             "sample_length": valid_len,
                             "sample_metadata": sample_metdata,
                             "sample_files": sample_files,
@@ -728,7 +740,7 @@ def compute_ild(s_left, s_right) -> np.ndarray:
 
 def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
     """
-    Computes the ITD error between model estimate and ground truth TODO
+    Computes the ITD error between model estimate and ground truth
     input: (*, 2, T), (*, 2, T)
     """
     tmax = int(round(1e-3 * sr))
@@ -739,7 +751,7 @@ def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
 
 def ild_diff(s_est: np.ndarray, s_gt: np.ndarray) -> np.ndarray:
     """
-    Computes the ILD error between model estimate and ground truth TODO
+    Computes the ILD error between model estimate and ground truth
     input: (*, 2, T), (*, 2, T)
     """
     ild_est = compute_ild(s_est[..., 0, :], s_est[..., 1, :])

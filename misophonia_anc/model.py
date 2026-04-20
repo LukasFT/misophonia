@@ -12,7 +12,7 @@ import mlflow
 import torch
 import torch.nn as nn
 
-from ._utils import MisophoniaANCConfig, get_git_sha, mod_pad
+from ._utils import GtTargets, MisophoniaANCConfig, get_git_sha, mod_pad
 from .decoder import CausalTransformerDecoder
 from .encoder import DilatedCausalConvEncoder
 
@@ -32,7 +32,7 @@ class MisophoniaANCNet(nn.Module):
         use_pos_enc=True,
         conditioning="mult",
         lookahead=True,
-        gt_is_isolated_trigger: bool = True,
+        ground_truth_target: GtTargets = "isolated_trigger",
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
 
@@ -48,7 +48,7 @@ class MisophoniaANCNet(nn.Module):
             "use_pos_enc": use_pos_enc,
             "conditioning": conditioning,
             "lookahead": lookahead,
-            "gt_is_isolated_trigger": gt_is_isolated_trigger,
+            "ground_truth_target": ground_truth_target,
         }
 
         self.L = L
@@ -181,8 +181,8 @@ class MisophoniaANCNet(nn.Module):
             return out, enc_buf, dec_buf, out_buf
 
     def _subtraction(self, mix: torch.Tensor, x: torch.Tensor, method: str) -> torch.Tensor:
-        assert self._hyperparameters["gt_is_isolated_trigger"], (
-            "Subtraction can only be applied if gt_is_isolated_trigger is True"
+        assert self._hyperparameters["ground_truth_target"] == "isolated_trigger", (
+            "Subtraction can only be applied if ground_truth_target is 'isolated_trigger'"
         )
         if method == "simple":
             return mix - x
@@ -241,9 +241,8 @@ class MisophoniaANCNet(nn.Module):
              - A dictionary containing metadata from the checkpoint (e.g. epoch, hyperparameters) if a checkpoint was provided, or an empty dictionary if no checkpoint was provided.
         """
         model_params = dict(config.model_params)
-        model_params["gt_is_isolated_trigger"] = (
-            config.gt_is_isolated_trigger
-        )  # Pass gt_is_isolated_trigger to the model parameters
+        model_params["ground_truth_target"] = config.ground_truth_target
+
         metadata = {}
 
         if checkpoint is None:

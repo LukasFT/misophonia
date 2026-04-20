@@ -3,9 +3,9 @@ import math
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
-import time
 
 import eliot
 import mlflow
@@ -377,6 +377,7 @@ def evaluate(
             save_samples_to=samples_dir,
             device=device,
             subtract_using=config.subtract_using,
+            ground_truth_target=config.ground_truth_target,
         )
 
         eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
