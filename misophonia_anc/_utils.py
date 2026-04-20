@@ -8,7 +8,7 @@ import subprocess
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import eliot
 import numpy as np
@@ -28,6 +28,9 @@ from tqdm import tqdm
 from misophonia_dataset.interface import DEFAULT_LABEL_ORDER, BaseModel, MisophoniaItem, SplitT
 from misophonia_dataset.main import get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
+
+if TYPE_CHECKING:
+    from .model import MisophoniaANCNet
 
 # Initialize random generator for reproducibility
 rng = np.random.default_rng()
@@ -159,10 +162,6 @@ class MisophoniaANCConfig(BaseModel):
     batch_size: int = pydantic.Field(1, description="Batch size for training.")
     loss_option: str = pydantic.Field(
         "time", description="Domain in which to apply loss. Options are 'time', 'freq', 'combined'."
-    )
-    ground_truth_target: GtTargets = pydantic.Field(
-        "isolated_trigger",
-        description="Whether the model's predictions should be compared against the isolated trigger or the clean mix when computing the loss and evaluation metrics. Options are 'isolated_trigger' or 'clean_mix'.",
     )
 
     model_params: dict = pydantic.Field(
@@ -439,7 +438,7 @@ def print_mem(label: str) -> None:
 
 
 def perform_eval(
-    model: torch.nn.Module,
+    model: "MisophoniaANCNet",
     data_loader: wds.WebLoader,
     *,
     device: torch.device,
@@ -448,7 +447,6 @@ def perform_eval(
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
     subtract_using: tuple[str, ...] | None = None,
-    ground_truth_target: GtTargets = "isolated_trigger",
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -482,6 +480,8 @@ def perform_eval(
         "If save_num_samples is greater than 0, save_samples_to must be provided."
     )
     has_wamed_up = False
+
+    ground_truth_target = model.ground_truth_target
 
     with torch.no_grad():
         for batch in tqdm(data_loader, desc="Evaluating", unit=" batches"):

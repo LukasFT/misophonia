@@ -376,9 +376,9 @@ def evaluate(
             batch_size=batch_size,
             num_workers=num_workers,
             include_metadata=True,
-            include_clean_mix=config.ground_truth_target == "clean_mix"
+            include_clean_mix=model.ground_truth_target == "clean_mix"
             or (config.subtract_using is not None and len(config.subtract_using) > 0),
-            include_isolated_trigger=config.ground_truth_target == "isolated_trigger",
+            include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
         )
         if limit_samples is not None:
             split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
@@ -392,7 +392,6 @@ def evaluate(
             save_samples_to=samples_dir,
             device=device,
             subtract_using=config.subtract_using,
-            ground_truth_target=config.ground_truth_target,
         )
 
         eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")

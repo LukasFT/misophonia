@@ -36,6 +36,8 @@ class MisophoniaANCNet(nn.Module):
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
 
+        assert ground_truth_target in ["isolated_trigger", "clean_mix"]
+
         self._hyperparameters = {
             "label_len": label_len,
             "L": L,
@@ -249,7 +251,6 @@ class MisophoniaANCNet(nn.Module):
         metadata = {}
 
         if checkpoint is None:
-            model_params["ground_truth_target"] = config.ground_truth_target
             model = MisophoniaANCNet(**model_params)
             metadata["epoch"] = 0
         else:
