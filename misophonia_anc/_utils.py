@@ -319,6 +319,7 @@ def calculate_default_metrics(
     preds: torch.Tensor,
     target: torch.Tensor,
     *,
+    mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
 ) -> dict[str, float]:
     si_snr_both = si_snr(preds, target)
@@ -330,7 +331,7 @@ def calculate_default_metrics(
     # ild = ild_diff(preds_np, target_np)
     # itd = itd_diff(preds_np, target_np, sr=sample_rate)
 
-    return {
+    metrics = {
         "si_snr": si_snr_both.mean().item(),
         "snr": snr_both.mean().item(),
         "si_snr_left": si_snr_both[..., 0].mean().item(),
@@ -340,6 +341,20 @@ def calculate_default_metrics(
         # "ild": ild,
         # "itd": itd,
     }
+
+    if mix_metrics is not None:
+        if "snr" in mix_metrics:
+            metrics["snr_improvement"] = metrics["snr"] - mix_metrics["snr"]
+        if "si_snr" in mix_metrics:
+            metrics["si_snr_improvement"] = metrics["si_snr"] - mix_metrics["si_snr"]
+        if "snr_left" in mix_metrics and "snr_right" in mix_metrics:
+            metrics["snr_improvement_left"] = metrics["snr_left"] - mix_metrics["snr_left"]
+            metrics["snr_improvement_right"] = metrics["snr_right"] - mix_metrics["snr_right"]
+        if "si_snr_left" in mix_metrics and "si_snr_right" in mix_metrics:
+            metrics["si_snr_improvement_left"] = metrics["si_snr_left"] - mix_metrics["si_snr_left"]
+            metrics["si_snr_improvement_right"] = metrics["si_snr_right"] - mix_metrics["si_snr_right"]
+
+    return metrics
 
 
 ############################
@@ -462,6 +477,7 @@ def perform_eval(
                         pred_i,
                         gt_i,
                         sample_rate=sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE,
+                        mix_metrics=sample_metdata.get("mix_vs_gt_metrics") if sample_metdata else None,
                     )
 
                     if samples_left_to_save > 0:
