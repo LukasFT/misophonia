@@ -241,11 +241,10 @@ class MisophoniaANCNet(nn.Module):
              - A dictionary containing metadata from the checkpoint (e.g. epoch, hyperparameters) if a checkpoint was provided, or an empty dictionary if no checkpoint was provided.
         """
         model_params = dict(config.model_params)
-        model_params["ground_truth_target"] = config.ground_truth_target
-
         metadata = {}
 
         if checkpoint is None:
+            model_params["ground_truth_target"] = config.ground_truth_target
             model = MisophoniaANCNet(**model_params)
             metadata["epoch"] = 0
         else:
