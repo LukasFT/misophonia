@@ -209,8 +209,20 @@ def train(
     log_dataset_config_diffs(config, val_dir / "metadata.json", "val")
     log_dataset_config_diffs(config, train_dir / "metadata.json", "train")
 
-    train_loader = make_dataloader(shards_train, batch_size=config.batch_size, num_workers=num_workers)
-    val_loader = make_dataloader(shards_val, batch_size=config.batch_size, num_workers=num_workers)
+    train_loader = make_dataloader(
+        shards_train,
+        batch_size=config.batch_size,
+        num_workers=num_workers,
+        include_clean_mix=config.ground_truth_target == "clean_mix",
+        include_isolated_trigger=config.ground_truth_target == "isolated_trigger",
+    )
+    val_loader = make_dataloader(
+        shards_val,
+        batch_size=config.batch_size,
+        num_workers=num_workers,
+        include_clean_mix=config.ground_truth_target == "clean_mix",
+        include_isolated_trigger=config.ground_truth_target == "isolated_trigger",
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     eliot.log_message(f"Using device: {device}", level="debug")
@@ -364,6 +376,9 @@ def evaluate(
             batch_size=batch_size,
             num_workers=num_workers,
             include_metadata=True,
+            include_clean_mix=config.ground_truth_target == "clean_mix"
+            or (config.subtract_using is not None and len(config.subtract_using) > 0),
+            include_isolated_trigger=config.ground_truth_target == "isolated_trigger",
         )
         if limit_samples is not None:
             split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
