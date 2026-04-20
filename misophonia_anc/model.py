@@ -32,6 +32,7 @@ class MisophoniaANCNet(nn.Module):
         use_pos_enc=True,
         conditioning="mult",
         lookahead=True,
+        gt_is_isolated_trigger: bool = True,
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
 
@@ -47,6 +48,7 @@ class MisophoniaANCNet(nn.Module):
             "use_pos_enc": use_pos_enc,
             "conditioning": conditioning,
             "lookahead": lookahead,
+            "gt_is_isolated_trigger": gt_is_isolated_trigger,
         }
 
         self.L = L
@@ -128,6 +130,7 @@ class MisophoniaANCNet(nn.Module):
         init_dec_buf=None,
         init_out_buf=None,
         pad=True,
+        subtract_using: tuple[str, ...] | None = None,
         # TODO: The below are unused?
         writer=None,
         step=None,
@@ -168,10 +171,23 @@ class MisophoniaANCNet(nn.Module):
 
         out = {"x": x}
 
+        if subtract_using is not None:
+            for method in subtract_using:
+                out[f"x_sub_{method}"] = self._subtraction(inputs["mix"], x, method)
+
         if init_enc_buf is None:
             return out
         else:
             return out, enc_buf, dec_buf, out_buf
+
+    def _subtraction(self, mix: torch.Tensor, x: torch.Tensor, method: str) -> torch.Tensor:
+        assert self._hyperparameters["gt_is_isolated_trigger"], (
+            "Subtraction can only be applied if gt_is_isolated_trigger is True"
+        )
+        if method == "simple":
+            return mix - x
+        else:
+            raise ValueError(f"Unsupported subtraction method: {method}")
 
     #### UTILITY FUNCTIONS ####
     @property
@@ -245,6 +261,12 @@ class MisophoniaANCNet(nn.Module):
                             level="warning",
                         )
                         model_params[key] = value
+                for key in metadata["hyperparameters"]:
+                    if key not in model_params:
+                        # Set hyperparameters which are present in the checkpoint but not in the config.
+                        # This allows for loading checkpoints which were trained with an older version of the code which had different default hyperparameters.
+                        model_params[key] = metadata["hyperparameters"][key]
+
             else:
                 eliot.log_message(f"Checkpoint {checkpoint} does not contain hyperparameters.", level="warning")
 

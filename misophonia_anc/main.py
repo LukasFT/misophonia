@@ -2,14 +2,15 @@ import itertools
 import math
 import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import eliot
-import mlflow  # type: ignore
+import mlflow
 import torch
 import typer
-from dotenv import load_dotenv  # type: ignore
+from dotenv import load_dotenv
 from typing_extensions import Annotated
 
 from misophonia_dataset._log import setup_print_logging
@@ -21,6 +22,7 @@ from ._utils import (
     MisophoniaANCConfig,
     get_allocated_cpus,
     get_git_sha,
+    log_dataset_config_diffs,
     make_dataloader,
     perform_eval,
     prepare_dir_or_file,
@@ -65,7 +67,7 @@ def preprocess(
     """
     model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
 
-    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
 
     for split in splits:
         split_config = config.dataset_splits[split]
@@ -168,6 +170,13 @@ def train(
             envvar="FAST_DATA_DIR",
         ),
     ] = None,
+    resume_mlflow: Annotated[
+        bool,
+        typer.Option(
+            ...,
+            help="Whether to resume MLflow run from checkpoint if MLflow tracking is enabled and checkpoint contains MLflow run ID. If false, will always start a new MLflow run.",
+        ),
+    ] = True,
     mlflow_uri: Annotated[
         str | None, typer.Option(..., help="MLflow tracking URI.", envvar="MLFLOW_TRACKING_URI")
     ] = None,
@@ -184,7 +193,7 @@ def train(
     print_mem("start")
     model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
 
-    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
 
     dataset_dir = model_dir / "webdataset"
     if fast_data_dir is not None:
@@ -198,8 +207,12 @@ def train(
         subprocess.run(["rsync", "-a", "--delete", str(dataset_dir_orig) + "/", str(dataset_dir) + "/"], check=True)
         eliot.log_message(f"Copied preprocessed data to {dataset_dir}.", level="debug")
 
-    shards_train = (dataset_dir / "train").glob("data-*.tar")
-    shards_val = (dataset_dir / "val").glob("data-*.tar")
+    train_dir = dataset_dir / "train"
+    val_dir = dataset_dir / "val"
+    shards_train = train_dir.glob("data-*.tar")
+    shards_val = val_dir.glob("data-*.tar")
+    log_dataset_config_diffs(config, val_dir / "metadata.json", "val")
+    log_dataset_config_diffs(config, train_dir / "metadata.json", "train")
 
     train_loader = make_dataloader(shards_train, batch_size=config.batch_size, num_workers=num_workers)
     val_loader = make_dataloader(shards_val, batch_size=config.batch_size, num_workers=num_workers)
@@ -233,7 +246,7 @@ def train(
             mlflow.set_tracking_uri(mlflow_uri)
             mlflow.set_experiment(config.mlflow_experiment)
 
-            mlflow_existing_id = checkpoint_metadata.get("mlflow_run_id", None)
+            mlflow_existing_id = checkpoint_metadata.get("mlflow_run_id", None) if resume_mlflow else None
             mlflow.start_run(
                 run_id=mlflow_existing_id,  # If resuming from checkpoint, continue the same MLflow run
                 run_name=f"Train at {datetime.now().isoformat()}",  # Name if starting new run
@@ -244,6 +257,7 @@ def train(
                 "timestamp": datetime.now().isoformat(),
                 "checkpoint_metadata": checkpoint_metadata,
                 "git_sha": get_git_sha(),
+                "command": sys.argv,
                 "hostname": os.uname().nodename,
                 "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
                 "config": config.model_dump(mode="json", round_trip=True),
@@ -347,13 +361,20 @@ def evaluate(
             checkpoint_file = None
             eliot.log_message("Using random untrained model for inference.", level="info")
 
-        config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+        config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
         model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
         model.eval()
 
         dataset_split_dir = model_dir / "webdataset" / split
         eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
-        shards_split = dataset_split_dir.glob("data-*.tar")
+        shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
+        if len(shards_split) == 0:
+            eliot.log_message(
+                f"No data shards found for split {split} at {dataset_split_dir}. Skipping evaluation for this split.",
+                level="error",
+            )
+            continue
+        log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
         split_loader = make_dataloader(
             shards_split,
             batch_size=batch_size,
@@ -371,6 +392,7 @@ def evaluate(
             save_num_samples=save_samples,
             save_samples_to=samples_dir,
             device=device,
+            subtract_using=config.subtract_using,
         )
 
         eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
