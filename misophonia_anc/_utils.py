@@ -485,12 +485,15 @@ def perform_eval(
                 for pred_name, pred in output_items:
                     pred_i = pred[i, :, :valid_len]
 
-                    metrics = calculate_default_metrics(
-                        pred_i,
-                        gt_i,
-                        sample_rate=sample_rate,
-                        mix_metrics=sample_metdata.get("mix_vs_gt_metrics") if sample_metdata else None,
-                    )
+                    if pred_name == "x":
+                        metrics = calculate_default_metrics(
+                            pred_i,
+                            gt_i,
+                            sample_rate=sample_rate,
+                            mix_metrics=sample_metdata.get("mix_vs_gt_metrics") if sample_metdata else None,
+                        )
+                    else:
+                        metrics = {}  # TODO: Implement metrics for subtraction outputs
 
                     if save_sample:
                         pred_file = save_samples_to / f"sample_{sample_idx}_{pred_name}.flac"
