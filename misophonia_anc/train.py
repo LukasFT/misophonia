@@ -18,7 +18,7 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-from .confidential_losses import MultiResolutionCCMSE  # noqa: F401
+from .confidential_losses import mrssme_loss  # noqa: F401
 
 if TYPE_CHECKING:
     from .model import MisophoniaANCNet
@@ -27,15 +27,24 @@ if TYPE_CHECKING:
 def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor, loss_option: str = "time") -> torch.Tensor:
     pred = _output["x"]
 
-    def time_loss(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+    def _time_loss(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
         return -0.7 * snr(pred, tgt).mean() - 0.3 * si_snr(pred, tgt).mean()
 
+    def _fine_tune_loss(pred: torch.Tensor, tgt: torch.Tensor, alpha: float = 0.5, beta: float = 1.0) -> torch.Tensor:
+        snr_loss = snr(pred, tgt)
+        si_snr_loss = si_snr(pred, tgt)
+        left_term = -0.7 * snr_loss[:, 0] - 0.3 * si_snr_loss[:, 0]
+        right_term = -0.7 * snr_loss[:, 1] - 0.3 * si_snr_loss[:, 1]
+        return alpha * left_term + beta * right_term
+
     if loss_option == "time":
-        return time_loss(pred, tgt)
+        return _time_loss(pred, tgt)
     elif loss_option == "freq":
-        return MultiResolutionCCMSE()(pred, tgt)
+        return mrssme_loss(pred, tgt)
     elif loss_option == "combined":
-        return 0.5 * MultiResolutionCCMSE()(pred, tgt) + 0.5 * time_loss(pred, tgt)
+        return 0.5 * mrssme_loss(pred, tgt) + 0.5 * _time_loss(pred, tgt)
+    elif loss_option == "fine_tune":
+        return _fine_tune_loss(pred, tgt)
     else:
         raise ValueError(f"Invalid loss option: {loss_option}")
 
@@ -199,7 +208,7 @@ def train_model(
     """
 
     model = model.to(device)
-    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
+    optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
 
     # Tracking metrics
     train_losses = []

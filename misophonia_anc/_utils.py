@@ -159,17 +159,25 @@ class MisophoniaANCConfig(BaseModel):
         {}, description="Dictionary of parameters to initialize the model. See the train_model() for options."
     )
 
+    subtract_using: list[str] | tuple[str, ...] | None = pydantic.Field(
+        None,
+        description="Whether to perform post-hoc subtraction using the original mix and the model's prediction, and if so, which method to use for subtraction. "
+        "See the _subtraction() method in model.py for details.",
+    )
+
     mlflow_experiment: str | None = pydantic.Field(
         None, description="MLflow experiment name to log training metrics to."
     )
 
     @classmethod
-    def from_yaml(cls, yaml_path: str | Path) -> "MisophoniaANCConfig":
+    def from_yaml(cls, yaml_path: str | Path, *, defaults={}) -> "MisophoniaANCConfig":
+        conf = dict(defaults)
         if not Path(yaml_path).exists():
             raise FileNotFoundError(f"Cannot load config since file does not exist: {yaml_path}")
         with open(yaml_path, "r") as f:
             data = yaml.safe_load(f)
-        return cls(**data)
+        conf.update(data)
+        return cls(**conf)
 
 
 def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
@@ -311,6 +319,7 @@ def calculate_default_metrics(
     preds: torch.Tensor,
     target: torch.Tensor,
     *,
+    mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
 ) -> dict[str, float]:
     si_snr_both = si_snr(preds, target)
@@ -322,14 +331,30 @@ def calculate_default_metrics(
     # ild = ild_diff(preds_np, target_np)
     # itd = itd_diff(preds_np, target_np, sr=sample_rate)
 
-    return {
+    metrics = {
         "si_snr": si_snr_both.mean().item(),
         "snr": snr_both.mean().item(),
+        "si_snr_left": si_snr_both[..., 0].mean().item(),
+        "si_snr_right": si_snr_both[..., 1].mean().item(),
         "snr_left": snr_both[..., 0].mean().item(),
         "snr_right": snr_both[..., 1].mean().item(),
         # "ild": ild,
         # "itd": itd,
     }
+
+    if mix_metrics is not None:
+        if "snr" in mix_metrics:
+            metrics["snr_improvement"] = metrics["snr"] - mix_metrics["snr"]
+        if "si_snr" in mix_metrics:
+            metrics["si_snr_improvement"] = metrics["si_snr"] - mix_metrics["si_snr"]
+        if "snr_left" in mix_metrics and "snr_right" in mix_metrics:
+            metrics["snr_improvement_left"] = metrics["snr_left"] - mix_metrics["snr_left"]
+            metrics["snr_improvement_right"] = metrics["snr_right"] - mix_metrics["snr_right"]
+        if "si_snr_left" in mix_metrics and "si_snr_right" in mix_metrics:
+            metrics["si_snr_improvement_left"] = metrics["si_snr_left"] - mix_metrics["si_snr_left"]
+            metrics["si_snr_improvement_right"] = metrics["si_snr_right"] - mix_metrics["si_snr_right"]
+
+    return metrics
 
 
 ############################
@@ -377,6 +402,7 @@ def perform_eval(
     save_aggregated_results_to: Path | None = None,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
+    subtract_using: tuple[str, ...] | None = None,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -400,6 +426,8 @@ def perform_eval(
         assert save_samples_to.is_dir()
 
     model.eval()
+
+    print(f"DEBUG perform_eval: {subtract_using=}")
 
     results = []
 
@@ -425,45 +453,72 @@ def perform_eval(
                 has_wamed_up = True
 
             # Run model and measure latency
-            output, runtime_ms = _time_and_run_model(model, inputs, profiling=False)
-            pred = output["x"]
+            output, runtime_ms = _time_and_run_model(
+                model,
+                args=(inputs,),
+                kwargs={"subtract_using": subtract_using},
+                profiling=False,
+            )
 
             batch_size = gt.shape[0]
+            output_items = output.items()
             for i in range(batch_size):
-                sample_idx = f"{total_idx:03d}"
-                valid_len = int(audio_len[i].item())
-
-                # Chop to valid length (removing padding) for evaluation and saving
+                total_idx += 1
+                sample_idx = f"{total_idx:06d}"
+                valid_len = int(audio_len[i].item())  # To remove padding
                 gt_i = gt[i, :, :valid_len]
-                pred_i = pred[i, :, :valid_len]
                 mix_i = inputs["mix"][i, :, :valid_len]
 
                 sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
-
-                metrics = calculate_default_metrics(
-                    pred_i,
-                    gt_i,
-                    sample_rate=sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE,
-                )
+                sample_rate = sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE
 
                 if samples_left_to_save > 0:
-                    sample_files = _save_samples(mix_i, gt_i, pred_i, save_samples_to, sample_idx)
+                    save_sample = True
                     samples_left_to_save -= 1
+                    mix_file = save_samples_to / f"sample_{sample_idx}_mix.flac"
+                    gt_file = save_samples_to / f"sample_{sample_idx}_gt.flac"
+                    _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
+                    _save_audio_stereo(gt_i, gt_file, sample_rate=sample_rate)
                 else:
-                    sample_files = None
+                    save_sample = False
 
-                results.append(
-                    {
-                        "idx": sample_idx,
-                        "sample_files": sample_files,
-                        "runtime_ms": runtime_ms,
-                        "metrics": metrics,
-                        "batch_length": gt.shape[-1],
-                        "sample_length": valid_len,
-                        "sample_metadata": sample_metdata,
-                    }
-                )
-                total_idx += 1
+                for pred_name, pred in output_items:
+                    pred_i = pred[i, :, :valid_len]
+
+                    if pred_name == "x":
+                        metrics = calculate_default_metrics(
+                            pred_i,
+                            gt_i,
+                            sample_rate=sample_rate,
+                            mix_metrics=sample_metdata.get("mix_vs_gt_metrics") if sample_metdata else None,
+                        )
+                    else:
+                        metrics = {}  # TODO: Implement metrics for subtraction outputs
+
+                    if save_sample:
+                        pred_file = save_samples_to / f"sample_{sample_idx}_{pred_name}.flac"
+                        _save_audio_stereo(pred_i, pred_file, sample_rate=sample_rate)
+
+                        sample_files = {
+                            "mix_file": str(mix_file.name),
+                            "gt_file": str(gt_file.name),
+                            "pred_file": str(pred_file.name),
+                        }
+                    else:
+                        sample_files = None
+
+                    results.append(
+                        {
+                            "idx": sample_idx,
+                            "pred_name": pred_name,
+                            "runtime_ms": runtime_ms,
+                            "metrics": metrics,
+                            "batch_length": gt.shape[-1],
+                            "sample_length": valid_len,
+                            "sample_metadata": sample_metdata,
+                            "sample_files": sample_files,
+                        }
+                    )
 
     eliot.log_message(f"Saving results to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
@@ -491,6 +546,7 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
         [
             {
                 **result["metrics"],
+                "pred_name": result["pred_name"],
                 "runtime_ms": result["runtime_ms"],
                 "batch_length": result["batch_length"],
                 "sample_length": result["sample_length"],
@@ -498,27 +554,12 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
             for result in results
         ]
     )
-    df["runtime_ms_pr_length"] = (
-        df["runtime_ms"] / df["batch_length"]
-    )  # Model is run on batch-level, so normalize on that
-    agg_metrics = df.mean().to_dict()
+    if "runtime_ms" in df.columns and "batch_length" in df.columns:
+        df["runtime_ms_pr_length"] = (
+            df["runtime_ms"] / df["batch_length"]
+        )  # Model is run on batch-level, so normalize on that
+    agg_metrics = df.groupby("pred_name").mean().T.to_dict()
     return agg_metrics
-
-
-def _save_samples(
-    mix: torch.Tensor, gt: torch.Tensor, pred: torch.Tensor, save_dir: Path, sample_idx: str
-) -> dict[str, str]:
-    """
-    Save the given mix, gt, and pred tensors as .flac files in the given directory with the given sample index.
-    """
-    sample_files = {
-        "mix": (mix, save_dir / f"sample_{sample_idx}_mix.flac"),
-        "gt": (gt, save_dir / f"sample_{sample_idx}_gt.flac"),
-        "pred": (pred, save_dir / f"sample_{sample_idx}_pred.flac"),
-    }
-    for _, (audio_tensor, path) in sample_files.items():
-        _save_audio_stereo(audio_tensor, path)
-    return {key: str(path.name) for key, (_, path) in sample_files.items()}
 
 
 def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int = 50) -> None:
@@ -578,7 +619,7 @@ def model_size(model) -> float:
     return num_train_params / 1e6
 
 
-def _time_and_run_model(model, inputs, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
+def _time_and_run_model(model, args, kwargs, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
     """
     Run a model while measuring the time taken for the forward pass. If `profiling` is True, also prints a detailed profiling report.
 
@@ -594,7 +635,7 @@ def _time_and_run_model(model, inputs, *, profiling: bool = False) -> tuple[torc
 
     with profile(activities=[ProfilerActivity.CPU], record_shapes=True, acc_events=True) as prof:
         with record_function("model_inference"):
-            output = model(inputs)
+            output = model(*args, **kwargs)
 
     # Print profiling results
     if profiling:
@@ -683,6 +724,63 @@ def prepare_dir_or_file(target: Path, *, is_dir: bool, overwrite: bool) -> None:
         target.mkdir(parents=True, exist_ok=True)
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
+
+
+def model_diffs(
+    a: pydantic.BaseModel | dict,
+    b: pydantic.BaseModel | dict,
+    *,
+    a_name: str = "a",
+    b_name: str = "b",
+) -> dict:
+    """Recursively compute the differences between two pydantic models and return a dictionary of the differences."""
+    a_dict = a.model_dump(mode="python") if isinstance(a, pydantic.BaseModel) else a
+    b_dict = b.model_dump(mode="python") if isinstance(b, pydantic.BaseModel) else b
+    diffs = {}
+    for key in set(a_dict.keys()).union(b_dict.keys()):
+        a_val = a_dict.get(key, "<MISSING>")
+        b_val = b_dict.get(key, "<MISSING>")
+
+        if isinstance(a_val, dict) and isinstance(b_val, dict):
+            nested_diffs = model_diffs(a_val, b_val, a_name=a_name, b_name=b_name)
+            if len(nested_diffs) > 0:
+                diffs[key] = nested_diffs
+        elif a_val != b_val:
+            if isinstance(a_val, (list, tuple)) and isinstance(b_val, (list, tuple)):
+                if len(a_val) == len(b_val) and all(x == y for x, y in zip(a_val, b_val)):
+                    continue  # allow if all items are the same
+            diffs[key] = {a_name: a_val, b_name: b_val}
+    return diffs
+
+
+def log_dataset_config_diffs(
+    current: MisophoniaANCConfig | dict,
+    preprocessed_file: Path,
+    split: SplitT,
+) -> None:
+    """Log the differences between the current config and the config used to preprocess the dataset."""
+    try:
+        with preprocessed_file.open("r") as f:
+            preprocessed_config = json.load(f)
+    except:
+        eliot.log_message(f"Could not load preprocessed config from {preprocessed_file}", level="error")
+        return
+
+    try:
+        diffs = model_diffs(
+            current.dataset_splits[split],
+            preprocessed_config["config"]["dataset_splits"][split],
+            a_name="current",
+            b_name="preprocessed",
+        )
+        if len(diffs):
+            pretty_diffs = json.dumps(diffs, indent=4)
+            eliot.log_message(
+                f"Config for {split} dataset has changed since preprocessing:\n{pretty_diffs}",
+                level="warning",
+            )
+    except Exception as e:
+        eliot.log_message(f"Error occurred while comparing dataset configs for {split}: {e}", level="error")
 
 
 # TODO: Remove unused (commented out) functions
