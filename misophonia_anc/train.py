@@ -35,7 +35,8 @@ def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor, loss_option: st
         si_snr_loss = si_snr(pred, tgt)
         left_term = -0.7 * snr_loss[:, 0] - 0.3 * si_snr_loss[:, 0]
         right_term = -0.7 * snr_loss[:, 1] - 0.3 * si_snr_loss[:, 1]
-        return alpha * left_term + beta * right_term
+        loss = alpha * left_term + beta * right_term
+        return loss.mean()
 
     if loss_option == "time":
         return _time_loss(pred, tgt)
