@@ -5,6 +5,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+import time
 
 import eliot
 import mlflow
@@ -130,6 +131,7 @@ def preprocess(
             samples_per_shard=samples_per_shard,
             metadata=metadata,
         )
+        time.sleep(1)  # Ensure files are closed and logging is back to normal before logging completion message
         eliot.log_message(f"Saved preprocessed data to: {dataset_glob}", level="info")
 
     eliot.log_message(f"Completed preprocessing for splits: {splits}", level="info")
