@@ -195,6 +195,11 @@ class MisophoniaANCNet(nn.Module):
         """Get the hyperparameters used to initialize the model. This can be useful for logging and checkpointing."""
         return dict(self._hyperparameters)
 
+    @property
+    def ground_truth_target(self) -> GtTargets:
+        """Get the ground truth target type used for training."""
+        return self._hyperparameters["ground_truth_target"]
+
     def save_checkpoint(
         self, ckpt_path: Path, *, epoch: int, global_step_train: int, global_step_val: int, **other_info: dict
     ) -> None:
