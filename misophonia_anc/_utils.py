@@ -1,6 +1,6 @@
 """A collection of useful helper functions"""
 
-# ruff: noqa: ANN001 # TODO: Improve quality
+# ruff: noqa: ANN001 # FIXME: Improve quality
 
 import json
 import os
@@ -49,8 +49,7 @@ def preprocess_to_webdataset_pt(
     metadata: dict | None = None,
 ) -> str:
     """
-    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading.
-    Saves tensors as mix.pt, gt.pt, and label.pt. TODO
+    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading. Save tensors.
 
     Args:
         shards_dir: Directory to save the .tar shards. Assumes shards_dir already contains split in name
@@ -225,12 +224,22 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
         is_controls = []
         metadatas = []
 
+        dts = {}
+
+        dts["batch"] = type(batch)
+
         for sample in batch:  # Will contain an extra field when looking at metadata
             if include_metadata:
                 mix, label, gt, metadata = sample
                 metadatas.append(metadata)
             else:
                 mix, label, gt = sample
+            
+            dts["sample"] = type(sample)
+            dts["mix"] = type(mix)
+            dts["label"] = type(label)
+            dts["gt"] = type(gt)
+            
             is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
             is_controls.append(1 if is_control else 0)
             if is_control:
@@ -265,6 +274,8 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
 
         gt = torch.stack(gts)  # TODO
         audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
+
+        raise NotImplementedError(f"{dts=}")  # TODO
 
         return inputs, gt, audio_lens
 
@@ -514,7 +525,7 @@ def perform_eval(
 
                         sample_files = {
                             "mix_file": str(mix_file.name),
-                            "gt_file": str(gt_file.name),# TODO
+                            "gt_file": str(gt_file.name),  # TODO
                             "pred_file": str(pred_file.name),
                         }
                     else:
