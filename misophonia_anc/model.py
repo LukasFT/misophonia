@@ -171,6 +171,8 @@ class MisophoniaANCNet(nn.Module):
 
         out = {"x": x}
 
+        print(f"DEBUG: {subtract_using=}")
+
         if subtract_using is not None:
             for method in subtract_using:
                 out[f"x_sub_{method}"] = self._subtraction(inputs["mix"], x, method)
