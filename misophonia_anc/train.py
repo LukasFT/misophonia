@@ -18,7 +18,7 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-from .confidential_losses import MultiResolutionCCMSE  # noqa: F401
+from .confidential_losses import mrssme_loss  # noqa: F401
 
 if TYPE_CHECKING:
     from .model import MisophoniaANCNet
@@ -40,9 +40,9 @@ def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor, loss_option: st
     if loss_option == "time":
         return _time_loss(pred, tgt)
     elif loss_option == "freq":
-        return MultiResolutionCCMSE()(pred, tgt)
+        return mrssme_loss(pred, tgt)
     elif loss_option == "combined":
-        return 0.5 * MultiResolutionCCMSE()(pred, tgt) + 0.5 * _time_loss(pred, tgt)
+        return 0.5 * mrssme_loss(pred, tgt) + 0.5 * _time_loss(pred, tgt)
     elif loss_option == "fine_tune":
         return _fine_tune_loss(pred, tgt)
     else:
