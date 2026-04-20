@@ -109,10 +109,14 @@ def binaural_mix(
     target_snr_range: tuple[float, float] = (5.0, 10.0),
     *,
     is_trig: bool,
-    gt_is_isolated_trigger: bool,
-) -> tuple[np.ndarray, np.ndarray | None]:
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
     """
     Max a binaural mix of a foreground (trigger) and background sound.
+
+    Returns a tuple of (mix, ground_truth, clean_mix), where:
+    - mix is the binaural mix of the foreground and background sounds.
+    - isolated_trigger is the binaural audio of the isolated trigger sound
+    - clean_mix is the binaural mix of the background sounds without any triggers
     """
 
     fg_specs = tuple(fg_specs)
@@ -144,37 +148,34 @@ def binaural_mix(
         reverb_type=global_params.reverb_type,
     )
 
-    if gt_is_isolated_trigger:  # gt = isolated trigger
-        if is_trig:
-            ground_truth = custom_mix_tracks_binaural(
-                tracks=fg_binamix_tracks,
-                subject_id=global_params.subject_id,
-                sample_rate=global_params.sample_rate,
-                ir_type=global_params.ir_type,
-                speaker_layout=global_params.speaker_layout,
-                mode=global_params.mode,
-                reverb_type=global_params.reverb_type,
-            )
-            assert ground_truth.shape == mix.shape, "Ground truth and mix shapes do not match."
+    if not is_trig:
+        # For control sounds, we want the mix to be the same as the gt, since there is no trigger present.
+        return mix, None, None
 
-            return mix, ground_truth
-        else:
-            return mix, None  # silence for control sound
-    else:  # gt = mix of all backgrounds
-        if is_trig:
-            ground_truth = custom_mix_tracks_binaural(
-                tracks=bg_binamix_tracks,
-                subject_id=global_params.subject_id,
-                sample_rate=global_params.sample_rate,
-                ir_type=global_params.ir_type,
-                speaker_layout=global_params.speaker_layout,
-                mode=global_params.mode,
-                reverb_type=global_params.reverb_type,
-            )
-            assert ground_truth.shape == mix.shape, "Ground truth and mix shapes do not match."
-            return mix, ground_truth
-        else:
-            return mix, mix  # for control sounds, gt is the same as the mix
+    # For triggers, we need to mix the gt and clean mix separately:
+    isolated_trigger = custom_mix_tracks_binaural(
+        tracks=fg_binamix_tracks,
+        subject_id=global_params.subject_id,
+        sample_rate=global_params.sample_rate,
+        ir_type=global_params.ir_type,
+        speaker_layout=global_params.speaker_layout,
+        mode=global_params.mode,
+        reverb_type=global_params.reverb_type,
+    )
+    clean_mix = custom_mix_tracks_binaural(
+        tracks=bg_binamix_tracks,
+        subject_id=global_params.subject_id,
+        sample_rate=global_params.sample_rate,
+        ir_type=global_params.ir_type,
+        speaker_layout=global_params.speaker_layout,
+        mode=global_params.mode,
+        reverb_type=global_params.reverb_type,
+    )
+    assert isolated_trigger.shape == mix.shape, "Isolated trigger and mix shapes do not match."
+    assert clean_mix.shape == mix.shape, "Clean mix and mix shapes do not match."
+
+    return mix, isolated_trigger, clean_mix
+        
 
 
 def _normalize_and_pad(

@@ -69,14 +69,21 @@ def preprocess_to_webdataset_pt(
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
         mix_array = item.get_mix_audio()
-        gt_array = item.get_ground_truth_audio()
+        isolated_trigger_array = item.get_isolated_trigger_audio()
+        clean_mix_array = item.get_clean_mix_audio()
         label_array = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
         sample_rate = item.global_mixing_params.sample_rate
 
-        mix_metrics = calculate_default_metrics(
-            torch.from_numpy(mix_array),
-            torch.from_numpy(gt_array),
+        mix_torch = torch.from_numpy(mix_array)
+        mix_vs_isolated_trigger_metrics = calculate_default_metrics(
+            mix_torch,
+            torch.from_numpy(isolated_trigger_array),
             sample_rate=sample_rate,
+        )
+        mix_vs_clean_mix_metrics = calculate_default_metrics(
+            mix_torch,
+            torch.from_numpy(clean_mix_array),
+            sample_rate=sample_rate
         )
 
         metadata = {
@@ -85,7 +92,8 @@ def preprocess_to_webdataset_pt(
             "fg_categories": item.foreground_categories,
             "bg_categories": item.background_categories,
             "is_trigger": item.is_trigger,
-            "mix_vs_gt_metrics": mix_metrics,
+            "mix_vs_isolated_trigger_metrics": mix_vs_isolated_trigger_metrics,
+            "mix_vs_clean_mix_metrics": mix_vs_clean_mix_metrics,
             "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
             "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
         }
@@ -95,7 +103,8 @@ def preprocess_to_webdataset_pt(
             "__key__": f"{idx:09d}",
             "mix.npy": mix_array,
             "label.npy": label_array,
-            "gt.npy": gt_array,
+            "isolated_trigger.npy": isolated_trigger_array,
+            "clean_mix.npy": clean_mix_array,
             "metadata.json": metadata_str,
         }
         return sample
