@@ -64,7 +64,7 @@ def train_epoch(
 
     batch_train_losses = []
 
-    for batch_idx, (inputs, gt, audio_lens) in tqdm(
+    for batch_idx, (inputs, gt, audio_lens) in tqdm(  # TODO
         enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"
     ):
         # in loader return mask that is [B, C, N]
@@ -73,9 +73,9 @@ def train_epoch(
         inputs["label_vector"] = inputs["label_vector"].to(device)
         inputs["is_control"] = inputs["is_control"].to(device)
 
-        gt = gt.to(device)
+        gt = gt.to(device)  # TODO
         audio_lens = audio_lens.to(device)
-        _, _, T = gt.shape  # noqa: N806
+        _, _, T = gt.shape  # noqa: N806 TODO
 
         optimizer.zero_grad()
 
@@ -86,7 +86,7 @@ def train_epoch(
         mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
         output["x"] = pred * mask
 
-        loss = loss_fn(output, gt, loss_option=loss_option)
+        loss = loss_fn(output, gt, loss_option=loss_option)  # TODO
         loss.backward()
         optimizer.step()
 
@@ -127,7 +127,7 @@ def val_epoch(
     val_si_snrs = []
 
     with torch.no_grad():
-        for batch_idx, (inputs, gt, audio_lens) in tqdm(
+        for batch_idx, (inputs, gt, audio_lens) in tqdm(  # TODO
             enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"
         ):
             # inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
@@ -135,9 +135,9 @@ def val_epoch(
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
 
-            _, _, T = gt.shape  # noqa: N806
+            _, _, T = gt.shape  # noqa: N806 TODO
 
-            gt = gt.to(device)
+            gt = gt.to(device)  # TODO
             audio_lens = audio_lens.to(device)
 
             # Mask output
@@ -147,11 +147,11 @@ def val_epoch(
             mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
             output["x"] = pred * mask
 
-            loss = loss_fn(output, gt, loss_option=loss_option)
+            loss = loss_fn(output, gt, loss_option=loss_option)  # TODO
 
             loss_value = loss.item()
-            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
-            val_si_snr = si_snr(output["x"], gt).mean().item()
+            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()  # TODO
+            val_si_snr = si_snr(output["x"], gt).mean().item()  # TODO
 
             batch_val_losses.append(loss_value)
             val_si_snr_improvements.append(val_si_snr_improvement)

@@ -248,7 +248,9 @@ class PremadeMisophoniaDataset(MisophoniaDataset):
             def _handle_line(line: str) -> dict | None:
                 obj = json.loads(line)
                 obj["mix"] = split_dir / obj["mix"]
-                obj["isolated_trigger"] = split_dir / obj["isolated_trigger"] if obj.get("isolated_trigger") is not None else None
+                obj["isolated_trigger"] = (
+                    split_dir / obj["isolated_trigger"] if obj.get("isolated_trigger") is not None else None
+                )
                 obj["clean_mix"] = split_dir / obj["clean_mix"] if obj.get("clean_mix") is not None else None
                 return obj
 
@@ -344,7 +346,7 @@ class PremadeMisophoniaDataset(MisophoniaDataset):
                     format="FLAC",
                     subtype="PCM_24",
                 )
-            
+
             clean_mix_file = None
             if item.clean_mix is not None:
                 clean_mix_file = clean_mixes_dir / f"{mix_id}.flac"
@@ -360,7 +362,9 @@ class PremadeMisophoniaDataset(MisophoniaDataset):
                 update={
                     "uuid": mix_id,
                     "mix": mix_file.relative_to(split_dir),
-                    "isolated_trigger": isolated_trigger_file.relative_to(split_dir) if isolated_trigger_file is not None else None,
+                    "isolated_trigger": isolated_trigger_file.relative_to(split_dir)
+                    if isolated_trigger_file is not None
+                    else None,
                     "clean_mix": clean_mix_file.relative_to(split_dir) if clean_mix_file is not None else None,
                 }
             )

@@ -364,7 +364,7 @@ class MisophoniaItem(BaseModel):
         if isinstance(self.isolated_trigger, Path):
             return self._load_audio(self.isolated_trigger)
         return self.isolated_trigger
-    
+
     def get_clean_mix_audio(self, *, control_as_mix: bool = True) -> np.ndarray:
         """Load (if not already loaded) and return the clean mix audio data."""
         if self.clean_mix is None:

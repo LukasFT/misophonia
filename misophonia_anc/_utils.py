@@ -50,7 +50,7 @@ def preprocess_to_webdataset_pt(
 ) -> str:
     """
     Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading.
-    Saves tensors as mix.pt, gt.pt, and label.pt.
+    Saves tensors as mix.pt, gt.pt, and label.pt. TODO
 
     Args:
         shards_dir: Directory to save the .tar shards. Assumes shards_dir already contains split in name
@@ -81,9 +81,7 @@ def preprocess_to_webdataset_pt(
             sample_rate=sample_rate,
         )
         mix_vs_clean_mix_metrics = calculate_default_metrics(
-            mix_torch,
-            torch.from_numpy(clean_mix_array),
-            sample_rate=sample_rate
+            mix_torch, torch.from_numpy(clean_mix_array), sample_rate=sample_rate
         )
 
         metadata = {
@@ -159,6 +157,10 @@ class MisophoniaANCConfig(BaseModel):
     loss_option: str = pydantic.Field(
         "time", description="Domain in which to apply loss. Options are 'time', 'freq', 'combined'."
     )
+    gt_is_isolated_trigger: bool = pydantic.Field(
+        True,
+        description="Whether the ground truth audio is the isolated trigger sound (True) or the clean mix without the trigger (False).",
+    )
 
     model_params: dict = pydantic.Field(
         {}, description="Dictionary of parameters to initialize the model. See the MisophoniaANCNet class for options."
@@ -205,11 +207,11 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
         Args:
             mixes (np.ndarray): synthetically generated binaural mixes
             labels (np.ndarray): one-hot encoded label vectors
-            gts (np.ndarray): binaural ground truth trigger sounds (or silence)
+            gts (np.ndarray): binaural ground truth trigger sounds (or silence) TODO
 
         Returns:
             inputs (dict[str, torch.Tensor]): dictionary of padded mixes and the label vectors in the form of tensors.
-            gts (torch.tensor): padded ground truth tensors.
+            gts (torch.tensor): padded ground truth tensors. TODO
             audio_lens (torch.tensor): lengths of the original (unpadded) audio, used for masking in the loss function.
         """
 
@@ -242,11 +244,11 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
                 # generate a single random start for both mix and gt
                 start = torch.randint(0, L - chunk_size + 1, (1,)).item()
                 mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
-                gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()
+                gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()  # TODO
             else:
                 # audio is shorter than chunk_size → pad
                 mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
-                gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, chunk_size - L))
+                gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, chunk_size - L))  # TODO
 
             mixes.append(mix_chunk)
             gts.append(gt_chunk)
@@ -261,7 +263,7 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
         if include_metadata:
             inputs["metadata"] = metadatas
 
-        gt = torch.stack(gts)
+        gt = torch.stack(gts)  # TODO
         audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
 
         return inputs, gt, audio_lens
@@ -306,9 +308,9 @@ def make_dataloader(
     )
 
     if include_metadata:
-        data = data.to_tuple("mix.npy", "label.npy", "gt.npy", "metadata.json")
+        data = data.to_tuple("mix.npy", "label.npy", "gt.npy", "metadata.json")  # TODO
     else:
-        data = data.to_tuple("mix.npy", "label.npy", "gt.npy")
+        data = data.to_tuple("mix.npy", "label.npy", "gt.npy")  # TODO
 
     data = data.batched(
         batch_size,
@@ -449,12 +451,12 @@ def perform_eval(
     total_idx = 0
 
     with torch.no_grad():
-        for _, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
+        for _, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):  # TODO
             # Load data to device:
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
-            gt = gt.to(device)
+            gt = gt.to(device)  # TODO
 
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
@@ -469,13 +471,13 @@ def perform_eval(
                 profiling=False,
             )
 
-            batch_size = gt.shape[0]
+            batch_size = gt.shape[0]  # TODO
             output_items = output.items()
             for i in range(batch_size):
                 total_idx += 1
                 sample_idx = f"{total_idx:06d}"
                 valid_len = int(audio_len[i].item())  # To remove padding
-                gt_i = gt[i, :, :valid_len]
+                gt_i = gt[i, :, :valid_len]  # TODO
                 mix_i = inputs["mix"][i, :, :valid_len]
 
                 sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
@@ -485,7 +487,7 @@ def perform_eval(
                     save_sample = True
                     samples_left_to_save -= 1
                     mix_file = save_samples_to / f"sample_{sample_idx}_mix.flac"
-                    gt_file = save_samples_to / f"sample_{sample_idx}_gt.flac"
+                    gt_file = save_samples_to / f"sample_{sample_idx}_gt.flac"  # TODO
                     _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
                     _save_audio_stereo(gt_i, gt_file, sample_rate=sample_rate)
                 else:
@@ -497,9 +499,11 @@ def perform_eval(
                     if pred_name == "x":
                         metrics = calculate_default_metrics(
                             pred_i,
-                            gt_i,
+                            gt_i,  # TODO: Change
                             sample_rate=sample_rate,
-                            mix_metrics=sample_metdata.get("mix_vs_gt_metrics") if sample_metdata else None,
+                            mix_metrics=sample_metdata.get("mix_vs_gt_metrics")  # TODO: Change
+                            if sample_metdata
+                            else None,
                         )
                     else:
                         metrics = {}  # TODO: Implement metrics for subtraction outputs
@@ -510,7 +514,7 @@ def perform_eval(
 
                         sample_files = {
                             "mix_file": str(mix_file.name),
-                            "gt_file": str(gt_file.name),
+                            "gt_file": str(gt_file.name),# TODO
                             "pred_file": str(pred_file.name),
                         }
                     else:
@@ -522,7 +526,7 @@ def perform_eval(
                             "pred_name": pred_name,
                             "runtime_ms": runtime_ms,
                             "metrics": metrics,
-                            "batch_length": gt.shape[-1],
+                            "batch_length": gt.shape[-1],  # TODO
                             "sample_length": valid_len,
                             "sample_metadata": sample_metdata,
                             "sample_files": sample_files,
@@ -695,7 +699,7 @@ def compute_ild(s_left, s_right) -> np.ndarray:
 
 def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
     """
-    Computes the ITD error between model estimate and ground truth
+    Computes the ITD error between model estimate and ground truth TODO
     input: (*, 2, T), (*, 2, T)
     """
     tmax = int(round(1e-3 * sr))
@@ -706,7 +710,7 @@ def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
 
 def ild_diff(s_est: np.ndarray, s_gt: np.ndarray) -> np.ndarray:
     """
-    Computes the ILD error between model estimate and ground truth
+    Computes the ILD error between model estimate and ground truth TODO
     input: (*, 2, T), (*, 2, T)
     """
     ild_est = compute_ild(s_est[..., 0, :], s_est[..., 1, :])

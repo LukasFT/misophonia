@@ -175,7 +175,6 @@ def binaural_mix(
     assert clean_mix.shape == mix.shape, "Clean mix and mix shapes do not match."
 
     return mix, isolated_trigger, clean_mix
-        
 
 
 def _normalize_and_pad(
