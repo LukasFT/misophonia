@@ -51,7 +51,7 @@ def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor) 
 
 
 def train_epoch(
-    model: nn.Module,
+    model: "MisophoniaANCNet",
     *,
     device: torch.device,
     optimizer: optim.Optimizer,
@@ -63,19 +63,17 @@ def train_epoch(
     model = model.train()
 
     batch_train_losses = []
+    gt_target = model.ground_truth_target
 
-    for batch_idx, (inputs, gt, audio_lens) in tqdm(  # TODO
-        enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"
-    ):
-        # in loader return mask that is [B, C, N]
-        # inputs = {k: v.to(device) for k, v in inputs.items()}
+    for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
+        inputs = batch["inputs"]
         inputs["mix"] = inputs["mix"].to(device)
         inputs["label_vector"] = inputs["label_vector"].to(device)
         inputs["is_control"] = inputs["is_control"].to(device)
 
-        gt = gt.to(device)  # TODO
-        audio_lens = audio_lens.to(device)
-        _, _, T = gt.shape  # noqa: N806 TODO
+        gt = batch[gt_target].to(device)
+        audio_lens = batch["audio_lens"].to(device)
+        _, _, T = gt.shape  # noqa: N806
 
         optimizer.zero_grad()
 
@@ -126,19 +124,18 @@ def val_epoch(
     val_si_snr_improvements = []
     val_si_snrs = []
 
+    gt_target = model.ground_truth_target
+
     with torch.no_grad():
-        for batch_idx, (inputs, gt, audio_lens) in tqdm(  # TODO
-            enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"
-        ):
-            # inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
+        for batch_idx, batch in tqdm(enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"):
+            inputs = batch["inputs"]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
 
-            _, _, T = gt.shape  # noqa: N806 TODO
-
-            gt = gt.to(device)  # TODO
-            audio_lens = audio_lens.to(device)
+            gt = batch[gt_target].to(device)
+            audio_lens = batch["audio_lens"].to(device)
+            _, _, T = gt.shape  # noqa: N806
 
             # Mask output
             output = model(inputs)
@@ -147,11 +144,11 @@ def val_epoch(
             mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
             output["x"] = pred * mask
 
-            loss = loss_fn(output, gt, loss_option=loss_option)  # TODO
+            loss = loss_fn(output, gt, loss_option=loss_option)
 
             loss_value = loss.item()
-            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()  # TODO
-            val_si_snr = si_snr(output["x"], gt).mean().item()  # TODO
+            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
+            val_si_snr = si_snr(output["x"], gt).mean().item()
 
             batch_val_losses.append(loss_value)
             val_si_snr_improvements.append(val_si_snr_improvement)
