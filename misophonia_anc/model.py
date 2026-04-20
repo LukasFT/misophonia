@@ -241,7 +241,9 @@ class MisophoniaANCNet(nn.Module):
              - A dictionary containing metadata from the checkpoint (e.g. epoch, hyperparameters) if a checkpoint was provided, or an empty dictionary if no checkpoint was provided.
         """
         model_params = dict(config.model_params)
-        model_params["gt_is_isolated_trigger"] = config.gt_is_isolated_trigger  # Pass gt_is_isolated_trigger to the model parameters
+        model_params["gt_is_isolated_trigger"] = (
+            config.gt_is_isolated_trigger
+        )  # Pass gt_is_isolated_trigger to the model parameters
         metadata = {}
 
         if checkpoint is None:
