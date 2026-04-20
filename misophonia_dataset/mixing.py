@@ -149,10 +149,10 @@ def binaural_mix(
     )
 
     if not is_trig:
-        # For control sounds, we want the mix to be the same as the gt, since there is no trigger present.
+        # For control sounds, we want isolated_trigger and clean_mix to be None, since they are the same as the mix
         return mix, None, None
 
-    # For triggers, we need to mix the gt and clean mix separately:
+    # For triggers, we need to mix the isolated trigger and clean mix separately:
     isolated_trigger = custom_mix_tracks_binaural(
         tracks=fg_binamix_tracks,
         subject_id=global_params.subject_id,

@@ -275,7 +275,7 @@ class MisophoniaItem(BaseModel):
     """
     isolated_trigger: np.ndarray | Path | None
     """
-    Ground truth audio data. This is the isolated binaural audio for the trigger sound.
+    Isolated trigger audio data. This is the isolated binaural audio for the trigger sound.
 
     See get_isolated_trigger_audio() to load the audio data from the file if it is a Path.
 
@@ -358,7 +358,7 @@ class MisophoniaItem(BaseModel):
         return self.mix
 
     def get_isolated_trigger_audio(self, *, control_as_zeros: bool = True) -> np.ndarray:
-        """Load (if not already loaded) and return the ground truth audio data."""
+        """Load (if not already loaded) and return the isolated trigger audio data."""
         if self.isolated_trigger is None:
             return np.zeros((2, self.length)) if control_as_zeros else None
         if isinstance(self.isolated_trigger, Path):
