@@ -427,7 +427,7 @@ def perform_eval(
 
     model.eval()
 
-    print(f"DEBUG: {subtract_using=}")
+    print(f"DEBUG perform_eval: {subtract_using=}")
 
     results = []
 
