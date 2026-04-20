@@ -731,8 +731,8 @@ def model_diffs(
     b_name: str = "b",
 ) -> dict:
     """Recursively compute the differences between two pydantic models and return a dictionary of the differences."""
-    a_dict = a.model_dump(mode="python", exclude_unset=True) if isinstance(a, pydantic.BaseModel) else a
-    b_dict = b.model_dump(mode="python", exclude_unset=True) if isinstance(b, pydantic.BaseModel) else b
+    a_dict = a.model_dump(mode="python") if isinstance(a, pydantic.BaseModel) else a
+    b_dict = b.model_dump(mode="python") if isinstance(b, pydantic.BaseModel) else b
     diffs = {}
     for key in set(a_dict.keys()).union(b_dict.keys()):
         a_val = a_dict.get(key, "<MISSING>")
@@ -748,7 +748,7 @@ def model_diffs(
 
 
 def log_dataset_config_diffs(
-    current: pydantic.BaseModel | dict,
+    current: MisophoniaANCConfig | dict,
     preprocessed_file: Path,
     split: SplitT,
 ) -> None:
@@ -762,7 +762,7 @@ def log_dataset_config_diffs(
 
     try:
         diffs = model_diffs(
-            current,
+            current.dataset_splits[split],
             preprocessed_config["config"]["dataset_splits"][split],
             a_name="current",
             b_name="preprocessed",
