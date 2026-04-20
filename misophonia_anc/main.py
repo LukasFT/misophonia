@@ -152,6 +152,13 @@ def train(
             default_factory=lambda: 8,
         ),
     ],
+    fine_tune: Annotated[
+        bool,
+        typer.Option(
+            ...,
+            help="If training should be adapted to finetuning. If true, loss function will be updated and model weights will be frozen.",
+        ),
+    ] = False,
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
     fast_data_dir: Annotated[
         Path | None,
@@ -206,6 +213,17 @@ def train(
         eliot.log_message(f"Loading model from checkpoint: {checkpoint}", level="info")
     model, checkpoint_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint, device=device)
 
+    if fine_tune:
+        config.loss_option = "fine_tune"
+        for param in model.parameters():
+            param.requires_grad = False
+
+        for param in model.mask_gen.decoder.parameters():
+            param.requires_grad = True
+
+        for param in model.out_conv.parameters():
+            param.requires_grad = True
+
     if mlflow_uri is not None and config.mlflow_experiment is not None:
         if mlflow_username is None or mlflow_password is None:
             raise ValueError("MLflow username and password must be provided if MLflow URI is provided.")
@@ -248,8 +266,8 @@ def train(
             eliot.log_message(f"Tracking using MLflow '{run_name}': {run_link}", level="info")
 
     try:
-        assert config.loss_option in ["time", "frequency", "combined"], (
-            "Invalid loss option. Must be 'time', 'frequency' or 'combined'."
+        assert config.loss_option in ["time", "freq", "combined", "fine_tune"], (
+            "Invalid loss option. Must be 'time', 'freq', 'combined' or 'fine_tune'."
         )
         train_model(
             model,
