@@ -743,6 +743,9 @@ def model_diffs(
             if len(nested_diffs) > 0:
                 diffs[key] = nested_diffs
         elif a_val != b_val:
+            if isinstance(a_val, (list, tuple)) and isinstance(b_val, (list, tuple)):
+                if len(a_val) == len(b_val) and all(x == y for x, y in zip(a_val, b_val)):
+                    continue  # allow if all items are the same
             diffs[key] = {a_name: a_val, b_name: b_val}
     return diffs
 
