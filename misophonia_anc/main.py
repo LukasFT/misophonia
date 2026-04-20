@@ -234,7 +234,6 @@ def train(
     model, checkpoint_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint, device=device)
 
     if fine_tune:
-        config.loss_option = "fine_tune"
         for param in model.parameters():
             param.requires_grad = False
 
