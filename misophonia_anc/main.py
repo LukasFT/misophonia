@@ -349,7 +349,13 @@ def evaluate(
 
         dataset_split_dir = model_dir / "webdataset" / split
         eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
-        shards_split = dataset_split_dir.glob("data-*.tar")
+        shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
+        if len(shards_split) == 0:
+            eliot.log_message(
+                f"No data shards found for split {split} at {dataset_split_dir}. Skipping evaluation for this split.",
+                level="error",
+            )
+            continue
         log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
         split_loader = make_dataloader(
             shards_split,
