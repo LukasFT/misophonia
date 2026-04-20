@@ -501,7 +501,7 @@ def perform_eval(
                             "pred_file": str(pred_file.name),
                         }
                     else:
-                        sample_files = {"mix_file": None, "gt_file": None, "pred_file": None}
+                        sample_files = None
 
                     results.append(
                         {
@@ -512,7 +512,7 @@ def perform_eval(
                             "batch_length": gt.shape[-1],
                             "sample_length": valid_len,
                             "sample_metadata": sample_metdata,
-                            **sample_files,
+                            "sample_files": sample_files,
                         }
                     )
                     total_idx += 1
