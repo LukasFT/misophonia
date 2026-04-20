@@ -460,50 +460,59 @@ def perform_eval(
                 profiling=False,
             )
 
-            for pred_name, pred in output.items():
-                batch_size = gt.shape[0]
-                for i in range(batch_size):
-                    sample_idx = f"{total_idx:03d}"
-                    valid_len = int(audio_len[i].item())
+            batch_size = gt.shape[0]
+            output_items = output.items()
+            for i in range(batch_size):
+                sample_idx = f"{total_idx:06d}"
+                valid_len = int(audio_len[i].item())  # To remove padding
+                gt_i = gt[i, :, :valid_len]
+                mix_i = inputs["mix"][i, :, :valid_len]
 
-                    # Chop to valid length (removing padding) for evaluation and saving
-                    gt_i = gt[i, :, :valid_len]
+                sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
+                sample_rate = sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE
+
+                if samples_left_to_save > 0:
+                    save_sample = True
+                    samples_left_to_save -= 1
+                    mix_file = save_samples_to / f"sample_{sample_idx}_mix.flac"
+                    gt_file = save_samples_to / f"sample_{sample_idx}_gt.flac"
+                    _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
+                    _save_audio_stereo(gt_i, gt_file, sample_rate=sample_rate)
+                else:
+                    save_sample = False
+
+                for pred_name, pred in output_items:
                     pred_i = pred[i, :, :valid_len]
-                    mix_i = inputs["mix"][i, :, :valid_len]
-
-                    sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
 
                     metrics = calculate_default_metrics(
                         pred_i,
                         gt_i,
-                        sample_rate=sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE,
+                        sample_rate=sample_rate,
                         mix_metrics=sample_metdata.get("mix_vs_gt_metrics") if sample_metdata else None,
                     )
 
-                    if samples_left_to_save > 0:
-                        sample_files = _save_samples(
-                            save_dir=save_samples_to,
-                            sample_idx=sample_idx,
-                            files={
-                                "mix": mix_i,
-                                "gt": gt_i,
-                                pred_name: pred_i,
-                            },
-                        )
-                        samples_left_to_save -= 1
+                    if save_sample:
+                        pred_file = save_samples_to / f"sample_{sample_idx}_{pred_name}.flac"
+                        _save_audio_stereo(pred_i, pred_file, sample_rate=sample_rate)
+
+                        sample_files = {
+                            "mix_file": str(mix_file.name),
+                            "gt_file": str(gt_file.name),
+                            "pred_file": str(pred_file.name),
+                        }
                     else:
-                        sample_files = None
+                        sample_files = {"mix_file": None, "gt_file": None, "pred_file": None}
 
                     results.append(
                         {
                             "idx": sample_idx,
                             "pred_name": pred_name,
-                            "sample_files": sample_files,
                             "runtime_ms": runtime_ms,
                             "metrics": metrics,
                             "batch_length": gt.shape[-1],
                             "sample_length": valid_len,
                             "sample_metadata": sample_metdata,
+                            **sample_files,
                         }
                     )
                     total_idx += 1
@@ -548,15 +557,6 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
         )  # Model is run on batch-level, so normalize on that
     agg_metrics = df.groupby("pred_name").mean().T.to_dict()
     return agg_metrics
-
-
-def _save_samples(*, save_dir: Path, sample_idx: str, files: torch.Tensor) -> dict[str, str]:
-    sample_files = {}
-    for f_key, audio_tensor in files.items():
-        path = save_dir / f"sample_{sample_idx}_{f_key}.flac"
-        _save_audio_stereo(audio_tensor, path)
-        sample_files[f_key] = str(path.name)
-    return sample_files
 
 
 def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int = 50) -> None:
