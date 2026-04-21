@@ -68,41 +68,37 @@ def preprocess_to_webdataset_pt(
         item: MisophoniaItem = dataset_split[idx]
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
-        try:
-            mix_array = item.get_mix_audio()
-            gt_array = item.get_ground_truth_audio()
-            label_array = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
-            sample_rate = item.global_mixing_params.sample_rate
+        mix_array = item.get_mix_audio()
+        gt_array = item.get_ground_truth_audio()
+        label_array = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
+        sample_rate = item.global_mixing_params.sample_rate
 
-            mix_metrics = calculate_default_metrics(
-                torch.from_numpy(mix_array),
-                torch.from_numpy(gt_array),
-                sample_rate=sample_rate,
-            )
+        mix_metrics = calculate_default_metrics(
+            torch.from_numpy(mix_array),
+            torch.from_numpy(gt_array),
+            sample_rate=sample_rate,
+        )
 
-            metadata = {
-                "uuid": item.uuid,
-                "sample_rate": sample_rate,
-                "fg_categories": item.foreground_categories,
-                "bg_categories": item.background_categories,
-                "is_trigger": item.is_trigger,
-                "mix_vs_gt_metrics": mix_metrics,
-                "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
-                "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
-            }
-            metadata_str = json.dumps(metadata)
+        metadata = {
+            "uuid": item.uuid,
+            "sample_rate": sample_rate,
+            "fg_categories": item.foreground_categories,
+            "bg_categories": item.background_categories,
+            "is_trigger": item.is_trigger,
+            "mix_vs_gt_metrics": mix_metrics,
+            "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
+            "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
+        }
+        metadata_str = json.dumps(metadata)
 
-            sample = {
-                "__key__": f"{idx:09d}",
-                "mix.npy": mix_array,
-                "label.npy": label_array,
-                "gt.npy": gt_array,
-                "metadata.json": metadata_str,
-            }
-            return sample
-        except Exception as e:
-            print(f"failed on {idx}: {e}", flush=True)
-            raise
+        sample = {
+            "__key__": f"{idx:09d}",
+            "mix.npy": mix_array,
+            "label.npy": label_array,
+            "gt.npy": gt_array,
+            "metadata.json": metadata_str,
+        }
+        return sample
 
     num_workers = num_workers or os.cpu_count() or 1
 
