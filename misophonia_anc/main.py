@@ -121,6 +121,7 @@ def preprocess(
             )
             dataset = GeneratedMisophoniaDataset(source_data=source_data)
             dataset_split = dataset.get_split(split, **split_config.generated_config)
+            eliot.log_message(f"Generated {len(dataset_split)} samples for split {split}.", level="info")
 
         dataset_glob = preprocess_to_webdataset_pt(
             shards_dir,
