@@ -191,7 +191,7 @@ class GlobalMixingParams(BaseModel):
     """The target sample rate for the mix to be generated at."""
     reverb_type: ReverbT  # Randomized default
     """Type of reverb to use. See ReverbT for more."""
-    mode: InterpolationModeT = "nearest"
+    mode: InterpolationModeT = "auto"
     """Interpolation mode. See InterpolationModeT for more."""
     ir_type: ImpulseResponseT = "BRIR"
     """Type of impulse response to use."""
