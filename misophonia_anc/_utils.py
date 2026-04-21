@@ -116,7 +116,7 @@ def preprocess_to_webdataset_pt(
 
     pattern = str(shards_dir / "data-%06d.tar")
     with wds.ShardWriter(pattern, maxcount=samples_per_shard) as sink:
-        with ThreadPoolExecutor(max_workers=1) as executor:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
             size = len(dataset_split)
             results = executor.map(process_item, range(size))
             if show_progress:
