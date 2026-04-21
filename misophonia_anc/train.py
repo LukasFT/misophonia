@@ -24,28 +24,48 @@ if TYPE_CHECKING:
     from .model import MisophoniaANCNet
 
 
-def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor, loss_option: str = "time") -> torch.Tensor:
+def loss_fn(
+    _output: dict[str, torch.Tensor], tgt: torch.Tensor, audio_lens: torch.Tensor, loss_option: str = "time"
+) -> torch.Tensor:
     pred = _output["x"]
 
-    def _time_loss(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
-        return -0.7 * snr(pred, tgt).mean() - 0.3 * si_snr(pred, tgt).mean()
+    def _time_loss(
+        pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor, alpha: float = 0.5, beta: float = 1.0
+    ) -> torch.Tensor:
+        """
+        Computes loss with .7 weight on snr and .3 weight on si-snr. Applies double weighting to the right channel
+        """
+        B = pred.shape[0]
+        batch_loss = []
+        for i in range(B):
+            left_pred = pred[i, 0, : audio_lens[i]]
+            right_pred = pred[i, 1, : audio_lens[i]]
+            left_term = -0.7 * snr(left_pred, tgt[i, 0, : audio_lens[i]]) - 0.3 * si_snr(
+                left_pred, tgt[i, :, : audio_lens[i]]
+            )
+            right_term = -0.7 * snr(right_pred, tgt[i, 1, : audio_lens[i]]) - 0.3 * si_snr(
+                right_pred, tgt[i, :, : audio_lens[i]]
+            )
+            batch_loss.append(alpha * left_term + beta * right_term)
+        return batch_loss.mean()
 
-    def _fine_tune_loss(pred: torch.Tensor, tgt: torch.Tensor, alpha: float = 0.5, beta: float = 1.0) -> torch.Tensor:
-        snr_loss = snr(pred, tgt)
-        si_snr_loss = si_snr(pred, tgt)
-        left_term = -0.7 * snr_loss[:, 0] - 0.3 * si_snr_loss[:, 0]
-        right_term = -0.7 * snr_loss[:, 1] - 0.3 * si_snr_loss[:, 1]
-        loss = alpha * left_term + beta * right_term
-        return loss.mean()
+    def _freq_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
+        """
+        Computes multiresolution CCMSE on
+        """
+        B = pred.shape[0]
+        batch_loss = []
+        for i in range(B):
+            item_loss = mrccmse_loss(pred[i, :, : audio_lens[i]], tgt[i, :, : audio_lens[i]])  # type: ignore
+            batch_loss.append(item_loss)
+        return batch_loss.mean()
 
     if loss_option == "time":
         return _time_loss(pred, tgt)
     elif loss_option == "freq":
-        return mrccmse_loss(pred, tgt)
+        return _freq_loss(pred, tgt, audio_lens)
     elif loss_option == "combined":
-        return 0.5 * mrccmse_loss(pred, tgt) + 0.5 * _time_loss(pred, tgt)
-    elif loss_option == "fine_tune":
-        return _fine_tune_loss(pred, tgt)
+        return 0.5 * _freq_loss(pred, tgt, audio_lens) + 0.5 * _time_loss(pred, tgt)
     else:
         raise ValueError(f"Invalid loss option: {loss_option}")
 
