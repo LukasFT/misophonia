@@ -41,10 +41,10 @@ def loss_fn(
             left_pred = pred[i, 0, : audio_lens[i]]
             right_pred = pred[i, 1, : audio_lens[i]]
             left_term = -0.7 * snr(left_pred, tgt[i, 0, : audio_lens[i]]) - 0.3 * si_snr(
-                left_pred, tgt[i, :, : audio_lens[i]]
+                left_pred, tgt[i, 0, : audio_lens[i]]
             )
             right_term = -0.7 * snr(right_pred, tgt[i, 1, : audio_lens[i]]) - 0.3 * si_snr(
-                right_pred, tgt[i, :, : audio_lens[i]]
+                right_pred, tgt[i, 1, : audio_lens[i]]
             )
             batch_loss.append(alpha * left_term + beta * right_term)
         return sum(batch_loss) / len(batch_loss)
@@ -61,11 +61,11 @@ def loss_fn(
         return sum(batch_loss) / len(batch_loss)
 
     if loss_option == "time":
-        return _time_loss(pred, tgt)
+        return _time_loss(pred, tgt, audio_lens)
     elif loss_option == "freq":
         return _freq_loss(pred, tgt, audio_lens)
     elif loss_option == "combined":
-        return 0.5 * _freq_loss(pred, tgt, audio_lens) + 0.5 * _time_loss(pred, tgt)
+        return 0.5 * _freq_loss(pred, tgt, audio_lens) + 0.5 * _time_loss(pred, tgt, audio_lens)
     else:
         raise ValueError(f"Invalid loss option: {loss_option}")
 
