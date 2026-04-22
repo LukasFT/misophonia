@@ -77,14 +77,14 @@ def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor, 
         improvement = si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]) - si_snr(
             mix[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]
         )
-        si_snr_improvements.append(improvement)
+        si_snr_improvements.append(improvement.mean())
     return sum(si_snr_improvements) / len(si_snr_improvements)
 
 def truncated_si_snr(pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor) -> torch.Tensor:
     B = pred.shape[0]
     si_snrs = []
     for i in range(B):
-        si_snrs.append(si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]))
+        si_snrs.append(si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]).mean())
     return sum(si_snrs) / len(si_snrs)
 
 def train_epoch(
