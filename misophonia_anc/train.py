@@ -47,7 +47,7 @@ def loss_fn(
                 right_pred, tgt[i, :, : audio_lens[i]]
             )
             batch_loss.append(alpha * left_term + beta * right_term)
-        return batch_loss.mean()
+        return np.mean(batch_loss)
 
     def _freq_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
         """
@@ -58,7 +58,7 @@ def loss_fn(
         for i in range(B):
             item_loss = mrccmse_loss(pred[i, :, : audio_lens[i]], tgt[i, :, : audio_lens[i]])  # type: ignore
             batch_loss.append(item_loss)
-        return batch_loss.mean()
+        return np.mean(batch_loss)
 
     if loss_option == "time":
         return _time_loss(pred, tgt)
