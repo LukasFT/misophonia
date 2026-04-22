@@ -106,11 +106,8 @@ def train_epoch(
         # Mask output
         output = model(inputs)
         pred = output["x"]
-        time_idx = torch.arange(T, device=pred.device).unsqueeze(0)
-        mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
-        output["x"] = pred * mask
 
-        loss = loss_fn(output, gt, loss_option=loss_option)
+        loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
         loss.backward()
         optimizer.step()
 
@@ -167,11 +164,8 @@ def val_epoch(
             # Mask output
             output = model(inputs)
             pred = output["x"]
-            time_idx = torch.arange(T, device=pred.device).unsqueeze(0)
-            mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
-            output["x"] = pred * mask
 
-            loss = loss_fn(output, gt, loss_option=loss_option)
+            loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
 
             loss_value = loss.item()
             val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
