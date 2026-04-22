@@ -47,7 +47,7 @@ def loss_fn(
                 right_pred, tgt[i, :, : audio_lens[i]]
             )
             batch_loss.append(alpha * left_term + beta * right_term)
-        return np.mean(batch_loss)
+        return sum(batch_loss) / len(batch_loss)
 
     def _freq_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
         """
@@ -58,7 +58,7 @@ def loss_fn(
         for i in range(B):
             item_loss = mrccmse_loss(pred[i, :, : audio_lens[i]], tgt[i, :, : audio_lens[i]])  # type: ignore
             batch_loss.append(item_loss)
-        return np.mean(batch_loss)
+        return sum(batch_loss) / len(batch_loss)
 
     if loss_option == "time":
         return _time_loss(pred, tgt)
@@ -70,9 +70,22 @@ def loss_fn(
         raise ValueError(f"Invalid loss option: {loss_option}")
 
 
-def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor) -> torch.Tensor:
-    return si_snr(pred, gt) - si_snr(mix, gt)
+def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor) -> torch.Tensor:
+    B = pred.shape[0]
+    si_snr_improvements = []
+    for i in range(B):
+        improvement = si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]) - si_snr(
+            mix[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]
+        )
+        si_snr_improvements.append(improvement)
+    return sum(si_snr_improvements) / len(si_snr_improvements)
 
+def truncated si_snr(pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor) -> torch.Tensor:
+    B = pred.shape[0]
+    si_snrs = []
+    for i in range(B):
+        si_snrs.append(si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]))
+    return sum(si_snrs) / len(si_snrs)
 
 def train_epoch(
     model: nn.Module,
@@ -168,8 +181,8 @@ def val_epoch(
             loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
 
             loss_value = loss.item()
-            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
-            val_si_snr = si_snr(output["x"], gt).mean().item()
+            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt, audio_lens).item()
+            val_si_snr = truncated_si_snr(output["x"], gt, audio_lens).item()
 
             batch_val_losses.append(loss_value)
             val_si_snr_improvements.append(val_si_snr_improvement)
@@ -272,7 +285,7 @@ def train_model(
                     "epoch/global_step_train": global_step_train,
                     "epoch/global_step_val": global_step_val,
                 },
-                step=epoch,
+                step=epoch - 1,
             )
 
         # Checkpointing
