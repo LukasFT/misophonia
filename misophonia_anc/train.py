@@ -30,7 +30,7 @@ def loss_fn(
     pred = _output["x"]
 
     def _time_loss(
-        pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor, alpha: float = 0.5, beta: float = 1.0
+        pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor, gamma: float = 0.25
     ) -> torch.Tensor:
         """
         Computes loss with .7 weight on snr and .3 weight on si-snr. Applies double weighting to the right channel
@@ -40,13 +40,12 @@ def loss_fn(
         for i in range(B):
             left_pred = pred[i, 0, : audio_lens[i]]
             right_pred = pred[i, 1, : audio_lens[i]]
-            left_term = -0.7 * snr(left_pred, tgt[i, 0, : audio_lens[i]]) - 0.3 * si_snr(
-                left_pred, tgt[i, 0, : audio_lens[i]]
-            )
-            right_term = -0.7 * snr(right_pred, tgt[i, 1, : audio_lens[i]]) - 0.3 * si_snr(
-                right_pred, tgt[i, 1, : audio_lens[i]]
-            )
-            batch_loss.append(alpha * left_term + beta * right_term)
+            left_term = -0.9 * snr(left_pred, tgt[i, 0, : audio_lens[i]])
+            right_term = -0.9 * snr(right_pred, tgt[i, 1, : audio_lens[i]])
+
+            avg_term = 0.5 * left_term + 0.5 * right_term
+            max_term = max(left_term, right_term)
+            batch_loss.append(avg_term + gamma * max_term)
         return sum(batch_loss) / len(batch_loss)
 
     def _freq_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
