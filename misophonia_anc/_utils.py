@@ -172,10 +172,10 @@ class MisophoniaANCConfig(BaseModel):
         {}, description="Dictionary of parameters to initialize the model. See the train_model() for options."
     )
 
-    subtract_using: list[str] | tuple[str, ...] | None = pydantic.Field(
+    subtraction_methods: list[str] | tuple[str, ...] | None = pydantic.Field(
         None,
         description="Whether to perform post-hoc subtraction using the original mix and the model's prediction, and if so, which method to use for subtraction. "
-        "See the _subtraction() method in model.py for details.",
+        "See MisophoniaANCNet.register_subtraction_method for details.",
     )
 
     mlflow_experiment: str | None = pydantic.Field(
@@ -446,7 +446,6 @@ def perform_eval(
     save_aggregated_results_to: Path | None = None,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
-    subtract_using: tuple[str, ...] | None = None,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -470,8 +469,6 @@ def perform_eval(
         assert save_samples_to.is_dir()
 
     model.eval()
-
-    print(f"DEBUG perform_eval: {subtract_using=}")
 
     results = []
 
@@ -499,7 +496,6 @@ def perform_eval(
             output, runtime_ms = _time_and_run_model(
                 model,
                 args=(inputs,),
-                kwargs={"subtract_using": subtract_using},
                 profiling=False,
             )
 
@@ -673,7 +669,7 @@ def model_size(model) -> float:
     return num_train_params / 1e6
 
 
-def _time_and_run_model(model, args, kwargs, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
+def _time_and_run_model(model, args=(), kwargs={}, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
     """
     Run a model while measuring the time taken for the forward pass. If `profiling` is True, also prints a detailed profiling report.
 

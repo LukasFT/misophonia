@@ -15,6 +15,7 @@ import torch.nn as nn
 from ._utils import GtTargets, MisophoniaANCConfig, get_git_sha, mod_pad
 from .decoder import CausalTransformerDecoder
 from .encoder import DilatedCausalConvEncoder
+from .subtraction_methods import SubtractionMethod, ls_fir_subtraction, simple_subtraction, stft_subtraction
 
 
 class MisophoniaANCNet(nn.Module):
@@ -99,6 +100,8 @@ class MisophoniaANCNet(nn.Module):
             nn.Tanh(),
         )
 
+        self._subtraction_methods: dict[str, SubtractionMethod] = {}
+
     def init_buffers(self, batch_size, device):  # noqa: ANN201
         enc_buf = self.mask_gen.encoder.init_ctx_buf(batch_size, device)
         dec_buf = self.mask_gen.decoder.init_ctx_buf(batch_size, device)
@@ -132,7 +135,6 @@ class MisophoniaANCNet(nn.Module):
         init_dec_buf=None,
         init_out_buf=None,
         pad=True,
-        subtract_using: tuple[str, ...] | None = None,
         # TODO: The below are unused?
         writer=None,
         step=None,
@@ -173,23 +175,36 @@ class MisophoniaANCNet(nn.Module):
 
         out = {"x": x}
 
-        if subtract_using is not None:
-            for method in subtract_using:
-                out[f"x_sub_{method}"] = self._subtraction(inputs["mix"], x, method)
+        for subtraction_name, subtraction_func in self._subtraction_methods.items():
+            out[f"x_{subtraction_name}"] = subtraction_func(inputs["mix"], x)
 
         if init_enc_buf is None:
             return out
         else:
             return out, enc_buf, dec_buf, out_buf
 
-    def _subtraction(self, mix: torch.Tensor, x: torch.Tensor, method: str) -> torch.Tensor:
+    def register_subtraction_method(self, name: str, func: SubtractionMethod | None = None) -> None:
+        """
+        Register a subtraction method to be applied to the model prediction.
+
+        Args:
+            name: The name of the subtraction method (e.g. "simple", "stft", "ls_fir").
+            func: A function that takes in the mixture audio and the model prediction and returns the subtracted audio.
+                    If None, the method will be looked up in the model's internal dictionary of known subtraction methods.
+
+        """
         assert self._hyperparameters["ground_truth_target"] == "isolated_trigger", (
             "Subtraction can only be applied if ground_truth_target is 'isolated_trigger'"
         )
-        if method == "simple":
-            return mix - x
-        else:
-            raise ValueError(f"Unsupported subtraction method: {method}")
+        known_methods = {
+            "simple": simple_subtraction,
+            "stft": stft_subtraction,
+            "ls_fir": ls_fir_subtraction,
+        }
+        func = func if func is not None else known_methods.get(name)
+        if func is None:
+            raise ValueError(f"Subtraction method {name} is not recognized and no function was provided.")
+        self._subtraction_methods[name] = func
 
     #### UTILITY FUNCTIONS ####
     @property
@@ -281,6 +296,13 @@ class MisophoniaANCNet(nn.Module):
             state_dict = metadata["model_state"]
             metadata.pop("model_state")  # Remove model state from metadata to avoid confusion
             model.load_state_dict(state_dict)
+
+        if config.subtraction_methods is not None:
+            for method_name in config.subtraction_methods:
+                model.register_subtraction_method(
+                    name=method_name,
+                    func=None,  # Automatically look up the function from the name
+                )
 
         if device is not None:
             model.to(device)
