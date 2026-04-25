@@ -19,7 +19,7 @@ from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
 try:
-    from .confidential_losses import MultiResolutionCCMSE  # noqa: F401
+    from .confidential_losses import MultiResolutionCCMSE  # type: ignore # noqa: F401
 except ImportError:
     eliot.log_message(
         "Could not import MultiResolutionCCMSE loss. Make sure you have access to the private repository containing confidential losses and that it is properly installed.",

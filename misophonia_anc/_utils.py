@@ -67,7 +67,7 @@ def preprocess_to_webdataset_pt(
         A glob pattern for the generated .tar shards. Used for loading wds.WebDataset.
     """
 
-    def process_item(idx) -> dict:
+    def process_item(idx) -> tuple[dict, dict]:
         item: MisophoniaItem = dataset_split[idx]
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
@@ -108,19 +108,15 @@ def preprocess_to_webdataset_pt(
             "clean_mix.npy": clean_mix_array,
             "metadata.json": metadata_str,
         }
-        return sample
+        return sample, metadata
 
     num_workers = num_workers or os.cpu_count() or 1
 
     shards_dir = Path(shards_dir)
     shards_dir.mkdir(parents=True, exist_ok=True)
 
-    if metadata is not None:
-        metadata_file = shards_dir / "metadata.json"
-        with metadata_file.open("w") as f:
-            json.dump(metadata, f, indent=4)
-
     pattern = str(shards_dir / "data-%06d.tar")
+    metrics = []
     with wds.ShardWriter(pattern, maxcount=samples_per_shard) as sink:
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             size = len(dataset_split)
@@ -128,10 +124,31 @@ def preprocess_to_webdataset_pt(
             if show_progress:
                 results = tqdm(results, total=size, desc=f"Saving {dataset_split.split} items")
 
-            for result in results:
-                sink.write(result)
+            for item, item_metadata in results:
+                sink.write(item)
+                metrics.append(
+                    {
+                        "pred_name": "mix_vs_isolated_trigger",
+                        "metrics": item_metadata["mix_vs_isolated_trigger_metrics"],
+                    }
+                )
+                metrics.append(
+                    {
+                        "pred_name": "mix_vs_clean_mix",
+                        "metrics": item_metadata["mix_vs_clean_mix_metrics"],
+                    }
+                )
 
     shard_glob = str(shards_dir / "data-*.tar")
+
+    # Save metadata
+    metadata_file = shards_dir / "metadata.json"
+    metadata_with_metrics = dict(metadata or {})
+    metadata_with_metrics["aggregated_metrics"] = aggregate_results(metrics)
+
+    with metadata_file.open("w") as f:
+        json.dump(metadata_with_metrics, f, indent=4)
+
     return shard_glob
 
 
@@ -597,9 +614,9 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
             {
                 **result["metrics"],
                 "pred_name": result["pred_name"],
-                "runtime_ms": result["runtime_ms"],
-                "batch_length": result["batch_length"],
-                "sample_length": result["sample_length"],
+                "runtime_ms": result.get("runtime_ms"),
+                "batch_length": result.get("batch_length"),
+                "sample_length": result.get("sample_length"),
             }
             for result in results
         ]
@@ -608,7 +625,9 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
         df["runtime_ms_pr_length"] = (
             df["runtime_ms"] / df["batch_length"]
         )  # Model is run on batch-level, so normalize on that
-    agg_metrics = df.groupby("pred_name").mean().T.to_dict()
+    grouped = df.groupby("pred_name").agg(["mean", "std"])
+    grouped.columns = [f"{metric}_{stat}" for metric, stat in grouped.columns]
+    agg_metrics = grouped.to_dict(orient="index")
     return agg_metrics
 
 
