@@ -30,4 +30,6 @@ def setup_print_logging() -> None:
 
     eliot.add_destinations(_printer)
 
+    eliot.log_message("Set up print logging", level="debug")
+
     PRINT_LOG_IS_SETUP = True
