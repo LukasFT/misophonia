@@ -34,10 +34,21 @@ class MisophoniaANCNet(nn.Module):
         conditioning="mult",
         lookahead=True,
         ground_truth_target: GtTargets = "isolated_trigger",
+        gt_is_isolated_trigger=None,  # For backwards compatibility, use ground_truth_target instead
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
 
         assert ground_truth_target in ["isolated_trigger", "clean_mix"]
+
+        if gt_is_isolated_trigger is not None:
+            eliot.log_message(
+                f"gt_is_isolated_trigger is deprecated and will be removed in a future version. Using it to override ground_truth_target (given {gt_is_isolated_trigger=}, overrides {ground_truth_target=}).",
+                level="warning",
+            )
+            if gt_is_isolated_trigger:
+                ground_truth_target = "isolated_trigger"
+            else:
+                ground_truth_target = "clean_mix"
 
         self._hyperparameters = {
             "label_len": label_len,
