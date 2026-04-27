@@ -18,47 +18,73 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-try:
-    from .confidential_losses import MultiResolutionCCMSE  # noqa: F401
-except ImportError:
-    eliot.log_message(
-        "Could not import MultiResolutionCCMSE loss. Make sure you have access to the private repository containing confidential losses and that it is properly installed.",
-        level="warning",
-    )
+from .confidential_losses import mrccmse_loss  # noqa: F401
 
 if TYPE_CHECKING:
     from .model import MisophoniaANCNet
 
 
-def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor, loss_option: str = "time") -> torch.Tensor:
+def loss_fn(
+    _output: dict[str, torch.Tensor], tgt: torch.Tensor, audio_lens: torch.Tensor, loss_option: str = "time"
+) -> torch.Tensor:
     pred = _output["x"]
 
-    def _time_loss(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
-        return -0.7 * snr(pred, tgt).mean() - 0.3 * si_snr(pred, tgt).mean()
+    def _time_loss(
+        pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor, gamma: float = 0.25
+    ) -> torch.Tensor:
+        """
+        Computes loss with .7 weight on snr and .3 weight on si-snr. Applies double weighting to the right channel
+        """
+        B = pred.shape[0]
+        batch_loss = []
+        for i in range(B):
+            left_pred = pred[i, 0, : audio_lens[i]]
+            right_pred = pred[i, 1, : audio_lens[i]]
+            left_term = -0.9 * snr(left_pred, tgt[i, 0, : audio_lens[i]])
+            right_term = -0.9 * snr(right_pred, tgt[i, 1, : audio_lens[i]])
 
-    def _fine_tune_loss(pred: torch.Tensor, tgt: torch.Tensor, alpha: float = 0.5, beta: float = 1.0) -> torch.Tensor:
-        snr_loss = snr(pred, tgt)
-        si_snr_loss = si_snr(pred, tgt)
-        left_term = -0.7 * snr_loss[:, 0] - 0.3 * si_snr_loss[:, 0]
-        right_term = -0.7 * snr_loss[:, 1] - 0.3 * si_snr_loss[:, 1]
-        loss = alpha * left_term + beta * right_term
-        return loss.mean()
+            avg_term = 0.5 * left_term + 0.5 * right_term
+            max_term = max(left_term, right_term)
+            batch_loss.append(avg_term + gamma * max_term)
+        return sum(batch_loss) / len(batch_loss)
+
+    def _freq_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
+        """
+        Computes multiresolution CCMSE on
+        """
+        B = pred.shape[0]
+        batch_loss = []
+        for i in range(B):
+            item_loss = mrccmse_loss(pred[i, :, : audio_lens[i]], tgt[i, :, : audio_lens[i]])  # type: ignore
+            batch_loss.append(item_loss)
+        return sum(batch_loss) / len(batch_loss)
 
     if loss_option == "time":
-        return _time_loss(pred, tgt)
+        return _time_loss(pred, tgt, audio_lens)
     elif loss_option == "freq":
-        return MultiResolutionCCMSE()(pred, tgt)
+        return _freq_loss(pred, tgt, audio_lens)
     elif loss_option == "combined":
-        return 0.5 * MultiResolutionCCMSE()(pred, tgt) + 0.5 * _time_loss(pred, tgt)
-    elif loss_option == "fine_tune":
-        return _fine_tune_loss(pred, tgt)
+        return 0.5 * _freq_loss(pred, tgt, audio_lens) + 0.5 * _time_loss(pred, tgt, audio_lens)
     else:
         raise ValueError(f"Invalid loss option: {loss_option}")
 
 
-def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor) -> torch.Tensor:
-    return si_snr(pred, gt) - si_snr(mix, gt)
+def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor) -> torch.Tensor:
+    B = pred.shape[0]
+    si_snr_improvements = []
+    for i in range(B):
+        improvement = si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]) - si_snr(
+            mix[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]
+        )
+        si_snr_improvements.append(improvement.mean())
+    return sum(si_snr_improvements) / len(si_snr_improvements)
 
+def truncated_si_snr(pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor) -> torch.Tensor:
+    B = pred.shape[0]
+    si_snrs = []
+    for i in range(B):
+        si_snrs.append(si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]).mean())
+    return sum(si_snrs) / len(si_snrs)
 
 def train_epoch(
     model: nn.Module,
@@ -154,8 +180,8 @@ def val_epoch(
             loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
 
             loss_value = loss.item()
-            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
-            val_si_snr = si_snr(output["x"], gt).mean().item()
+            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt, audio_lens).item()
+            val_si_snr = truncated_si_snr(output["x"], gt, audio_lens).item()
 
             batch_val_losses.append(loss_value)
             val_si_snr_improvements.append(val_si_snr_improvement)
@@ -258,7 +284,7 @@ def train_model(
                     "epoch/global_step_train": global_step_train,
                     "epoch/global_step_val": global_step_val,
                 },
-                step=epoch,
+                step=epoch - 1,
             )
 
         # Checkpointing
