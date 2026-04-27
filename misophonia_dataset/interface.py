@@ -273,22 +273,15 @@ class MisophoniaItem(BaseModel):
 
     See get_mix_audio() to load the audio data from the file if it is a Path.
     """
-    isolated_trigger: np.ndarray | Path | None
+    ground_truth: np.ndarray | Path | None
     """
-    Isolated trigger audio data. This is the isolated binaural audio for the trigger sound.
+    Ground truth audio data. If available, this is the isolated binaural audio for the trigger sound.
 
-    See get_isolated_trigger_audio() to load the audio data from the file if it is a Path.
-
-    See also clean_mix.
+    See get_ground_truth_audio() to load the audio data from the file if it is a Path.
     """
-    clean_mix: np.ndarray | Path | None
-    """
-    Clean mix audio data. This is the mixed audio data without any trigger sounds.
 
-    See get_clean_mix_audio() to load the audio data from the file if it is a Path.
-
-    See also isolated_trigger.
-    """
+    gt_is_isolated_trigger: bool = True
+    """Whether the ground truth is the isolated trigger sound (if True) or the mix of all backgrounds (if False)."""
 
     length: int
     """Duration in number of samples."""
@@ -357,21 +350,13 @@ class MisophoniaItem(BaseModel):
             return self._load_audio(self.mix)
         return self.mix
 
-    def get_isolated_trigger_audio(self, *, control_as_zeros: bool = True) -> np.ndarray:
-        """Load (if not already loaded) and return the isolated trigger audio data."""
-        if self.isolated_trigger is None:
+    def get_ground_truth_audio(self, *, control_as_zeros: bool = True) -> np.ndarray:
+        """Load (if not already loaded) and return the ground truth audio data."""
+        if self.ground_truth is None:
             return np.zeros((2, self.length)) if control_as_zeros else None
-        if isinstance(self.isolated_trigger, Path):
-            return self._load_audio(self.isolated_trigger)
-        return self.isolated_trigger
-
-    def get_clean_mix_audio(self, *, control_as_mix: bool = True) -> np.ndarray:
-        """Load (if not already loaded) and return the clean mix audio data."""
-        if self.clean_mix is None:
-            return self.get_mix_audio() if control_as_mix else None
-        if isinstance(self.clean_mix, Path):
-            return self._load_audio(self.clean_mix)
-        return self.clean_mix
+        if isinstance(self.ground_truth, Path):
+            return self._load_audio(self.ground_truth)
+        return self.ground_truth
 
     @pydantic.model_validator(mode="after")
     def _check_splits(self) -> "MisophoniaItem":
@@ -383,10 +368,16 @@ class MisophoniaItem(BaseModel):
     @pydantic.model_validator(mode="after")
     def _check_ground_truth(self) -> "MisophoniaItem":
         """Validate that iff is_trigger then ground_truth is not None"""
-        if self.is_trigger and self.isolated_trigger is None:
+        if self.is_trigger and self.ground_truth is None:
             raise ValueError("If is_trigger is True, ground_truth must not be None.")
-        if not self.is_trigger and self.isolated_trigger is not None:
-            raise ValueError("If is_trigger is False, ground_truth must be None.")
+        if self.gt_is_isolated_trigger:
+            if not self.is_trigger and self.ground_truth is not None:
+                raise ValueError("If is_trigger is False, ground_truth must be None.")
+        else:
+            if not self.is_trigger and self.ground_truth is None:
+                raise ValueError(
+                    "If gt_is_isolated_trigger is False and is_trigger is False, ground_truth must be mix."
+                )
         return self
 
     @pydantic.model_validator(mode="before")

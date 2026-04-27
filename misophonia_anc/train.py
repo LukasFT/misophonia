@@ -19,7 +19,7 @@ from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
 try:
-    from .confidential_losses import MultiResolutionCCMSE  # type: ignore # noqa: F401
+    from .confidential_losses import MultiResolutionCCMSE  # noqa: F401
 except ImportError:
     eliot.log_message(
         "Could not import MultiResolutionCCMSE loss. Make sure you have access to the private repository containing confidential losses and that it is properly installed.",
@@ -33,15 +33,25 @@ if TYPE_CHECKING:
 def loss_fn(_output: dict[str, torch.Tensor], tgt: torch.Tensor, loss_option: str = "time") -> torch.Tensor:
     pred = _output["x"]
 
-    def time_loss(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+    def _time_loss(pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
         return -0.7 * snr(pred, tgt).mean() - 0.3 * si_snr(pred, tgt).mean()
 
+    def _fine_tune_loss(pred: torch.Tensor, tgt: torch.Tensor, alpha: float = 0.5, beta: float = 1.0) -> torch.Tensor:
+        snr_loss = snr(pred, tgt)
+        si_snr_loss = si_snr(pred, tgt)
+        left_term = -0.7 * snr_loss[:, 0] - 0.3 * si_snr_loss[:, 0]
+        right_term = -0.7 * snr_loss[:, 1] - 0.3 * si_snr_loss[:, 1]
+        loss = alpha * left_term + beta * right_term
+        return loss.mean()
+
     if loss_option == "time":
-        return time_loss(pred, tgt)
+        return _time_loss(pred, tgt)
     elif loss_option == "freq":
         return MultiResolutionCCMSE()(pred, tgt)
     elif loss_option == "combined":
-        return 0.5 * MultiResolutionCCMSE()(pred, tgt) + 0.5 * time_loss(pred, tgt)
+        return 0.5 * MultiResolutionCCMSE()(pred, tgt) + 0.5 * _time_loss(pred, tgt)
+    elif loss_option == "fine_tune":
+        return _fine_tune_loss(pred, tgt)
     else:
         raise ValueError(f"Invalid loss option: {loss_option}")
 
@@ -51,7 +61,7 @@ def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor) 
 
 
 def train_epoch(
-    model: "MisophoniaANCNet",
+    model: nn.Module,
     *,
     device: torch.device,
     optimizer: optim.Optimizer,
@@ -63,16 +73,18 @@ def train_epoch(
     model = model.train()
 
     batch_train_losses = []
-    gt_target = model.ground_truth_target
 
-    for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
-        inputs = batch["inputs"]
+    for batch_idx, (inputs, gt, audio_lens) in tqdm(
+        enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"
+    ):
+        # in loader return mask that is [B, C, N]
+        # inputs = {k: v.to(device) for k, v in inputs.items()}
         inputs["mix"] = inputs["mix"].to(device)
         inputs["label_vector"] = inputs["label_vector"].to(device)
         inputs["is_control"] = inputs["is_control"].to(device)
 
-        gt = batch[gt_target].to(device)
-        audio_lens = batch["audio_lens"].to(device)
+        gt = gt.to(device)
+        audio_lens = audio_lens.to(device)
         _, _, T = gt.shape  # noqa: N806
 
         optimizer.zero_grad()
@@ -80,11 +92,8 @@ def train_epoch(
         # Mask output
         output = model(inputs)
         pred = output["x"]
-        time_idx = torch.arange(T, device=pred.device).unsqueeze(0)
-        mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
-        output["x"] = pred * mask
 
-        loss = loss_fn(output, gt, loss_option=loss_option)  # TODO
+        loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
         loss.backward()
         optimizer.step()
 
@@ -124,27 +133,25 @@ def val_epoch(
     val_si_snr_improvements = []
     val_si_snrs = []
 
-    gt_target = model.ground_truth_target
-
     with torch.no_grad():
-        for batch_idx, batch in tqdm(enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"):
-            inputs = batch["inputs"]
+        for batch_idx, (inputs, gt, audio_lens) in tqdm(
+            enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"
+        ):
+            # inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
 
-            gt = batch[gt_target].to(device)
-            audio_lens = batch["audio_lens"].to(device)
             _, _, T = gt.shape  # noqa: N806
+
+            gt = gt.to(device)
+            audio_lens = audio_lens.to(device)
 
             # Mask output
             output = model(inputs)
             pred = output["x"]
-            time_idx = torch.arange(T, device=pred.device).unsqueeze(0)
-            mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
-            output["x"] = pred * mask
 
-            loss = loss_fn(output, gt, loss_option=loss_option)
+            loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
 
             loss_value = loss.item()
             val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt).mean().item()
@@ -202,7 +209,7 @@ def train_model(
     """
 
     model = model.to(device)
-    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
+    optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
 
     # Tracking metrics
     train_losses = []
