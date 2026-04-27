@@ -274,21 +274,22 @@ def make_custom_collate_fn(
 
                 if include_isolated_trigger:
                     isolated_trigger = sample["isolated_trigger.npy"]
-                    # TODO: Use torch.from_numpy (also in the other places in this function)? Or remove?
-                    isolated_triggers.append(isolated_trigger[..., start : start + chunk_size].float())
+                    isolated_triggers.append(
+                        torch.from_numpy(isolated_trigger[..., start : start + chunk_size]).float()
+                    )
                 if include_clean_mix:
                     clean_mix = sample["clean_mix.npy"]
-                    clean_mixes.append(clean_mix[..., start : start + chunk_size].float())
+                    clean_mixes.append(torch.from_numpy(clean_mix[..., start : start + chunk_size]).float())
             else:
                 # audio is shorter than chunk_size → pad
                 mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
 
                 if include_isolated_trigger:
                     isolated_trigger = sample["isolated_trigger.npy"]
-                    isolated_triggers.append(F.pad(isolated_trigger.float(), (0, chunk_size - L)))
+                    isolated_triggers.append(F.pad(torch.from_numpy(isolated_trigger).float(), (0, chunk_size - L)))
                 if include_clean_mix:
                     clean_mix = sample["clean_mix.npy"]
-                    clean_mixes.append(F.pad(clean_mix.float(), (0, chunk_size - L)))
+                    clean_mixes.append(F.pad(torch.from_numpy(clean_mix).float(), (0, chunk_size - L)))
 
             mixes.append(mix_chunk)
 
@@ -348,12 +349,23 @@ def make_dataloader(
     if include_clean_mix:
         included_filenames.add("clean_mix.npy")
 
+    def _include_file(fname: str) -> bool:
+        """
+        Only include files that are in the included_filenames set.
+
+        Example:
+            _include_file("000000991.mix.npy") -> True
+            _include_file("000000991.isolated_trigger.npy") -> True if include_isolated_trigger is True, False otherwise
+
+        """
+        return any(fname.endswith(included_fname) for included_fname in included_filenames)
+
     data = (
         wds.WebDataset(
             files,
             empty_check=False,
             shardshuffle=1,  # Number of shards to keep in memory at the time (as I understand it)
-            select_files=lambda fname: fname in included_filenames,
+            select_files=_include_file,
         )
         .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
