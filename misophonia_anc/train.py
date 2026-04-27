@@ -18,7 +18,6 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-
 try:
     from .confidential_losses import mrccmse_loss  # noqa: F401
 except ImportError:
