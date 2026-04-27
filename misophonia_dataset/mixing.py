@@ -187,7 +187,10 @@ def binaural_mix(
 
     scaled_clean_background = recentered_clean_background * alpha
 
-    assert target_snr_range[0] <= _calculate_snr(recentered_trigger, scaled_clean_background) <= target_snr_range[1], "SNR is not within the target range after scaling. This should never happen."
+    calculated_snr_db = _calculate_snr(recentered_trigger, scaled_clean_background)
+    assert target_snr_range[0] <= calculated_snr_db <= target_snr_range[1], (
+        f"SNR is not within the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB"
+    )
     mix = recentered_trigger + scaled_clean_background
 
     return mix, recentered_trigger, scaled_clean_background
@@ -255,6 +258,7 @@ def _normalize_and_pad(
 
     return fg_padded, bg_padded
 
+
 def snr_control_scaling_factor(fg_power: float, bg_power: float, target_snr_db: float) -> float:
     """
     Find scaling factor to achieve desired relative signal between foreground and backgrounds.
@@ -269,9 +273,10 @@ def snr_control_scaling_factor(fg_power: float, bg_power: float, target_snr_db: 
 
     return alpha
 
+
 def _calculate_snr(fg: np.ndarray, bg: np.ndarray) -> float:
     """
-    Calculate the SNR in dB between a foreground and background signal. Helper function to ensure that SNR target range 
+    Calculate the SNR in dB between a foreground and background signal. Helper function to ensure that SNR target range
     is being applied as intended.
     """
     eps = 1e-8
