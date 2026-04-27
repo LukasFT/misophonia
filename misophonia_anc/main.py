@@ -217,6 +217,15 @@ def train(
         subprocess.run(["rsync", "-a", "--delete", str(dataset_dir_orig) + "/", str(dataset_dir) + "/"], check=True)
         eliot.log_message(f"Copied preprocessed data to {dataset_dir}.", level="debug")
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    eliot.log_message(f"Using device: {device}", level="debug")
+    checkpoint = None if (checkpoint == "init" or checkpoint is None) else model_dir / "checkpoints" / checkpoint
+    if checkpoint is None:
+        eliot.log_message("No checkpoint provided. Initializing random model.", level="info")
+    else:
+        eliot.log_message(f"Loading model from checkpoint: {checkpoint}", level="info")
+    model, checkpoint_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint, device=device)
+
     train_dir = dataset_dir / "train"
     val_dir = dataset_dir / "val"
     shards_train = train_dir.glob("data-*.tar")
@@ -228,25 +237,16 @@ def train(
         shards_train,
         batch_size=config.batch_size,
         num_workers=num_workers,
-        include_clean_mix=config.ground_truth_target == "clean_mix",
-        include_isolated_trigger=config.ground_truth_target == "isolated_trigger",
+        include_clean_mix=model.ground_truth_target == "clean_mix",
+        include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
     )
     val_loader = make_dataloader(
         shards_val,
         batch_size=config.batch_size,
         num_workers=num_workers,
-        include_clean_mix=config.ground_truth_target == "clean_mix",
-        include_isolated_trigger=config.ground_truth_target == "isolated_trigger",
+        include_clean_mix=model.ground_truth_target == "clean_mix",
+        include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
     )
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    eliot.log_message(f"Using device: {device}", level="debug")
-    checkpoint = None if (checkpoint == "init" or checkpoint is None) else model_dir / "checkpoints" / checkpoint
-    if checkpoint is None:
-        eliot.log_message("No checkpoint provided. Initializing random model.", level="info")
-    else:
-        eliot.log_message(f"Loading model from checkpoint: {checkpoint}", level="info")
-    model, checkpoint_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint, device=device)
 
     if fine_tune:
         for param in model.parameters():
