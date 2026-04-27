@@ -174,6 +174,10 @@ def binaural_mix(
     assert isolated_trigger.shape == mix.shape, "Isolated trigger and mix shapes do not match."
     assert clean_mix.shape == mix.shape, "Clean mix and mix shapes do not match."
 
+    snr_control(isolated_trigger, clean_mix, target_snr_range=target_snr_range)
+
+    # mix = isolated_trigger + clean_mix
+
     return mix, isolated_trigger, clean_mix
 
 
@@ -238,4 +242,17 @@ def _normalize_and_pad(
 
     bg_scaled = tuple((track, audio * alpha) for track, audio in bg_padded)
 
+    assert target_snr_range[0] <= _calculate_snr(fg_sum, bg_sum * alpha) <= target_snr_range[1], "SNR is not within the target range after scaling. This should never happen."
+
     return fg_padded, bg_scaled
+
+def _calculate_snr(fg: np.ndarray, bg: np.ndarray) -> float:
+    """
+    Calculate the SNR in dB between a foreground and background signal. Helper function to ensure that SNR target range 
+    is being applied as intended.
+    """
+    eps = 1e-8
+    fg_power = np.mean(fg**2) + eps
+    bg_power = np.mean(bg**2) + eps
+    snr_db = 10 * np.log10(fg_power / bg_power)
+    return snr_db

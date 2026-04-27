@@ -48,8 +48,8 @@ def loss_fn(
         for i in range(B):
             left_pred = pred[i, 0, : audio_lens[i]]
             right_pred = pred[i, 1, : audio_lens[i]]
-            left_term = -0.9 * snr(left_pred, tgt[i, 0, : audio_lens[i]])
-            right_term = -0.9 * snr(right_pred, tgt[i, 1, : audio_lens[i]])
+            left_term = -snr(left_pred, tgt[i, 0, : audio_lens[i]], zero_mean=True)
+            right_term = -snr(right_pred, tgt[i, 1, : audio_lens[i]], zero_mean=True)
 
             avg_term = 0.5 * left_term + 0.5 * right_term
             max_term = max(left_term, right_term)
