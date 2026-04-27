@@ -29,5 +29,5 @@ else
 fi
 
 echo "*** Running: uv run -m misophonia_anc.main $*"
-uv run -m misophonia_anc.main "$@"
+uv run --no-sync --frozen -m misophonia_anc.main "$@"
 echo "*** Finished ***"
