@@ -471,6 +471,7 @@ def perform_eval(
     save_aggregated_results_to: Path | None = None,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
+    warm_up_iters: int = 10,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -483,6 +484,7 @@ def perform_eval(
         save_aggregated_results_to: If not None, a path to save aggregated evaluation results (e.g. average metrics across all samples) as a JSON file.
         save_samples_to: If not None, a directory to save example audio files of the mixes, gts, and predictions. Will save as .flac files.
         save_num_samples: If save_samples_to is not None, the maximum number of samples to save to disk. If 0, do not save any.
+        warm_up_iters: Number of iterations to run for warming up the model before measuring latency.
 
     Returns:
         A tuple containing the individual sample results and the aggregated results.
@@ -514,7 +516,7 @@ def perform_eval(
 
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
-                _warm_up_model(model, inputs)
+                _warm_up_model(model, inputs, num_iters=warm_up_iters)
                 has_wamed_up = True
 
             # Run model and measure latency
@@ -639,7 +641,7 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
     return agg_metrics
 
 
-def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int = 50) -> None:
+def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int) -> None:
     """
     Run a few forward passes to warm up the model (e.g. for more accurate latency measurements).
     """

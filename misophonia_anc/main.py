@@ -353,6 +353,9 @@ def evaluate(
         ),
     ] = 2,
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+    warm_up: Annotated[
+        int, typer.Option(..., help="Number of iterations to run for warming up the model before measuring latency.")
+    ] = 10,
 ) -> None:
     """
     Function to compare sample gts and mixes to model outputs.
@@ -416,6 +419,7 @@ def evaluate(
             save_num_samples=save_samples,
             save_samples_to=samples_dir,
             device=device,
+            warm_up_iters=warm_up,
         )
 
         eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
