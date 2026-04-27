@@ -63,7 +63,6 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
         backgrounds_per_item: tuple[int, int] = (1, 3),
         trig_to_control_ratio: float = 0.5,
         target_snr_range: tuple[float, float] = (5.0, 10.0),
-        gt_is_isolated_trigger: bool = True,
         random_seed: int = 42,
     ) -> MisophoniaDatasetSplit:
         """
@@ -77,8 +76,7 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
             trig_to_control_ratio: Ratio of trigger to control sounds in the generated items.
                                         I.e, the percent of items that will contain a trigger sound rather than a control sound.
                                         Must be between 0 and 1.
-            gt_is_isolated_trigger: If True, then ground truth will be the isolated trigger sound (if present).
-                                    If False, then ground truth will be the mix of all backgrounds.
+            target_snr_range: Tuple specifying the (min, max) target SNR in dB for the trigger/control relative to the background.
             random_seed: Random seed for sampling.
                             Given the same seed, parameters, source data and code version, the same dataset will be generated.
 
@@ -187,25 +185,24 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
             background_tracks, _ = tuple(zip(*background_specs))
 
             # Perform the mixing (heavy work happens here):
-            mix, ground_truth = binaural_mix(
+            mix, isolated_trigger, clean_mix = binaural_mix(
                 fg_specs=foreground_specs,
                 bg_specs=background_specs,
                 global_params=global_params,
                 target_snr_range=target_snr_range,
                 is_trig=is_trig,
-                gt_is_isolated_trigger=gt_is_isolated_trigger,
             )
 
             return MisophoniaItem(
                 split=split,
                 is_trigger=is_trig,
                 mix=mix,
-                ground_truth=ground_truth,
+                isolated_trigger=isolated_trigger,
+                clean_mix=clean_mix,
                 length=mix.shape[1],
                 global_mixing_params=global_params,
                 foregrounds=foreground_tracks,
                 backgrounds=background_tracks,
-                gt_is_isolated_trigger=gt_is_isolated_trigger,
             )
 
         # Split view will call _generate_one as needed
@@ -251,7 +248,10 @@ class PremadeMisophoniaDataset(MisophoniaDataset):
             def _handle_line(line: str) -> dict | None:
                 obj = json.loads(line)
                 obj["mix"] = split_dir / obj["mix"]
-                obj["ground_truth"] = split_dir / obj["ground_truth"] if obj.get("ground_truth") is not None else None
+                obj["isolated_trigger"] = (
+                    split_dir / obj["isolated_trigger"] if obj.get("isolated_trigger") is not None else None
+                )
+                obj["clean_mix"] = split_dir / obj["clean_mix"] if obj.get("clean_mix") is not None else None
                 return obj
 
             with metadata_file.open("r", encoding="utf-8") as f:
@@ -306,7 +306,8 @@ class PremadeMisophoniaDataset(MisophoniaDataset):
 
         split_dir = self._all_splits_dir / split
         mix_dir = split_dir / "mixes"
-        gt_dir = split_dir / "ground_truths"
+        isolated_triggers_dir = split_dir / "isolated_triggers"
+        clean_mixes_dir = split_dir / "clean_mixes"
         metadata_file = split_dir / "metadata.jsonl"
 
         if split_dir.exists():
@@ -319,7 +320,7 @@ class PremadeMisophoniaDataset(MisophoniaDataset):
                 eliot.log_message(f"Appending to existing directory at {split_dir}", level="info")
 
         mix_dir.mkdir(parents=True, exist_ok=True)
-        gt_dir.mkdir(parents=True, exist_ok=True)
+        isolated_triggers_dir.mkdir(parents=True, exist_ok=True)
 
         def _generate_and_save(i: int) -> str:
             item: MisophoniaItem = split_data[i]  # Heavy work (mixing + I/O) happens here
@@ -335,12 +336,23 @@ class PremadeMisophoniaDataset(MisophoniaDataset):
                 subtype="PCM_24",
             )
 
-            gt_file = None
-            if item.ground_truth is not None:
-                gt_file = gt_dir / f"{mix_id}.flac"
+            isolated_trigger_file = None
+            if item.isolated_trigger is not None:
+                isolated_trigger_file = isolated_triggers_dir / f"{mix_id}.flac"
                 sf.write(
-                    gt_file,
-                    np.transpose(item.get_ground_truth_audio()),
+                    isolated_trigger_file,
+                    np.transpose(item.get_isolated_trigger_audio()),
+                    samplerate=item.global_mixing_params.sample_rate,
+                    format="FLAC",
+                    subtype="PCM_24",
+                )
+
+            clean_mix_file = None
+            if item.clean_mix is not None:
+                clean_mix_file = clean_mixes_dir / f"{mix_id}.flac"
+                sf.write(
+                    clean_mix_file,
+                    np.transpose(item.get_clean_mix_audio()),
                     samplerate=item.global_mixing_params.sample_rate,
                     format="FLAC",
                     subtype="PCM_24",
@@ -350,7 +362,10 @@ class PremadeMisophoniaDataset(MisophoniaDataset):
                 update={
                     "uuid": mix_id,
                     "mix": mix_file.relative_to(split_dir),
-                    "ground_truth": gt_file.relative_to(split_dir) if gt_file is not None else None,
+                    "isolated_trigger": isolated_trigger_file.relative_to(split_dir)
+                    if isolated_trigger_file is not None
+                    else None,
+                    "clean_mix": clean_mix_file.relative_to(split_dir) if clean_mix_file is not None else None,
                 }
             )
             return item_with_paths.model_dump_json(round_trip=True)
@@ -519,7 +534,7 @@ def add_experimental_pairs_to_dataset(
             }
         )
 
-        mix, ground_truth = binaural_mix(
+        mix, isolated_trigger, clean_mix = binaural_mix(
             fg_specs=((fg_track, control_audio),),
             bg_specs=bg_specs,
             global_params=global_mixing_params,
@@ -530,7 +545,8 @@ def add_experimental_pairs_to_dataset(
             split=split,
             is_trigger=False,
             mix=mix,
-            ground_truth=ground_truth,
+            isolated_trigger=isolated_trigger,
+            clean_mix=clean_mix,
             length=mix.shape[1],
             global_mixing_params=global_mixing_params,
             foregrounds=(fg_track,),

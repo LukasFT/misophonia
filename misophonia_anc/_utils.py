@@ -1,6 +1,6 @@
 """A collection of useful helper functions"""
 
-# ruff: noqa: ANN001 # TODO: Improve quality
+# ruff: noqa: ANN001 # FIXME: Improve quality
 
 import json
 import os
@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import eliot
 import numpy as np
@@ -27,6 +28,9 @@ from tqdm import tqdm
 from misophonia_dataset.interface import DEFAULT_LABEL_ORDER, BaseModel, MisophoniaItem, SplitT
 from misophonia_dataset.main import get_default_datasets_names
 from misophonia_dataset.misophonia_dataset import MisophoniaDatasetSplit
+
+if TYPE_CHECKING:
+    from .model import MisophoniaANCNet
 
 # Initialize random generator for reproducibility
 rng = np.random.default_rng()
@@ -49,8 +53,7 @@ def preprocess_to_webdataset_pt(
     metadata: dict | None = None,
 ) -> str:
     """
-    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading.
-    Saves tensors as mix.pt, gt.pt, and label.pt.
+    Preprocess GeneratedMisophoniaDataset into WebDataset .tar shards using multithreading. Save tensors.
 
     Args:
         shards_dir: Directory to save the .tar shards. Assumes shards_dir already contains split in name
@@ -64,19 +67,24 @@ def preprocess_to_webdataset_pt(
         A glob pattern for the generated .tar shards. Used for loading wds.WebDataset.
     """
 
-    def process_item(idx) -> dict:
+    def process_item(idx) -> tuple[dict, dict]:
         item: MisophoniaItem = dataset_split[idx]
         # This function should call your actual preprocessing
         # preprocess_item_to_arrays -> returns (X, y, label_vec)
         mix_array = item.get_mix_audio()
-        gt_array = item.get_ground_truth_audio()
+        isolated_trigger_array = item.get_isolated_trigger_audio()
+        clean_mix_array = item.get_clean_mix_audio()
         label_array = item.get_label_vector(label_order=DEFAULT_LABEL_ORDER)
         sample_rate = item.global_mixing_params.sample_rate
 
-        mix_metrics = calculate_default_metrics(
-            torch.from_numpy(mix_array),
-            torch.from_numpy(gt_array),
+        mix_torch = torch.from_numpy(mix_array)
+        mix_vs_isolated_trigger_metrics = calculate_default_metrics(
+            mix_torch,
+            torch.from_numpy(isolated_trigger_array),
             sample_rate=sample_rate,
+        )
+        mix_vs_clean_mix_metrics = calculate_default_metrics(
+            mix_torch, torch.from_numpy(clean_mix_array), sample_rate=sample_rate
         )
 
         metadata = {
@@ -85,7 +93,8 @@ def preprocess_to_webdataset_pt(
             "fg_categories": item.foreground_categories,
             "bg_categories": item.background_categories,
             "is_trigger": item.is_trigger,
-            "mix_vs_gt_metrics": mix_metrics,
+            "mix_vs_isolated_trigger_metrics": mix_vs_isolated_trigger_metrics,
+            "mix_vs_clean_mix_metrics": mix_vs_clean_mix_metrics,
             "fg_freesound_ids": tuple(fg.source_item.freesound_id for fg in item.foregrounds),
             "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
         }
@@ -95,22 +104,19 @@ def preprocess_to_webdataset_pt(
             "__key__": f"{idx:09d}",
             "mix.npy": mix_array,
             "label.npy": label_array,
-            "gt.npy": gt_array,
+            "isolated_trigger.npy": isolated_trigger_array,
+            "clean_mix.npy": clean_mix_array,
             "metadata.json": metadata_str,
         }
-        return sample
+        return sample, metadata
 
     num_workers = num_workers or os.cpu_count() or 1
 
     shards_dir = Path(shards_dir)
     shards_dir.mkdir(parents=True, exist_ok=True)
 
-    if metadata is not None:
-        metadata_file = shards_dir / "metadata.json"
-        with metadata_file.open("w") as f:
-            json.dump(metadata, f, indent=4)
-
     pattern = str(shards_dir / "data-%06d.tar")
+    metrics = []
     with wds.ShardWriter(pattern, maxcount=samples_per_shard) as sink:
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             size = len(dataset_split)
@@ -118,10 +124,31 @@ def preprocess_to_webdataset_pt(
             if show_progress:
                 results = tqdm(results, total=size, desc=f"Saving {dataset_split.split} items")
 
-            for result in results:
-                sink.write(result)
+            for item, item_metadata in results:
+                sink.write(item)
+                metrics.append(
+                    {
+                        "pred_name": "mix_vs_isolated_trigger",
+                        "metrics": item_metadata["mix_vs_isolated_trigger_metrics"],
+                    }
+                )
+                metrics.append(
+                    {
+                        "pred_name": "mix_vs_clean_mix",
+                        "metrics": item_metadata["mix_vs_clean_mix_metrics"],
+                    }
+                )
 
     shard_glob = str(shards_dir / "data-*.tar")
+
+    # Save metadata
+    metadata_file = shards_dir / "metadata.json"
+    metadata_with_metrics = dict(metadata or {})
+    metadata_with_metrics["aggregated_metrics"] = aggregate_results(metrics)
+
+    with metadata_file.open("w") as f:
+        json.dump(metadata_with_metrics, f, indent=4)
+
     return shard_glob
 
 
@@ -138,6 +165,9 @@ class MisophoniaDatasetPreprocessedConfig(BaseModel):
         None,
         description="If premade_config not given, will generate dataset using the given config. See GeneratedMisophoniaDataset.get_split for options.",
     )
+
+
+GtTargets = Literal["isolated_trigger", "clean_mix"]
 
 
 class MisophoniaANCConfig(BaseModel):
@@ -159,10 +189,10 @@ class MisophoniaANCConfig(BaseModel):
         {}, description="Dictionary of parameters to initialize the model. See the train_model() for options."
     )
 
-    subtract_using: list[str] | tuple[str, ...] | None = pydantic.Field(
+    subtraction_methods: list[str] | tuple[str, ...] | None = pydantic.Field(
         None,
         description="Whether to perform post-hoc subtraction using the original mix and the model's prediction, and if so, which method to use for subtraction. "
-        "See the _subtraction() method in model.py for details.",
+        "See MisophoniaANCNet.register_subtraction_method for details.",
     )
 
     mlflow_experiment: str | None = pydantic.Field(
@@ -180,10 +210,15 @@ class MisophoniaANCConfig(BaseModel):
         return cls(**conf)
 
 
-def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+def make_custom_collate_fn(
+    *,
+    include_metadata: bool,
+    include_isolated_trigger: bool,
+    include_clean_mix: bool,
+) -> callable:
     def custom_collate_fn(
-        batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
-    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        batch: dict,
+    ) -> dict:
         """
         Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
         For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
@@ -192,34 +227,34 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
         This is done by randomly assigning a 1 to one of the trigger classes in the label vector.
         This is done because the purpose of the control sounds is to teach the model that even if a category is queried,
             it might need to predict silence if there is no trigger sound of that category in the mix.
-
-        Args:
-            mixes (np.ndarray): synthetically generated binaural mixes
-            labels (np.ndarray): one-hot encoded label vectors
-            gts (np.ndarray): binaural ground truth trigger sounds (or silence)
-
-        Returns:
-            inputs (dict[str, torch.Tensor]): dictionary of padded mixes and the label vectors in the form of tensors.
-            gts (torch.tensor): padded ground truth tensors.
-            audio_lens (torch.tensor): lengths of the original (unpadded) audio, used for masking in the loss function.
         """
 
         # Only keep chunks of length MAX_DURATION in data loader
         chunk_size = MAX_DURATION * SAMPLE_RATE
 
         mixes = []
-        gts = []
+        if include_isolated_trigger:
+            isolated_triggers = []
+        if include_clean_mix:
+            clean_mixes = []
         labels = []
         audio_lens = []
         is_controls = []
         metadatas = []
+        idxs = []
 
-        for sample in batch:  # Will contain an extra field when looking at metadata
+        dts = {}
+
+        dts["batch"] = type(batch)
+
+        for sample in batch:
+            idxs.append(sample["__key__"])
+            label = sample["label.npy"]
+            mix = sample["mix.npy"]
+
             if include_metadata:
-                mix, label, gt, metadata = sample
-                metadatas.append(metadata)
-            else:
-                mix, label, gt = sample
+                metadatas.append(sample["metadata.json"])
+
             is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
             is_controls.append(1 if is_control else 0)
             if is_control:
@@ -228,34 +263,52 @@ def make_custom_collate_fn(*, include_metadata: bool) -> tuple[dict[str, torch.T
                 random_class = rng.integers(0, len(label))
                 label[random_class] = 1
 
+            labels.append(torch.from_numpy(label).float())
+
             L = mix.shape[-1]  # noqa: N806
+            audio_lens.append(min(L, chunk_size))
             if L >= chunk_size:
                 # generate a single random start for both mix and gt
                 start = torch.randint(0, L - chunk_size + 1, (1,)).item()
                 mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
-                gt_chunk = torch.from_numpy(gt[..., start : start + chunk_size]).float()
+
+                if include_isolated_trigger:
+                    isolated_trigger = sample["isolated_trigger.npy"]
+                    # TODO: Use torch.from_numpy (also in the other places in this function)? Or remove?
+                    isolated_triggers.append(isolated_trigger[..., start : start + chunk_size].float())
+                if include_clean_mix:
+                    clean_mix = sample["clean_mix.npy"]
+                    clean_mixes.append(clean_mix[..., start : start + chunk_size].float())
             else:
                 # audio is shorter than chunk_size → pad
                 mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
-                gt_chunk = F.pad(torch.from_numpy(gt).float(), (0, chunk_size - L))
+
+                if include_isolated_trigger:
+                    isolated_trigger = sample["isolated_trigger.npy"]
+                    isolated_triggers.append(F.pad(isolated_trigger.float(), (0, chunk_size - L)))
+                if include_clean_mix:
+                    clean_mix = sample["clean_mix.npy"]
+                    clean_mixes.append(F.pad(clean_mix.float(), (0, chunk_size - L)))
 
             mixes.append(mix_chunk)
-            gts.append(gt_chunk)
-            labels.append(torch.from_numpy(label).float())
-            audio_lens.append(min(L, chunk_size))
 
-        inputs = {
-            "mix": torch.stack(mixes),
-            "label_vector": torch.stack(labels),
-            "is_control": torch.tensor(is_controls),
+        res = {
+            "idxs": idxs,
+            "inputs": {
+                "mix": torch.stack(mixes),
+                "label_vector": torch.stack(labels),
+                "is_control": torch.tensor(is_controls),
+            },
+            "audio_lens": torch.tensor(audio_lens),  # Mask to indicate padded parts of the audio
         }
         if include_metadata:
-            inputs["metadata"] = metadatas
+            res["metadata"] = metadatas
+        if include_isolated_trigger:
+            res["isolated_trigger"] = torch.stack(isolated_triggers)
+        if include_clean_mix:
+            res["clean_mix"] = torch.stack(clean_mixes)
 
-        gt = torch.stack(gts)
-        audio_lens = torch.tensor(audio_lens)  # Mask to indicate padded parts of the audio
-
-        return inputs, gt, audio_lens
+        return res
 
     return custom_collate_fn
 
@@ -265,6 +318,8 @@ def make_dataloader(
     *,
     batch_size: int,
     num_workers: int,
+    include_isolated_trigger: bool = True,
+    include_clean_mix: bool = True,
     include_metadata: bool = False,
 ) -> wds.WebLoader:
     """
@@ -286,26 +341,32 @@ def make_dataloader(
         f"Using {num_workers} workers loading WebDataset (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
         level="debug",
     )
+
+    included_filenames = {"mix.npy", "label.npy", "metadata.json"}
+    if include_isolated_trigger:
+        included_filenames.add("isolated_trigger.npy")
+    if include_clean_mix:
+        included_filenames.add("clean_mix.npy")
+
     data = (
         wds.WebDataset(
             files,
             empty_check=False,
             shardshuffle=1,  # Number of shards to keep in memory at the time (as I understand it)
+            select_files=lambda fname: fname in included_filenames,
         )
         .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
     )
 
-    if include_metadata:
-        data = data.to_tuple("mix.npy", "label.npy", "gt.npy", "metadata.json")
-    else:
-        data = data.to_tuple("mix.npy", "label.npy", "gt.npy")
-
     data = data.batched(
         batch_size,
+        # Make batches of the same size, and randomly assign control sounds a class
         collation_fn=make_custom_collate_fn(
-            include_metadata=include_metadata
-        ),  # Make batches of the same size, and randomly assign control sounds a class
+            include_metadata=include_metadata,
+            include_isolated_trigger=include_isolated_trigger,
+            include_clean_mix=include_clean_mix,
+        ),
     )
 
     return wds.WebLoader(
@@ -394,7 +455,7 @@ def print_mem(label: str) -> None:
 
 
 def perform_eval(
-    model: torch.nn.Module,
+    model: "MisophoniaANCNet",
     data_loader: wds.WebLoader,
     *,
     device: torch.device,
@@ -402,7 +463,6 @@ def perform_eval(
     save_aggregated_results_to: Path | None = None,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
-    subtract_using: tuple[str, ...] | None = None,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -427,8 +487,6 @@ def perform_eval(
 
     model.eval()
 
-    print(f"DEBUG perform_eval: {subtract_using=}")
-
     results = []
 
     samples_left_to_save = save_num_samples
@@ -437,15 +495,14 @@ def perform_eval(
     )
     has_wamed_up = False
 
-    total_idx = 0
+    ground_truth_target = model.ground_truth_target
 
     with torch.no_grad():
-        for _, (inputs, gt, audio_len) in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
-            # Load data to device:
+        for batch in tqdm(data_loader, desc="Evaluating", unit=" batches"):
+            inputs = batch["inputs"]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
-            gt = gt.to(device)
 
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
@@ -456,44 +513,53 @@ def perform_eval(
             output, runtime_ms = _time_and_run_model(
                 model,
                 args=(inputs,),
-                kwargs={"subtract_using": subtract_using},
                 profiling=False,
             )
 
-            batch_size = gt.shape[0]
+            batch_size = inputs["mix"].shape[0]
             output_items = output.items()
             for i in range(batch_size):
-                total_idx += 1
-                sample_idx = f"{total_idx:06d}"
-                valid_len = int(audio_len[i].item())  # To remove padding
-                gt_i = gt[i, :, :valid_len]
+                sample_idx = batch["idxs"][i]
+                valid_len = int(batch["audio_lens"][i].item())  # To remove padding
+                clean_mix_i = batch["clean_mix"][i, :, :valid_len]
+                isolated_trigger_i = batch["isolated_trigger"][i, :, :valid_len]
                 mix_i = inputs["mix"][i, :, :valid_len]
 
-                sample_metdata = inputs["metadata"][i] if "metadata" in inputs else None
+                sample_metdata = batch["metadata"][i] if "metadata" in batch else None
                 sample_rate = sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE
 
                 if samples_left_to_save > 0:
                     save_sample = True
                     samples_left_to_save -= 1
                     mix_file = save_samples_to / f"sample_{sample_idx}_mix.flac"
-                    gt_file = save_samples_to / f"sample_{sample_idx}_gt.flac"
+                    clean_mix_file = save_samples_to / f"sample_{sample_idx}_clean_mix.flac"
+                    isolated_trigger_file = save_samples_to / f"sample_{sample_idx}_isolated_trigger.flac"
+
                     _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
-                    _save_audio_stereo(gt_i, gt_file, sample_rate=sample_rate)
+                    _save_audio_stereo(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
+                    _save_audio_stereo(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
                 else:
                     save_sample = False
 
                 for pred_name, pred in output_items:
                     pred_i = pred[i, :, :valid_len]
 
-                    if pred_name == "x":
+                    if pred_name == "x" and ground_truth_target == "isolated_trigger":
                         metrics = calculate_default_metrics(
                             pred_i,
-                            gt_i,
+                            isolated_trigger_i,
                             sample_rate=sample_rate,
-                            mix_metrics=sample_metdata.get("mix_vs_gt_metrics") if sample_metdata else None,
+                            mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
+                            if sample_metdata
+                            else None,
                         )
                     else:
-                        metrics = {}  # TODO: Implement metrics for subtraction outputs
+                        metrics = calculate_default_metrics(
+                            pred_i,
+                            clean_mix_i,
+                            sample_rate=sample_rate,
+                            mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
+                        )
 
                     if save_sample:
                         pred_file = save_samples_to / f"sample_{sample_idx}_{pred_name}.flac"
@@ -501,7 +567,8 @@ def perform_eval(
 
                         sample_files = {
                             "mix_file": str(mix_file.name),
-                            "gt_file": str(gt_file.name),
+                            "clean_mix_file": str(clean_mix_file.name),
+                            "isolated_trigger_file": str(isolated_trigger_file.name),
                             "pred_file": str(pred_file.name),
                         }
                     else:
@@ -513,7 +580,7 @@ def perform_eval(
                             "pred_name": pred_name,
                             "runtime_ms": runtime_ms,
                             "metrics": metrics,
-                            "batch_length": gt.shape[-1],
+                            "batch_length": inputs["mix"].shape[-1],
                             "sample_length": valid_len,
                             "sample_metadata": sample_metdata,
                             "sample_files": sample_files,
@@ -547,9 +614,9 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
             {
                 **result["metrics"],
                 "pred_name": result["pred_name"],
-                "runtime_ms": result["runtime_ms"],
-                "batch_length": result["batch_length"],
-                "sample_length": result["sample_length"],
+                "runtime_ms": result.get("runtime_ms"),
+                "batch_length": result.get("batch_length"),
+                "sample_length": result.get("sample_length"),
             }
             for result in results
         ]
@@ -558,7 +625,9 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
         df["runtime_ms_pr_length"] = (
             df["runtime_ms"] / df["batch_length"]
         )  # Model is run on batch-level, so normalize on that
-    agg_metrics = df.groupby("pred_name").mean().T.to_dict()
+    grouped = df.groupby("pred_name").agg(["mean", "std"])
+    grouped.columns = [f"{metric}_{stat}" for metric, stat in grouped.columns]
+    agg_metrics = grouped.to_dict(orient="index")
     return agg_metrics
 
 
@@ -598,7 +667,7 @@ def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate
     )
 
 
-def mod_pad(x, chunk_size, pad):  # noqa: ANN202  # TODO
+def mod_pad(x, chunk_size, pad):  # noqa: ANN202
     # Mod pad the input to perform integer number of
     # inferences
     mod = 0
@@ -619,7 +688,7 @@ def model_size(model) -> float:
     return num_train_params / 1e6
 
 
-def _time_and_run_model(model, args, kwargs, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
+def _time_and_run_model(model, args=(), kwargs={}, *, profiling: bool = False) -> tuple[torch.Tensor, float]:
     """
     Run a model while measuring the time taken for the forward pass. If `profiling` is True, also prints a detailed profiling report.
 
@@ -783,7 +852,7 @@ def log_dataset_config_diffs(
         eliot.log_message(f"Error occurred while comparing dataset configs for {split}: {e}", level="error")
 
 
-# TODO: Remove unused (commented out) functions
+# FIXME: Remove unused (commented out) functions
 
 # import numpy.fft as fft  # Semantic Hearinc also used mklfft, which is optimized for Intel
 # import pyroomacoustics as pra  # Not installed, do we need it?
