@@ -388,6 +388,7 @@ def calculate_default_metrics(
     preds: torch.Tensor,
     target: torch.Tensor,
     *,
+    mix: torch.Tensor | None = None,
     mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
 ) -> dict[str, float]:
@@ -410,6 +411,9 @@ def calculate_default_metrics(
         # "ild": ild,
         # "itd": itd,
     }
+
+    if mix is not None and mix_metrics is None:
+        mix_metrics = calculate_default_metrics(mix, target, sample_rate=sample_rate)
 
     if mix_metrics is not None:
         if "snr" in mix_metrics:
@@ -559,16 +563,20 @@ def perform_eval(
                             pred_i,
                             isolated_trigger_i,
                             sample_rate=sample_rate,
-                            mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
-                            if sample_metdata
-                            else None,
+                            mix=mix_i,
+                            # Do not use pre-comuted mix metrics since the batching truncates the audio
+                            # mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
+                            # if sample_metdata
+                            # else None,
                         )
                     else:
                         metrics = calculate_default_metrics(
                             pred_i,
                             clean_mix_i,
                             sample_rate=sample_rate,
-                            mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
+                            mix=mix_i,
+                            # Do not use pre-comuted mix metrics since the batching truncates the audio
+                            # mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
                         )
 
                     if save_sample:
