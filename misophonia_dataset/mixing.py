@@ -162,7 +162,7 @@ def binaural_mix(
         mode=global_params.mode,
         reverb_type=global_params.reverb_type,
     )
-    clean_mix = custom_mix_tracks_binaural(
+    clean_background = custom_mix_tracks_binaural(
         tracks=bg_binamix_tracks,
         subject_id=global_params.subject_id,
         sample_rate=global_params.sample_rate,
@@ -172,13 +172,25 @@ def binaural_mix(
         reverb_type=global_params.reverb_type,
     )
     assert isolated_trigger.shape == mix.shape, "Isolated trigger and mix shapes do not match."
-    assert clean_mix.shape == mix.shape, "Clean mix and mix shapes do not match."
+    assert clean_background.shape == mix.shape, "Clean background and mix shapes do not match."
 
-    snr_control(isolated_trigger, clean_mix, target_snr_range=target_snr_range)
+    # SNR control!
+    target_snr_db = np.random.uniform(target_snr_range[0], target_snr_range[1])
 
-    # mix = isolated_trigger + clean_mix
+    # Recentering waveforms to ensure that SNR is accurately controlled.
+    recentered_trigger = isolated_trigger - np.mean(isolated_trigger, axis=0, keepdims=True)
+    recentered_clean_background = clean_background - np.mean(clean_background, axis=0, keepdims=True)
 
-    return mix, isolated_trigger, clean_mix
+    trigger_power = np.mean(recentered_trigger**2)
+    clean_background_power = np.mean(recentered_clean_background**2)
+    alpha = snr_control_scaling_factor(trigger_power, clean_background_power, target_snr_db=target_snr_db)
+
+    scaled_clean_background = recentered_clean_background * alpha
+
+    assert target_snr_range[0] <= _calculate_snr(recentered_trigger, scaled_clean_background) <= target_snr_range[1], "SNR is not within the target range after scaling. This should never happen."
+    mix = recentered_trigger + scaled_clean_background
+
+    return mix, recentered_trigger, scaled_clean_background
 
 
 def _normalize_and_pad(
@@ -220,31 +232,42 @@ def _normalize_and_pad(
 
     assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
 
-    # Sample target full-clip SNR in dB
-    target_snr_db = np.random.uniform(target_snr_range[0], target_snr_range[1])
+    # Old pre-mixing SNR control. We suspect that binaural mixing is changing SNR.
+    # target_snr_db = np.random.uniform(target_snr_range[0], target_snr_range[1])
 
-    # Build summed foreground and summed background, including track.level
-    fg_sum = np.zeros(fg_max_end, dtype=np.float32)
-    for track, audio in fg_padded:
-        fg_sum += track.level * audio
+    # # Calculate power of foreground and backgrounds and then scale backgrounds to achieve target SNR
+    # fg_sum = np.zeros(fg_max_end, dtype=np.float32)
+    # for track, audio in fg_padded:
+    #     fg_sum += track.level * audio
 
-    bg_sum = np.zeros(fg_max_end, dtype=np.float32)
-    for track, audio in bg_padded:
-        bg_sum += track.level * audio
+    # bg_sum = np.zeros(fg_max_end, dtype=np.float32)
+    # for track, audio in bg_padded:
+    #     bg_sum += track.level * audio
 
-    fg_power = np.mean(fg_sum**2) + eps
-    bg_power = np.mean(bg_sum**2) + eps
+    # fg_sum = fg_sum - np.mean(fg_sum)
+    # bg_sum = bg_sum - np.mean(bg_sum)
+
+    # fg_power = np.mean(fg_sum**2) + eps
+    # bg_power = np.mean(bg_sum**2) + eps
+
+    # alpha = snr_control_scaling_factor(fg_power, bg_power, target_snr_db=target_snr_db)
+    # bg_scaled = tuple((track, audio * alpha) for track, audio in bg_padded)
+
+    return fg_padded, bg_padded
+
+def snr_control_scaling_factor(fg_power: float, bg_power: float, target_snr_db: float) -> float:
+    """
+    Find scaling factor to achieve desired relative signal between foreground and backgrounds.
+    """
+    fg_power = max(fg_power, 1e-8)
+    bg_power = max(bg_power, 1e-8)
 
     # Solve for a single background scaling factor alpha such that:
     # 10 * log10(fg_power / (alpha^2 * bg_power)) = target_snr_db
     desired_bg_power = fg_power / (10 ** (target_snr_db / 10.0))
     alpha = np.sqrt(desired_bg_power / bg_power)
 
-    bg_scaled = tuple((track, audio * alpha) for track, audio in bg_padded)
-
-    assert target_snr_range[0] <= _calculate_snr(fg_sum, bg_sum * alpha) <= target_snr_range[1], "SNR is not within the target range after scaling. This should never happen."
-
-    return fg_padded, bg_scaled
+    return alpha
 
 def _calculate_snr(fg: np.ndarray, bg: np.ndarray) -> float:
     """
