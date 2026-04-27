@@ -243,10 +243,6 @@ def make_custom_collate_fn(
         metadatas = []
         idxs = []
 
-        dts = {}
-
-        dts["batch"] = type(batch)
-
         for sample in batch:
             idxs.append(sample["__key__"])
             label = sample["label.npy"]
@@ -274,21 +270,22 @@ def make_custom_collate_fn(
 
                 if include_isolated_trigger:
                     isolated_trigger = sample["isolated_trigger.npy"]
-                    # TODO: Use torch.from_numpy (also in the other places in this function)? Or remove?
-                    isolated_triggers.append(isolated_trigger[..., start : start + chunk_size].float())
+                    isolated_triggers.append(
+                        torch.from_numpy(isolated_trigger[..., start : start + chunk_size]).float()
+                    )
                 if include_clean_mix:
                     clean_mix = sample["clean_mix.npy"]
-                    clean_mixes.append(clean_mix[..., start : start + chunk_size].float())
+                    clean_mixes.append(torch.from_numpy(clean_mix[..., start : start + chunk_size]).float())
             else:
                 # audio is shorter than chunk_size → pad
                 mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
 
                 if include_isolated_trigger:
                     isolated_trigger = sample["isolated_trigger.npy"]
-                    isolated_triggers.append(F.pad(isolated_trigger.float(), (0, chunk_size - L)))
+                    isolated_triggers.append(F.pad(torch.from_numpy(isolated_trigger).float(), (0, chunk_size - L)))
                 if include_clean_mix:
                     clean_mix = sample["clean_mix.npy"]
-                    clean_mixes.append(F.pad(clean_mix.float(), (0, chunk_size - L)))
+                    clean_mixes.append(F.pad(torch.from_numpy(clean_mix).float(), (0, chunk_size - L)))
 
             mixes.append(mix_chunk)
 
@@ -348,12 +345,23 @@ def make_dataloader(
     if include_clean_mix:
         included_filenames.add("clean_mix.npy")
 
+    def _include_file(fname: str) -> bool:
+        """
+        Only include files that are in the included_filenames set.
+
+        Example:
+            _include_file("000000991.mix.npy") -> True
+            _include_file("000000991.isolated_trigger.npy") -> True if include_isolated_trigger is True, False otherwise
+
+        """
+        return any(fname.endswith(included_fname) for included_fname in included_filenames)
+
     data = (
         wds.WebDataset(
             files,
             empty_check=False,
             shardshuffle=1,  # Number of shards to keep in memory at the time (as I understand it)
-            select_files=lambda fname: fname in included_filenames,
+            select_files=_include_file,
         )
         .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
         .decode("torch")  # converts the saved numpy arrays to tensors
@@ -380,6 +388,7 @@ def calculate_default_metrics(
     preds: torch.Tensor,
     target: torch.Tensor,
     *,
+    mix: torch.Tensor | None = None,
     mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
 ) -> dict[str, float]:
@@ -402,6 +411,9 @@ def calculate_default_metrics(
         # "ild": ild,
         # "itd": itd,
     }
+
+    if mix is not None and mix_metrics is None:
+        mix_metrics = calculate_default_metrics(mix, target, sample_rate=sample_rate)
 
     if mix_metrics is not None:
         if "snr" in mix_metrics:
@@ -463,6 +475,7 @@ def perform_eval(
     save_aggregated_results_to: Path | None = None,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
+    warm_up_iters: int = 10,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -475,6 +488,7 @@ def perform_eval(
         save_aggregated_results_to: If not None, a path to save aggregated evaluation results (e.g. average metrics across all samples) as a JSON file.
         save_samples_to: If not None, a directory to save example audio files of the mixes, gts, and predictions. Will save as .flac files.
         save_num_samples: If save_samples_to is not None, the maximum number of samples to save to disk. If 0, do not save any.
+        warm_up_iters: Number of iterations to run for warming up the model before measuring latency.
 
     Returns:
         A tuple containing the individual sample results and the aggregated results.
@@ -506,7 +520,7 @@ def perform_eval(
 
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
-                _warm_up_model(model, inputs)
+                _warm_up_model(model, inputs, num_iters=warm_up_iters)
                 has_wamed_up = True
 
             # Run model and measure latency
@@ -549,16 +563,20 @@ def perform_eval(
                             pred_i,
                             isolated_trigger_i,
                             sample_rate=sample_rate,
-                            mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
-                            if sample_metdata
-                            else None,
+                            mix=mix_i,
+                            # Do not use pre-comuted mix metrics since the batching truncates the audio
+                            # mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
+                            # if sample_metdata
+                            # else None,
                         )
                     else:
                         metrics = calculate_default_metrics(
                             pred_i,
                             clean_mix_i,
                             sample_rate=sample_rate,
-                            mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
+                            mix=mix_i,
+                            # Do not use pre-comuted mix metrics since the batching truncates the audio
+                            # mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
                         )
 
                     if save_sample:
@@ -631,7 +649,7 @@ def aggregate_results(results: list[dict[str, object]]) -> dict:
     return agg_metrics
 
 
-def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int = 50) -> None:
+def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int) -> None:
     """
     Run a few forward passes to warm up the model (e.g. for more accurate latency measurements).
     """
