@@ -125,10 +125,6 @@ def train_epoch(
 
         # Mask output
         output = model(inputs)
-        pred = output["x"]
-        time_idx = torch.arange(T, device=pred.device).unsqueeze(0)
-        mask = (time_idx < audio_lens.unsqueeze(1)).unsqueeze(1)
-        output["x"] = pred * mask
 
         loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
         loss.backward()
