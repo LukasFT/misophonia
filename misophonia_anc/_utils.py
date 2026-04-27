@@ -243,10 +243,6 @@ def make_custom_collate_fn(
         metadatas = []
         idxs = []
 
-        dts = {}
-
-        dts["batch"] = type(batch)
-
         for sample in batch:
             idxs.append(sample["__key__"])
             label = sample["label.npy"]
