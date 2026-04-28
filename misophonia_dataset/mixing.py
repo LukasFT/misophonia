@@ -178,22 +178,20 @@ def binaural_mix(
     target_snr_db = np.random.uniform(target_snr_range[0], target_snr_range[1])
 
     # Recentering waveforms to ensure that SNR is accurately controlled.
-    recentered_trigger = isolated_trigger - np.mean(isolated_trigger, axis=0, keepdims=True)
-    recentered_clean_background = clean_background - np.mean(clean_background, axis=0, keepdims=True)
 
-    trigger_power = np.mean(recentered_trigger**2)
-    clean_background_power = np.mean(recentered_clean_background**2)
+    trigger_power = np.mean(isolated_trigger**2)
+    clean_background_power = np.mean(clean_background**2)
     alpha = snr_control_scaling_factor(trigger_power, clean_background_power, target_snr_db=target_snr_db)
 
-    scaled_clean_background = recentered_clean_background * alpha
+    scaled_clean_background = clean_background * alpha
 
-    calculated_snr_db = _calculate_snr(recentered_trigger, scaled_clean_background)
+    calculated_snr_db = _calculate_snr(isolated_trigger, scaled_clean_background)
     assert target_snr_range[0] <= calculated_snr_db <= target_snr_range[1], (
         f"SNR is not within the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB"
     )
-    mix = recentered_trigger + scaled_clean_background
+    mix = isolated_trigger + scaled_clean_background
 
-    return mix, recentered_trigger, scaled_clean_background
+    return mix, isolated_trigger, scaled_clean_background
 
 
 def _normalize_and_pad(
