@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 rng = np.random.default_rng()
 
 SAMPLE_RATE = 44100
-MAX_DURATION = 5  # seconds
 
 ######################################
 # Preprocess and Data Loading Utils #
@@ -229,8 +228,7 @@ def make_custom_collate_fn(
             it might need to predict silence if there is no trigger sound of that category in the mix.
         """
 
-        # Only keep chunks of length MAX_DURATION in data loader
-        chunk_size = MAX_DURATION * SAMPLE_RATE
+        chunk_size = max(sample["mix.npy"].shape[-1] for sample in batch)
 
         mixes = []
         if include_isolated_trigger:
