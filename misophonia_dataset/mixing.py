@@ -270,7 +270,7 @@ def snr_control_scaling_factor(fg_power: float, bg_power: float, target_snr_db: 
     """
     Find scaling factor to achieve desired relative signal between foreground and backgrounds.
     """
-    eps = 1e-8
+    eps = np.finfo(np.float32).tiny
     fg_power = fg_power + eps
     bg_power = bg_power + eps
 
@@ -287,7 +287,7 @@ def _calculate_snr(fg: np.ndarray, bg: np.ndarray) -> float:
     Calculate the SNR in dB between a foreground and background signal. Helper function to ensure that SNR target range
     is being applied as intended.
     """
-    eps = 1e-8
+    eps = np.finfo(np.float32).tiny
     fg_power = np.mean(fg**2) + eps
     bg_power = np.mean(bg**2) + eps
     snr_db = 10 * np.log10(fg_power / bg_power)
