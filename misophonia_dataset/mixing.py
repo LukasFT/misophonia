@@ -261,8 +261,9 @@ def snr_control_scaling_factor(fg_power: float, bg_power: float, target_snr_db: 
     """
     Find scaling factor to achieve desired relative signal between foreground and backgrounds.
     """
-    fg_power = max(fg_power, 1e-8)
-    bg_power = max(bg_power, 1e-8)
+    eps = 1e-8
+    fg_power = fg_power + eps
+    bg_power = bg_power + eps
 
     # Solve for a single background scaling factor alpha such that:
     # 10 * log10(fg_power / (alpha^2 * bg_power)) = target_snr_db
