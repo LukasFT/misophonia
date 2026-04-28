@@ -20,7 +20,12 @@ def prepare_track_specs(
     fg_track_options: dict | None = None,
     bg_track_options: dict | None = None,
     rng: np.random.Generator | None = None,
+    max_length: int =  308700 # 7 seconds at 44.1 kHz
 ) -> tuple[tuple[TrackAudioSpec, ...], tuple[TrackAudioSpec, ...]]:
+    """
+    Prepares track specifications for binaural mixing for foreground and background audios. Locates meaningful audio in background sounds to use in mix.
+    If foreground sound is longer than max_length (7 sec), then it will only include the most meaningful 7 seconds of audio.
+    """
     if rng is None:
         rng = np.random.default_rng()
 
@@ -88,10 +93,14 @@ def prepare_track_specs(
 
         return track, audio
 
+
     fg_audios = tuple((item, item.load_audio(sample_rate=global_params.sample_rate)[0]) for item in fg_items)
     bg_audios = tuple((item, item.load_audio(sample_rate=global_params.sample_rate)[0]) for item in bg_items)
 
+    # Either longest foreground audio or max_length, whichever is shorter
     fg_max_length = max(audio.shape[0] for _, audio in fg_audios)
+    fg_max_length = min(fg_max_length, max_length)
+
     fg_specs = tuple(
         _generate_track_specs(item, audio, fg_max_length, fg_track_options or {}) for item, audio in fg_audios
     )
