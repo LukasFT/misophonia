@@ -18,7 +18,6 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-
 try:
     from .confidential_losses import mrccmse_loss  # noqa: F401
 except ImportError:
@@ -222,7 +221,7 @@ def train_model(
     train_loader: wds.WebLoader,
     val_loader: wds.WebLoader,
     n_epochs: int,
-    checkpoint_epoch: int = 0,
+    checkpoint_epoch: int = -1,
     device: torch.device,
     loss_option: str,
     save_dir: Path,
@@ -240,7 +239,7 @@ def train_model(
         train_loader (wds.WebLoader): Train dataset in the form of a WebLoader
         val_loader (wds.WebLoader): Val dataset in the form of a WebLoader
         n_epochs (int): number of epochs for training
-        checkpoint_epoch (int): epoch to start checkpointing from. Set to 0 if the model is randomly initialized and set to the epoch number of the loaded checkpoint if resuming training from a checkpoint.
+        checkpoint_epoch (int): epoch to start checkpointing from. Set to -1 if the model is randomly initialized and set to the epoch number of the loaded checkpoint if resuming training from a checkpoint.
         lr (float): learning rate during trainer
         weight_decay (float): weight decay to apply to optimizer
         device (torch.device): cuda or cpu
@@ -261,7 +260,7 @@ def train_model(
     # Checkpoint trackers
     best_epoch = -1
     best_val_si_snr_improvement = -np.inf
-    for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
+    for epoch in range(checkpoint_epoch + 1, n_epochs):
         train_loss, global_step_train = train_epoch(
             model,
             device=device,
@@ -299,7 +298,7 @@ def train_model(
                     "epoch/global_step_train": global_step_train,
                     "epoch/global_step_val": global_step_val,
                 },
-                step=epoch - 1,
+                step=epoch,
             )
 
         # Checkpointing

@@ -278,7 +278,7 @@ class MisophoniaANCNet(nn.Module):
 
         if checkpoint is None:
             model = MisophoniaANCNet(**model_params)
-            metadata["epoch"] = 0
+            metadata["epoch"] = -1
         else:
             checkpoint = Path(checkpoint)
             assert checkpoint.is_file(), f"Checkpoint path {checkpoint} does not exist or is not a file."

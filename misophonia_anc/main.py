@@ -310,7 +310,7 @@ def train(
             train_loader=train_loader,
             val_loader=val_loader,
             n_epochs=config.num_epochs,
-            checkpoint_epoch=checkpoint_metadata.get("epoch", 0) if not reset_epoch else 0,
+            checkpoint_epoch=checkpoint_metadata.get("epoch", -1) if not reset_epoch else -1,
             loss_option=config.loss_option,
             save_dir=Path(model_dir),
             global_step_train=checkpoint_metadata.get("global_step_train", 0),
