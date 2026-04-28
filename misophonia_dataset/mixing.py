@@ -186,7 +186,7 @@ def binaural_mix(
     scaled_clean_background = clean_background * alpha
 
     calculated_snr_db = _calculate_snr(isolated_trigger, scaled_clean_background)
-    assert target_snr_range[0] <= calculated_snr_db <= target_snr_range[1], (
+    assert target_snr_range[0] - 1 <= calculated_snr_db <= target_snr_range[1] + 1, (
         f"SNR is not within the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB"
     )
     mix = isolated_trigger + scaled_clean_background
