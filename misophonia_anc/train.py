@@ -173,9 +173,11 @@ def val_epoch(
     val_si_snrs = []
 
     with torch.no_grad():
-        for batch_idx, (inputs, gt, audio_lens) in tqdm(
-            enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"
-        ):
+        for batch_idx, batch in tqdm(enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"):
+            inputs = batch["inputs"]
+            gt = batch[model.ground_truth_target]
+            audio_lens = batch["audio_lens"]
+
             # inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
