@@ -77,7 +77,9 @@ def loss_fn(
         raise ValueError(f"Invalid loss option: {loss_option}")
 
 
-def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor) -> torch.Tensor:
+def si_snr_improvement(
+    mix: torch.tensor, pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor
+) -> torch.Tensor:
     B = pred.shape[0]
     si_snr_improvements = []
     for i in range(B):
@@ -87,12 +89,14 @@ def si_snr_improvement(mix: torch.tensor, pred: torch.tensor, gt: torch.tensor, 
         si_snr_improvements.append(improvement.mean())
     return sum(si_snr_improvements) / len(si_snr_improvements)
 
+
 def truncated_si_snr(pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor) -> torch.Tensor:
     B = pred.shape[0]
     si_snrs = []
     for i in range(B):
         si_snrs.append(si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]).mean())
     return sum(si_snrs) / len(si_snrs)
+
 
 def train_epoch(
     model: nn.Module,
@@ -108,9 +112,11 @@ def train_epoch(
 
     batch_train_losses = []
 
-    for batch_idx, (inputs, gt, audio_lens) in tqdm(
-        enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"
-    ):
+    for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
+        inputs = batch["inputs"]
+        gt = batch[model.ground_truth_target]
+        audio_lens = batch["audio_lens"]
+
         # in loader return mask that is [B, C, N]
         # inputs = {k: v.to(device) for k, v in inputs.items()}
         inputs["mix"] = inputs["mix"].to(device)
