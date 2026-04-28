@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 rng = np.random.default_rng()
 
 SAMPLE_RATE = 44100
-MAX_DURATION = 5  # seconds
 
 ######################################
 # Preprocess and Data Loading Utils #
@@ -229,8 +228,8 @@ def make_custom_collate_fn(
             it might need to predict silence if there is no trigger sound of that category in the mix.
         """
 
-        # Only keep chunks of length MAX_DURATION in data loader
-        chunk_size = MAX_DURATION * SAMPLE_RATE
+        # Longest sample in the batch determines the length to pad to
+        chunk_size = max(sample["mix.npy"].shape[-1] for sample in batch)
 
         mixes = []
         if include_isolated_trigger:
@@ -262,30 +261,15 @@ def make_custom_collate_fn(
             labels.append(torch.from_numpy(label).float())
 
             L = mix.shape[-1]  # noqa: N806
-            audio_lens.append(min(L, chunk_size))
-            if L >= chunk_size:
-                # generate a single random start for both mix and gt
-                start = torch.randint(0, L - chunk_size + 1, (1,)).item()
-                mix_chunk = torch.from_numpy(mix[..., start : start + chunk_size]).float()
+            # audio is shorter than chunk_size → pad
+            mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
 
-                if include_isolated_trigger:
-                    isolated_trigger = sample["isolated_trigger.npy"]
-                    isolated_triggers.append(
-                        torch.from_numpy(isolated_trigger[..., start : start + chunk_size]).float()
-                    )
-                if include_clean_mix:
-                    clean_mix = sample["clean_mix.npy"]
-                    clean_mixes.append(torch.from_numpy(clean_mix[..., start : start + chunk_size]).float())
-            else:
-                # audio is shorter than chunk_size → pad
-                mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
-
-                if include_isolated_trigger:
-                    isolated_trigger = sample["isolated_trigger.npy"]
-                    isolated_triggers.append(F.pad(torch.from_numpy(isolated_trigger).float(), (0, chunk_size - L)))
-                if include_clean_mix:
-                    clean_mix = sample["clean_mix.npy"]
-                    clean_mixes.append(F.pad(torch.from_numpy(clean_mix).float(), (0, chunk_size - L)))
+            if include_isolated_trigger:
+                isolated_trigger = sample["isolated_trigger.npy"]
+                isolated_triggers.append(F.pad(isolated_trigger.float(), (0, chunk_size - L)))
+            if include_clean_mix:
+                clean_mix = sample["clean_mix.npy"]
+                clean_mixes.append(F.pad(clean_mix.float(), (0, chunk_size - L)))
 
             mixes.append(mix_chunk)
 
