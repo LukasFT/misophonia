@@ -576,10 +576,10 @@ def perform_eval(
 
                     if pred_name == "x" and ground_truth_target == "isolated_trigger":
                         metrics = calculate_default_metrics(
-                            pred_i,
-                            isolated_trigger_i,
+                            pred_i.to(device),
+                            isolated_trigger_i.to(device),
                             sample_rate=sample_rate,
-                            mix=mix_i,
+                            mix=mix_i.to(device),
                             # Do not use pre-comuted mix metrics since the batching truncates the audio
                             # mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
                             # if sample_metdata
@@ -587,10 +587,10 @@ def perform_eval(
                         )
                     else:
                         metrics = calculate_default_metrics(
-                            pred_i,
-                            clean_mix_i,
+                            pred_i.to(device),
+                            clean_mix_i.to(device),
                             sample_rate=sample_rate,
-                            mix=mix_i,
+                            mix=mix_i.to(device),
                             # Do not use pre-comuted mix metrics since the batching truncates the audio
                             # mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
                         )
