@@ -274,7 +274,7 @@ def make_custom_collate_fn(
                     sample[key] = torch.from_numpy(sample[key]).float()
 
         # Longest sample in the batch determines the length to pad to
-        chunk_size = max(sample["flac"].shape[-1] for sample in batch)
+        chunk_size = max(sample["mix.flac"].shape[-1] for sample in batch)
 
         for sample in batch:
             idxs.append(sample["__key__"])
