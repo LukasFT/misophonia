@@ -289,7 +289,7 @@ def train_model(
             model,
             val_loader,
             device,
-            save_results_to=save_dir / "debug" / "eval_in_train_model_results_epoch_{epoch}.json",
+            save_results_to=save_dir / "debug" / f"eval_in_train_model_results_epoch_{epoch}.json",
             save_aggregated_results_to=save_dir / "debug" / f"eval_in_train_model_results_epoch_{epoch}_agg.json",
             save_samples_to=save_dir / "debug" / f"eval_in_train_model_samples_epoch_{epoch}",
             save_num_samples=5,
