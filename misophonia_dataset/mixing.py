@@ -135,7 +135,7 @@ def binaural_mix(
 
     def _make_binamix_track(spec: TrackAudioSpec) -> TrackObject:
         track, padded_audio = spec
-        return TrackObject(  # NOTE: Tonio change this, but it should not be changed
+        return TrackObject(
             name=track.source_item.file_path.stem,
             azimuth=track.azimuth,
             elevation=track.elevation,
@@ -186,8 +186,6 @@ def binaural_mix(
     # SNR control!
     target_snr_db = np.random.uniform(target_snr_range[0], target_snr_range[1])
 
-    # Recentering waveforms to ensure that SNR is accurately controlled.
-
     trigger_power = np.mean(isolated_trigger**2)
     clean_background_power = np.mean(clean_background**2)
     alpha = snr_control_scaling_factor(trigger_power, clean_background_power, target_snr_db=target_snr_db)
@@ -198,6 +196,7 @@ def binaural_mix(
     assert target_snr_range[0] - 1 <= calculated_snr_db <= target_snr_range[1] + 1, (
         f"SNR is not within the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB"
     )
+    # Added small tolerance since their may be numerical imprecision for tiny background power.
     mix = isolated_trigger + scaled_clean_background
 
     return mix, isolated_trigger, scaled_clean_background
