@@ -294,14 +294,29 @@ def train_model(
             save_samples_to=save_dir / "debug" / f"eval_in_train_model_samples_epoch_{epoch}",
             save_num_samples=5,
         )
-        assert eval_results is not None and eval_results_agg is not None
-        assert "si_snr_improvement_mean" in eval_results_agg["x"]
-        assert "si_snr_mean" in eval_results_agg["x"]
-        si_snr_diff = eval_results_agg["x"]["si_snr_mean"] - val_si_snr
-        si_snr_improvement_mean_diff = eval_results_agg["x"]["si_snr_improvement_mean"] - val_si_snr_improvement
-        print(
-            f"Epoch {epoch} Eval SI-SNRi Mean: {eval_results_agg['x']['si_snr_improvement_mean']}, Diff from Val Epoch SI-SNRi Improvement: {si_snr_improvement_mean_diff}"
-        )
+        if eval_results is None:
+            eliot.log_message(
+                f"Evaluation during training at epoch {epoch} did not return results. This likely indicates an error during evaluation. Check debug logs for more details.",
+                level="warning",
+            )
+        elif eval_results_agg is None:
+            eliot.log_message(
+                f"Aggregated evaluation during training at epoch {epoch} did not return results. This likely indicates an error during evaluation. Check debug logs for more details.",
+                level="warning",
+            )
+        elif "si_snr_improvement_mean" not in eval_results_agg["x"] or "si_snr_mean" not in eval_results_agg["x"]:
+            eliot.log_message(
+                f"Evaluation during training at epoch {epoch} did not return expected metrics. This likely indicates an error during evaluation. Check debug logs for more details.",
+                level="warning",
+            )
+        else:
+            si_snr_diff = eval_results_agg["x"]["si_snr_mean"] - val_si_snr
+            si_snr_improvement_mean_diff = eval_results_agg["x"]["si_snr_improvement_mean"] - val_si_snr_improvement
+            should_warn = abs(si_snr_improvement_mean_diff) > 0.05
+            eliot.log_message(
+                f"{'WARN: ' if should_warn else ''}Epoch {epoch} Eval SI-SNRi Mean: {eval_results_agg['x']['si_snr_improvement_mean']}, Diff from Val Epoch SI-SNRi Improvement: {si_snr_improvement_mean_diff}",
+                level="warning" if should_warn else "debug",
+            )
 
         ######
 
