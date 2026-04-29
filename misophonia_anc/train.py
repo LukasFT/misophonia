@@ -297,7 +297,7 @@ def train_model(
                     "epoch/global_step_train": global_step_train,
                     "epoch/global_step_val": global_step_val,
                 },
-                step=epoch - 1,
+                step=epoch,
             )
 
         # Checkpointing
