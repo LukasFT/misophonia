@@ -36,9 +36,7 @@ def loss_fn(
 ) -> torch.Tensor:
     pred = _output["x"]
 
-    def _time_loss(
-        pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor
-    ) -> torch.Tensor:
+    def _time_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
         """
         Computes loss with .7 weight on snr and .3 weight on si-snr. Applies double weighting to the right channel
         """
@@ -283,6 +281,30 @@ def train_model(
         val_si_snrs.append(val_si_snr)
         val_si_snr_improvements.append(val_si_snr_improvement)
 
+        #########
+        from ._utils import perform_eval
+
+        (save_dir / "debug").mkdir(parents=True, exist_ok=True)
+        eval_results, eval_results_agg = perform_eval(
+            model,
+            val_loader,
+            device,
+            save_results_to=save_dir / "debug" / "eval_in_train_model_results_epoch_{epoch}.json",
+            save_aggregated_results_to=save_dir / "debug" / f"eval_in_train_model_results_epoch_{epoch}_agg.json",
+            save_samples_to=save_dir / "debug" / f"eval_in_train_model_samples_epoch_{epoch}",
+            save_num_samples=5,
+        )
+        assert eval_results is not None and eval_results_agg is not None
+        assert "si_snr_improvement_mean" in eval_results_agg["x"]
+        assert "si_snr_mean" in eval_results_agg["x"]
+        si_snr_diff = eval_results_agg["x"]["si_snr_mean"] - val_si_snr
+        si_snr_improvement_mean_diff = eval_results_agg["x"]["si_snr_improvement_mean"] - val_si_snr_improvement
+        print(
+            f"Epoch {epoch} Eval SI-SNRi Mean: {eval_results_agg['x']['si_snr_improvement_mean']}, Diff from Val Epoch SI-SNRi Improvement: {si_snr_improvement_mean_diff}"
+        )
+
+        ######
+
         eliot.log_message(
             f"Epoch {epoch}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNRi = {val_si_snr_improvement}",
             level="debug",
@@ -296,8 +318,10 @@ def train_model(
                     "epoch/val_si_snr": val_si_snr,
                     "epoch/global_step_train": global_step_train,
                     "epoch/global_step_val": global_step_val,
+                    "epoch/si_snr_improvement_mean_diff_eval_vs_val": si_snr_improvement_mean_diff,
+                    "epoch/si_snr_mean_diff_eval_vs_val": si_snr_diff,
                 },
-                step=epoch - 1,
+                step=epoch,
             )
 
         # Checkpointing
