@@ -7,6 +7,7 @@ import os
 import subprocess
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -66,6 +67,18 @@ def preprocess_to_webdataset_pt(
         A glob pattern for the generated .tar shards. Used for loading wds.WebDataset.
     """
 
+    def _audio_to_flac_bytes(audio: np.ndarray | torch.Tensor, sample_rate: int) -> bytes:
+        if isinstance(audio, torch.Tensor):
+            audio = audio.detach().cpu().numpy()
+
+        audio = np.asarray(audio)
+        if audio.ndim != 2:
+            raise ValueError(f"Expected audio of shape [C, T], got {audio.shape}")
+
+        with BytesIO() as buffer:
+            sf.write(buffer, audio.T, samplerate=sample_rate, format="FLAC", subtype="PCM_24")
+            return buffer.getvalue()
+
     def process_item(idx) -> tuple[dict, dict]:
         item: MisophoniaItem = dataset_split[idx]
         # This function should call your actual preprocessing
@@ -98,13 +111,16 @@ def preprocess_to_webdataset_pt(
             "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
         }
         metadata_str = json.dumps(metadata)
+        mix_flac = _audio_to_flac_bytes(mix_array, sample_rate)
+        isolated_trigger_flac = _audio_to_flac_bytes(isolated_trigger_array, sample_rate)
+        clean_mix_flac = _audio_to_flac_bytes(clean_mix_array, sample_rate)
 
         sample = {
             "__key__": f"{idx:09d}",
-            "mix.npy": mix_array,
+            "mix.flac": mix_flac,
             "label.npy": label_array,
-            "isolated_trigger.npy": isolated_trigger_array,
-            "clean_mix.npy": clean_mix_array,
+            "isolated_trigger.flac": isolated_trigger_flac,
+            "clean_mix.flac": clean_mix_flac,
             "metadata.json": metadata_str,
         }
         return sample, metadata
@@ -228,8 +244,15 @@ def make_custom_collate_fn(
             it might need to predict silence if there is no trigger sound of that category in the mix.
         """
 
-        # Longest sample in the batch determines the length to pad to
-        chunk_size = max(sample["mix.npy"].shape[-1] for sample in batch)
+        def _to_audio_tensor(audio: np.ndarray | torch.Tensor | bytes) -> torch.Tensor:
+            if isinstance(audio, torch.Tensor):
+                return audio.float()
+            if isinstance(audio, np.ndarray):
+                return torch.from_numpy(audio).float()
+            if isinstance(audio, (bytes, bytearray, memoryview)):
+                decoded_audio, _ = sf.read(BytesIO(audio), dtype="float32", always_2d=True)
+                return torch.from_numpy(decoded_audio.T).float()
+            raise TypeError(f"Unsupported audio type: {type(audio)!r}")
 
         mixes = []
         if include_isolated_trigger:
@@ -242,10 +265,21 @@ def make_custom_collate_fn(
         metadatas = []
         idxs = []
 
+        # Convert to torch
+        for sample in batch:
+            for key in sample:
+                if key.endswith(".flac"):
+                    sample[key] = _to_audio_tensor(sample[key])
+                elif key.endswith(".npy"):
+                    sample[key] = torch.from_numpy(sample[key]).float()
+
+        # Longest sample in the batch determines the length to pad to
+        chunk_size = max(sample["mix.flac"].shape[-1] for sample in batch)
+
         for sample in batch:
             idxs.append(sample["__key__"])
             label = sample["label.npy"]
-            mix = sample["mix.npy"]
+            mix = sample["mix.flac"]
 
             if include_metadata:
                 metadatas.append(sample["metadata.json"])
@@ -258,20 +292,18 @@ def make_custom_collate_fn(
                 random_class = rng.integers(0, len(label))
                 label[random_class] = 1
 
-            labels.append(torch.from_numpy(label).float())
+            labels.append(label)
 
             L = mix.shape[-1]  # noqa: N806
+            audio_lens.append(L)
             # audio is shorter than chunk_size → pad
-            mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
+
+            mixes.append(F.pad(mix, (0, chunk_size - L)))
 
             if include_isolated_trigger:
-                isolated_trigger = sample["isolated_trigger.npy"]
-                isolated_triggers.append(F.pad(isolated_trigger.float(), (0, chunk_size - L)))
+                isolated_triggers.append(F.pad(sample["isolated_trigger.flac"], (0, chunk_size - L)))
             if include_clean_mix:
-                clean_mix = sample["clean_mix.npy"]
-                clean_mixes.append(F.pad(clean_mix.float(), (0, chunk_size - L)))
-
-            mixes.append(mix_chunk)
+                clean_mixes.append(F.pad(sample["clean_mix.flac"], (0, chunk_size - L)))
 
         res = {
             "idxs": idxs,
@@ -323,19 +355,19 @@ def make_dataloader(
         level="debug",
     )
 
-    included_filenames = {"mix.npy", "label.npy", "metadata.json"}
+    included_filenames = {"mix.flac", "label.npy", "metadata.json"}
     if include_isolated_trigger:
-        included_filenames.add("isolated_trigger.npy")
+        included_filenames.add("isolated_trigger.flac")
     if include_clean_mix:
-        included_filenames.add("clean_mix.npy")
+        included_filenames.add("clean_mix.flac")
 
     def _include_file(fname: str) -> bool:
         """
         Only include files that are in the included_filenames set.
 
         Example:
-            _include_file("000000991.mix.npy") -> True
-            _include_file("000000991.isolated_trigger.npy") -> True if include_isolated_trigger is True, False otherwise
+            _include_file("000000991.mix.flac") -> True
+            _include_file("000000991.isolated_trigger.flac") -> True if include_isolated_trigger is True, False otherwise
 
         """
         return any(fname.endswith(included_fname) for included_fname in included_filenames)
@@ -544,10 +576,10 @@ def perform_eval(
 
                     if pred_name == "x" and ground_truth_target == "isolated_trigger":
                         metrics = calculate_default_metrics(
-                            pred_i,
-                            isolated_trigger_i,
+                            pred_i.to(device),
+                            isolated_trigger_i.to(device),
                             sample_rate=sample_rate,
-                            mix=mix_i,
+                            mix=mix_i.to(device),
                             # Do not use pre-comuted mix metrics since the batching truncates the audio
                             # mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
                             # if sample_metdata
@@ -555,10 +587,10 @@ def perform_eval(
                         )
                     else:
                         metrics = calculate_default_metrics(
-                            pred_i,
-                            clean_mix_i,
+                            pred_i.to(device),
+                            clean_mix_i.to(device),
                             sample_rate=sample_rate,
-                            mix=mix_i,
+                            mix=mix_i.to(device),
                             # Do not use pre-comuted mix metrics since the batching truncates the audio
                             # mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
                         )
