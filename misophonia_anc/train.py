@@ -144,6 +144,8 @@ def train_epoch(
     log_to_mlflow = mlflow.active_run() is not None
     mlflow_logger = CustomMlFlowLogger()
 
+    debug_count = 0
+
     with mlflow_logger:
         for batch in tqdm(train_loader, desc=f"Training (epoch {epoch})", unit="batch"):
             inputs = batch["inputs"]
@@ -163,6 +165,20 @@ def train_epoch(
             optimizer.zero_grad()
 
             # Mask output
+            if debug_count < 50:
+                debug_count += 1
+                eliot.log_message(
+                    (
+                        f"batch mix shape={tuple(inputs['mix'].shape)}, "
+                        f"gt shape={tuple(gt.shape)}, "
+                        f"audio_lens min={int(audio_lens.min())}, "
+                        f"max={int(audio_lens.max())}, "
+                        f"mean={float(audio_lens.float().mean()):.1f}, "
+                        f"cuda allocated={torch.cuda.memory_allocated() / 1024**3:.2f} GiB, "
+                        f"reserved={torch.cuda.memory_reserved() / 1024**3:.2f} GiB"
+                    ),
+                    level="debug",
+                )
             output = model(inputs)
 
             loss = loss_fn(output["x"], gt, audio_lens)
