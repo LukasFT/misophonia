@@ -1,4 +1,5 @@
 import itertools
+import json
 import math
 import os
 import subprocess
@@ -395,7 +396,7 @@ def evaluate(
         if limit_samples is not None:
             split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
 
-        res, _ = perform_eval(
+        res, agg_res = perform_eval(
             model,
             split_loader,
             save_results_to=results_file,
@@ -406,6 +407,8 @@ def evaluate(
             warm_up_iters=warm_up,
             loss_fn=get_loss_fn_from_name(config.loss_option),
         )
+
+        eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
 
         eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
 

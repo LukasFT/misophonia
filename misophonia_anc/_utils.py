@@ -724,7 +724,6 @@ def perform_eval(
 
     eliot.log_message(f"Aggregating results and saving to {save_aggregated_results_to}", level="info")
     agg_res = aggregate_results(results)
-    eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
     with save_aggregated_results_to.open("w") as f:
         json.dump(agg_res, f, indent=4)
     return results, agg_res
