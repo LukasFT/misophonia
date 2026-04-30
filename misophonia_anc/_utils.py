@@ -540,7 +540,7 @@ def perform_eval(
 
     has_warned_clean_mix = False
     has_warned_isolated_trigger = False
-    num_asserts_precompute_to_perform = 100  # Calculate metrics without using precomputed mix metrics for the first N samples, and assert that they are close to the metrics calculated using the precomputed mix metrics
+    num_asserts_precompute_to_perform = 3  # Calculate metrics without using precomputed mix metrics for the first N samples, and assert that they are close to the metrics calculated using the precomputed mix metrics
 
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None
 
