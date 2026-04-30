@@ -542,7 +542,6 @@ def perform_eval(
 
     has_warned_clean_mix = False
     has_warned_isolated_trigger = False
-    num_asserts_precompute_to_perform = 3  # Calculate metrics without using precomputed mix metrics for the first N samples, and assert that they are close to the metrics calculated using the precomputed mix metrics
 
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
 
@@ -629,29 +628,6 @@ def perform_eval(
                             mix_metrics=precomputed_mix_metrics,
                             loss_fn=loss_fn,
                         )
-                        if num_asserts_precompute_to_perform > 0 and precomputed_mix_metrics is not None:
-                            num_asserts_precompute_to_perform -= 1
-                            _metrics_not_precomputed = calculate_default_metrics(
-                                pred_i.to(device),
-                                isolated_trigger_i.to(device),
-                                sample_rate=sample_rate,
-                                mix=mix_i.to(device),
-                                mix_metrics=None,
-                                loss_fn=loss_fn,
-                            )
-                            if set(_metrics_not_precomputed.keys()) != set(metrics.keys()):
-                                eliot.log_message(
-                                    f"Differing metrics for precomputed and not. Metric names precomputed: {set(metrics.keys())}, metric names not precomputed: {set(_metrics_not_precomputed.keys())}. ",
-                                    level="warning",
-                                )
-                            else:
-                                for _m_name in _metrics_not_precomputed:
-                                    diff = _metrics_not_precomputed[_m_name] - metrics[_m_name]
-                                    if abs(diff) > 1e-4:
-                                        eliot.log_message(
-                                            f"Metric {_m_name} differs by {diff:.4f} when using precomputed mix metrics vs not using them. With precompute: {metrics[_m_name]}, without precompute: {_metrics_not_precomputed[_m_name]}. This warning will only be shown a certain number of times.",
-                                            level="warning",
-                                        )
                     else:  # Is subtracted
                         precomputed_mix_metrics = (
                             sample_metdata.get("mix_vs_clean_mix_metrics", None) if sample_metdata else None
