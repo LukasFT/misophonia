@@ -106,10 +106,10 @@ def train_epoch(
     device: torch.device,
     optimizer: optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
-    start_global_step: int = 0,
+    step_counter: SimpleCounter,
     epoch: int = 0,
     loss_fn: Callable = _time_loss,
-) -> tuple[float, int]:
+) -> float:
     model = model.train()
 
     batch_train_losses = []
@@ -141,16 +141,17 @@ def train_epoch(
 
         loss_value = loss.item()
         batch_train_losses.append(loss_value)
+        step_counter.increment()
         if log_to_mlflow:
             mlflow.log_metric(
                 "train/batch/loss",
                 loss_value,
-                step=start_global_step + batch_idx,
+                step=step_counter.current,
                 synchronous=False,
             )
 
     epoch_train_loss = float(np.mean(batch_train_losses))
-    return epoch_train_loss, start_global_step + batch_idx + 1
+    return epoch_train_loss
 
 
 def train_model(
@@ -195,18 +196,18 @@ def train_model(
     best_val_si_snr_improvement = -np.inf
 
     # FIXME: Counting global steps is done using two different implementations for val and train
-    global_step_train = global_step_train_start
+    global_step_train_counter = SimpleCounter(global_step_train_start)
     global_step_val_counter = SimpleCounter(global_step_val_start)
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
         # Perform train epcoh
-        train_loss, global_step_train = train_epoch(
+        train_loss = train_epoch(
             model,
             device=device,
             optimizer=optimizer,
             train_loader=train_loader,
             loss_fn=loss_fn,
-            start_global_step=global_step_train,
+            step_counter=global_step_train_counter,
             epoch=epoch,
         )
 
@@ -242,7 +243,7 @@ def train_model(
             "val/epoch/loss": val_loss,
             "val/epoch/si_snr_improvement": val_si_snr_improvement,
             "val/epoch/si_snr": val_si_snr,
-            "train/epoch/global_step": global_step_train,
+            "train/epoch/global_step": global_step_train_counter.current,
             "val/epoch/global_step": global_step_val_counter.current,
         }
         eliot.log_message(
@@ -259,7 +260,7 @@ def train_model(
         model.save_checkpoint(
             ckpt_path,
             epoch=epoch,
-            global_step_train=global_step_train,
+            global_step_train=global_step_train_counter.current,
             global_step_val=global_step_val_counter.current,
             val_si_snr_improvement=val_si_snr_improvement,
             val_si_snr=val_si_snr,
