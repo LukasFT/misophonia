@@ -165,7 +165,7 @@ def train_epoch(
             optimizer.zero_grad()
 
             # Mask output
-            if debug_count < 50:
+            if debug_count < 3:
                 debug_count += 1
                 eliot.log_message(
                     (
