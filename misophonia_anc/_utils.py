@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 import eliot
 import mlflow
+import mlflow.entities
+import mlflow.utils.time
 import numpy as np
 import pandas as pd
 import pydantic
@@ -541,8 +543,9 @@ def perform_eval(
     ground_truth_target = model.ground_truth_target
 
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
+    mlflow_logger = CustomMlFlowLogger()
 
-    with torch.no_grad():
+    with mlflow_logger, torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
             inputs = batch["inputs"]
             inputs["mix"] = inputs["mix"].to(device)
@@ -660,7 +663,7 @@ def perform_eval(
 
             if log_to_mlflow:
                 mlflow_global_step.increment()
-                mlflow.log_metrics(
+                mlflow_logger.log_metrics(
                     {
                         "val/batch/si_snr_improvement": np.mean([m["si_snr_improvement"] for m in batch_metrics]),
                         "val/batch/si_snr": np.mean([m["si_snr"] for m in batch_metrics]),
@@ -684,6 +687,58 @@ def perform_eval(
     with save_aggregated_results_to.open("w") as f:
         json.dump(agg_res, f, indent=4)
     return results, agg_res
+
+
+class CustomMlFlowLogger:
+    def __init__(self, *, flush_every: int = 256) -> None:
+        # get current mlflow run
+        active_run = mlflow.active_run()
+        if active_run is None:
+            raise ValueError(
+                "No active MLflow run found. Please start an MLflow run before initializing CustomMlFlowLogger."
+            )
+        self._run_id = active_run.info.run_id
+        self._client = mlflow.MlflowClient()
+        self._queue = []
+        self._flush_every = flush_every
+
+    def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous=False) -> None:
+        metrics_arr = [
+            mlflow.entities.Metric(
+                key=key,
+                value=value,
+                timestamp=mlflow.utils.time.get_current_time_millis(),
+                step=step,
+                run_id=self._run_id,
+                model_id=None,
+                dataset_name=None,
+                dataset_digest=None,
+            )
+            for key, value in metrics.items()
+        ]
+        self._queue.extend(metrics_arr)
+
+        if len(self._queue) >= self._flush_every:
+            self.flush(synchronous=synchronous)
+
+    def flush(self, *, synchronous=False) -> None:
+        if len(self._queue) == 0:
+            return
+
+        self._client.log_batch(
+            run_id=self._run_id,
+            metrics=self._queue,
+            params=[],
+            tags=[],
+            synchronous=synchronous,
+        )
+        self._queue = []
+
+    def __enter__(self) -> "CustomMlFlowLogger":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.flush()
 
 
 def aggregate_results(results: list[dict[str, object]]) -> dict:
