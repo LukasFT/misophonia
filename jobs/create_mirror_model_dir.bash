@@ -20,6 +20,11 @@ if [ ! -d "$BASE_MODEL_DIR" ]; then
     exit 1
 fi
 
+if [ -d "$NEW_MODEL_DIR" ]; then
+    echo "Error: New model directory '$NEW_MODEL_DIR' already exists. Please choose a different name or remove the existing directory."
+    exit 1
+fi
+
 # Copy base config to new model directory
 mkdir -p "$NEW_MODEL_DIR"
 cp "$BASE_MODEL_DIR/config.yaml" "$NEW_MODEL_DIR/config.yaml"
