@@ -18,7 +18,7 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-from ._utils import SimpleCounter, perform_eval, prepare_dir_or_file
+from ._utils import CustomMlFlowLogger, SimpleCounter, perform_eval, prepare_dir_or_file
 
 try:
     from .confidential_losses import mrccmse_loss  # noqa: F401
@@ -114,41 +114,42 @@ def train_epoch(
 
     batch_train_losses = []
     log_to_mlflow = mlflow.active_run() is not None
+    mlflow_logger = CustomMlFlowLogger()
 
-    for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
-        inputs = batch["inputs"]
-        gt = batch[model.ground_truth_target]
-        audio_lens = batch["audio_lens"]
+    with mlflow_logger:
+        for batch in tqdm(train_loader, desc=f"Training (epoch {epoch})", unit="batch"):
+            inputs = batch["inputs"]
+            gt = batch[model.ground_truth_target]
+            audio_lens = batch["audio_lens"]
 
-        # in loader return mask that is [B, C, N]
-        # inputs = {k: v.to(device) for k, v in inputs.items()}
-        inputs["mix"] = inputs["mix"].to(device)
-        inputs["label_vector"] = inputs["label_vector"].to(device)
-        inputs["is_control"] = inputs["is_control"].to(device)
+            # in loader return mask that is [B, C, N]
+            # inputs = {k: v.to(device) for k, v in inputs.items()}
+            inputs["mix"] = inputs["mix"].to(device)
+            inputs["label_vector"] = inputs["label_vector"].to(device)
+            inputs["is_control"] = inputs["is_control"].to(device)
 
-        gt = gt.to(device)
-        audio_lens = audio_lens.to(device)
-        _, _, T = gt.shape  # noqa: N806
+            gt = gt.to(device)
+            audio_lens = audio_lens.to(device)
+            _, _, T = gt.shape  # noqa: N806
 
-        optimizer.zero_grad()
+            optimizer.zero_grad()
 
-        # Mask output
-        output = model(inputs)
+            # Mask output
+            output = model(inputs)
 
-        loss = loss_fn(output["x"], gt, audio_lens)
-        loss.backward()
-        optimizer.step()
+            loss = loss_fn(output["x"], gt, audio_lens)
+            loss.backward()
+            optimizer.step()
 
-        loss_value = loss.item()
-        batch_train_losses.append(loss_value)
-        step_counter.increment()
-        if log_to_mlflow:
-            mlflow.log_metric(
-                "train/batch/loss",
-                loss_value,
-                step=step_counter.current,
-                synchronous=False,
-            )
+            loss_value = loss.item()
+            batch_train_losses.append(loss_value)
+            step_counter.increment()
+            if log_to_mlflow:
+                mlflow_logger.log_metrics(
+                    {"train/batch/loss": loss_value},
+                    step=step_counter.current,
+                    synchronous=False,
+                )
 
     batch_train_losses = np.array(batch_train_losses)
     epoch_train_loss = float(np.mean(batch_train_losses))
