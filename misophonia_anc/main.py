@@ -181,6 +181,13 @@ def train(
             help="Whether to restart training from epoch 0. If false, will continue from the epoch specified in the checkpoint metadata (if checkpoint is provided).",
         ),
     ] = False,
+    skip_subtraction: Annotated[
+        bool,
+        typer.Option(
+            ...,
+            help="Whether to skip subtraction of input mix from model output when calculating metrics.",
+        ),
+    ] = True,
     mlflow_uri: Annotated[
         str | None, typer.Option(..., help="MLflow tracking URI.", envvar="MLFLOW_TRACKING_URI")
     ] = None,
@@ -239,7 +246,7 @@ def train(
         batch_size=config.batch_size,
         num_workers=num_workers,
         include_clean_mix=model.ground_truth_target == "clean_mix"
-        or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
+        or (not skip_subtraction and config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
         include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
     )
 
@@ -300,6 +307,7 @@ def train(
             save_dir=Path(model_dir),
             global_step_train_start=checkpoint_metadata.get("global_step_train", 0),
             global_step_val_start=checkpoint_metadata.get("global_step_val", 0),
+            skip_subtraction=skip_subtraction,
             **config.model_hyperparams,
         )
     finally:

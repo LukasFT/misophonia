@@ -164,6 +164,7 @@ def train_model(
     device: torch.device,
     loss_option: str,
     save_dir: Path,
+    skip_subtraction: bool = True,
     lr: float = 0.0005,
     weight_decay: float = 0.0,
     global_step_train_start: int = 0,
@@ -183,6 +184,7 @@ def train_model(
         weight_decay (float): weight decay to apply to optimizer
         device (torch.device): cuda or cpu
         save_dir: Path to save model weights and metric plots
+        skip_subtraction: Skip subtraction methods when calculating metrics during val evaluation.
         global_step_train (int): Metadata for MLflow to report total number of training batches already logged.
         global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
     """
@@ -230,7 +232,7 @@ def train_model(
             save_num_samples=20,
             mlflow_global_step=global_step_val_counter,
             loss_fn=loss_fn,
-            skip_subtraction=True,
+            skip_subtraction=skip_subtraction,
             split_name="val",
         )
 
