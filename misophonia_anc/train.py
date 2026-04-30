@@ -5,7 +5,7 @@ The main training script for training on synthetic data
 import json
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import eliot
 import mlflow  # type: ignore
@@ -108,7 +108,7 @@ def train_epoch(
     train_loader: torch.utils.data.DataLoader,
     start_global_step: int = 0,
     epoch: int = 0,
-    loss_fn: callable = _time_loss,
+    loss_fn: Callable = _time_loss,
 ) -> tuple[float, int]:
     model = model.train()
 

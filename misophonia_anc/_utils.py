@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Callable, Literal
 
 import eliot
 import mlflow
@@ -408,7 +408,7 @@ def calculate_default_metrics(
     mix: torch.Tensor | None = None,
     mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
-    loss_fn: callable | None = None,
+    loss_fn: Callable | None = None,
 ) -> dict[str, float]:
     si_snr_both = si_snr(preds, target)
     snr_both = snr(preds, target)
@@ -500,7 +500,7 @@ def perform_eval(
     save_num_samples: int = 0,
     warm_up_iters: int = 10,
     mlflow_global_step: "SimpleCounter" | None = None,
-    loss_fn: callable | None = None,
+    loss_fn: Callable | None = None,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
