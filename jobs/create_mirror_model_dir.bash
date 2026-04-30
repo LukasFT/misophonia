@@ -23,6 +23,7 @@ fi
 # Copy base config to new model directory
 mkdir -p "$NEW_MODEL_DIR"
 cp "$BASE_MODEL_DIR/config.yaml" "$NEW_MODEL_DIR/config.yaml"
+chown -R $USER:toner_lukt "$NEW_MODEL_DIR"
 
 # Open nano to edit the new config file
 nano "$NEW_MODEL_DIR/config.yaml"
