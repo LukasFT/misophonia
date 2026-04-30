@@ -598,24 +598,26 @@ def perform_eval(
                     pred_i = pred[i, :, :valid_len]
 
                     if pred_name == "x" and ground_truth_target == "isolated_trigger":
+                        precomputed_mix_metrics = (
+                            sample_metdata.get("mix_vs_isolated_trigger_metrics", None) if sample_metdata else None
+                        )
                         metrics = calculate_default_metrics(
                             pred_i.to(device),
                             isolated_trigger_i.to(device),
                             sample_rate=sample_rate,
-                            mix=mix_i.to(device),
-                            # Do not use pre-comuted mix metrics since the batching truncates the audio
-                            # mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
-                            # if sample_metdata
-                            # else None,
+                            mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
+                            mix_metrics=precomputed_mix_metrics,
                         )
                     else:
+                        precomputed_mix_metrics = (
+                            sample_metdata.get("mix_vs_clean_mix_metrics", None) if sample_metdata else None
+                        )
                         metrics = calculate_default_metrics(
                             pred_i.to(device),
                             clean_mix_i.to(device),
                             sample_rate=sample_rate,
-                            mix=mix_i.to(device),
-                            # Do not use pre-comuted mix metrics since the batching truncates the audio
-                            # mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
+                            mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
+                            mix_metrics=precomputed_mix_metrics,
                         )
 
                     if save_sample:
