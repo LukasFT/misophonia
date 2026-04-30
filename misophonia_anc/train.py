@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from .model import MisophoniaANCNet
 
 
-def get_loss_fn_from_name(loss_option: str) -> callable:
+def get_loss_fn_from_name(loss_option: str) -> Callable:
     if loss_option == "time":
         return _time_loss
     elif loss_option == "freq":

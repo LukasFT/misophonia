@@ -31,7 +31,7 @@ from ._utils import (
     print_mem,
 )
 from .model import MisophoniaANCNet
-from .train import train_model
+from .train import get_loss_fn_from_name, train_model
 
 setup_print_logging()
 load_dotenv()
@@ -403,6 +403,7 @@ def evaluate(
             save_samples_to=samples_dir,
             device=device,
             warm_up_iters=warm_up,
+            loss_fn=get_loss_fn_from_name(config.loss_option),
         )
 
         eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
