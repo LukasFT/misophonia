@@ -691,13 +691,14 @@ def perform_eval(
                             "sample_files": sample_files,
                         }
                     )
-                    batch_metrics.append(metrics)
+                    if pred_name == "x":  # Only mlflow log the main prediction
+                        batch_metrics.append(metrics)
 
             if log_to_mlflow:
                 mlflow_global_step.increment()
                 mlflow.log_metrics(
                     {
-                        f"{split_name}/batch/{pred_name}_{metric_name}": metric_value
+                        f"{split_name}/batch/{metric_name}": metric_value
                         for metric_name, metric_value in pd.DataFrame(batch_metrics).mean().items()
                     },
                     step=mlflow_global_step.current,  # Batch step
