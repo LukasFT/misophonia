@@ -42,3 +42,14 @@ else
 fi
 
 echo "Set up ${NEW_MODEL_DIR}"
+
+
+# Setart new job request
+read -p "Do you want to start a new training job for this model? (y/n): " REPLY
+if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+    echo "Starting new training job for $NEW_MODEL_NAME..."
+    git pull
+    sbatch --cpus-per-task=8 --partition=acltr --gres=gpu:1 --time=72:00:00 jobs/anc_cli.job train $NEW_MODEL_NAME
+else
+    echo "Not starting job."
+fi
