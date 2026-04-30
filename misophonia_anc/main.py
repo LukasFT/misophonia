@@ -244,6 +244,11 @@ def train(
         num_workers=num_workers,
         include_clean_mix=model.ground_truth_target == "clean_mix",
         include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+        max_length=(
+            config.dataset_splits["train"].generated_config.get("max_length")
+            if "train" in config.dataset_splits and config.dataset_splits["train"].generated_config is not None
+            else None
+        ),
     )
     val_loader = make_dataloader(
         shards_val,
@@ -252,6 +257,11 @@ def train(
         include_clean_mix=model.ground_truth_target == "clean_mix"
         or (not skip_subtraction and config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
         include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+        max_length=(
+            config.dataset_splits["val"].generated_config.get("max_length")
+            if "val" in config.dataset_splits and config.dataset_splits["val"].generated_config is not None
+            else None
+        ),
     )
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
@@ -401,6 +411,11 @@ def evaluate(
             include_clean_mix=model.ground_truth_target == "clean_mix"
             or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
             include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+            max_length=(
+                config.dataset_splits[split].generated_config.get("max_length")
+                if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+                else None
+            ),
         )
         if limit_samples is not None:
             split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
