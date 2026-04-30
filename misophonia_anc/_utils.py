@@ -527,6 +527,9 @@ def perform_eval(
 
     ground_truth_target = model.ground_truth_target
 
+    has_warned_clean_mix = False
+    has_warned_isolated_trigger = False
+
     with torch.no_grad():
         for batch in tqdm(data_loader, desc="Evaluating", unit=" batches"):
             inputs = batch["inputs"]
@@ -551,9 +554,29 @@ def perform_eval(
             for i in range(batch_size):
                 sample_idx = batch["idxs"][i]
                 valid_len = int(batch["audio_lens"][i].item())  # To remove padding
-                clean_mix_i = batch["clean_mix"][i, :, :valid_len]
-                isolated_trigger_i = batch["isolated_trigger"][i, :, :valid_len]
                 mix_i = inputs["mix"][i, :, :valid_len]
+
+                if "clean_mix" in batch:
+                    clean_mix_i = batch["clean_mix"][i, :, :valid_len]
+                else:
+                    if not has_warned_clean_mix:
+                        eliot.log_message(
+                            "Batch does not contain clean_mix. Metrics comparing to clean_mix will be NaN. This warning will only be shown once.",
+                            level="warning",
+                        )
+                        has_warned_clean_mix = True
+                    clean_mix_i = torch.zeros_like(mix_i)
+
+                if "isolated_trigger" in batch:
+                    isolated_trigger_i = batch["isolated_trigger"][i, :, :valid_len]
+                else:
+                    if not has_warned_isolated_trigger:
+                        eliot.log_message(
+                            "Batch does not contain isolated_trigger. Metrics comparing to isolated_trigger will be NaN. This warning will only be shown once.",
+                            level="warning",
+                        )
+                        has_warned_isolated_trigger = True
+                    isolated_trigger_i = torch.zeros_like(mix_i)
 
                 sample_metdata = batch["metadata"][i] if "metadata" in batch else None
                 sample_rate = sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE
