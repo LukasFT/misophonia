@@ -662,8 +662,11 @@ def perform_eval(
                 mlflow_global_step.increment()
                 mlflow.log_metrics(
                     {
-                        f"{split_name}/batch/{metric_name}": metric_value
-                        for metric_name, metric_value in pd.DataFrame(batch_metrics).mean().items()
+                        "val/batch/si_snr_improvement": np.mean([m["si_snr_improvement"] for m in batch_metrics]),
+                        "val/batch/si_snr": np.mean([m["si_snr"] for m in batch_metrics]),
+                        "val/batch/snr_improvement": np.mean([m["snr_improvement"] for m in batch_metrics]),
+                        "val/batch/snr": np.mean([m["snr"] for m in batch_metrics]),
+                        "val/batch/loss": np.mean([m["loss"] for m in batch_metrics]),
                     },
                     step=mlflow_global_step.current,  # Batch step
                     synchronous=False,
