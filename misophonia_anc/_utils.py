@@ -502,6 +502,7 @@ def perform_eval(
     warm_up_iters: int = 10,
     mlflow_global_step: Optional["SimpleCounter"] = None,
     loss_fn: Callable | None = None,
+    skip_subtraction: bool = False,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -551,6 +552,9 @@ def perform_eval(
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
             batch_metrics = []
+
+            if log_to_mlflow:
+                mlflow_global_step.increment()
 
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
@@ -610,6 +614,9 @@ def perform_eval(
                     save_sample = False
 
                 for pred_name, pred in output_items:
+                    if skip_subtraction and pred_name != "x":
+                        continue
+
                     pred_i = pred[i, :, :valid_len]
 
                     if pred_name == "x" and ground_truth_target == "isolated_trigger":  # is not subtracted
@@ -694,16 +701,18 @@ def perform_eval(
                                 f"sample/{pred_name}_{metric_name}": metric_value
                                 for metric_name, metric_value in metrics.items()
                             },
-                            step=mlflow_global_step.current + batch_idx * batch_size + i,  # Batch step to sample step
+                            step=mlflow_global_step.current * batch_size + i,  # Batch step to sample step
+                            synchronous=False,
                         )
+
             if log_to_mlflow:
-                mlflow_global_step.increment()
                 mlflow.log_metrics(
                     {
                         f"batch/{pred_name}_{metric_name}": metric_value
                         for metric_name, metric_value in pd.DataFrame(batch_metrics).mean().items()
                     },
                     step=mlflow_global_step.current,  # Batch step
+                    synchronous=False,
                 )
 
     eliot.log_message(f"Saving results to {save_results_to}", level="info")

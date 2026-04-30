@@ -223,6 +223,7 @@ def train_model(
             save_num_samples=20,
             mlflow_global_step=global_step_val_counter,
             loss_fn=loss_fn,
+            skip_subtraction=True,
         )
 
         val_si_snr = eval_results_agg["x"]["si_snr_mean"]
