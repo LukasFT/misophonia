@@ -196,7 +196,7 @@ class MisophoniaANCConfig(BaseModel):
     num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
     batch_size: int = pydantic.Field(1, description="Batch size for training.")
     loss_option: str = pydantic.Field(
-        "time", description="Domain in which to apply loss. Options are 'time', 'freq', 'combined'."
+        "time", description="Domain in which to apply loss. See train.get_loss_fn_from_name for options."
     )
 
     model_params: dict = pydantic.Field(

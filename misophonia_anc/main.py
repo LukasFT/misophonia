@@ -293,9 +293,6 @@ def train(
             eliot.log_message(f"Tracking using MLflow '{run_name}': {run_link}", level="info")
 
     try:
-        assert config.loss_option in ["time", "freq", "combined"], (
-            "Invalid loss option. Must be 'time', 'freq', or 'combined'."
-        )
         train_model(
             model,
             device=device,
