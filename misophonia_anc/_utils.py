@@ -433,7 +433,8 @@ def calculate_default_metrics(
     if loss_fn is not None:
         # Call loss function like it is a batch
         audio_lens = (target.shape[-1],)
-        metrics["loss"] = loss_fn(preds.unsqueeze(0), target.unsqueeze(0), audio_lens)
+        loss = loss_fn(preds.unsqueeze(0), target.unsqueeze(0), audio_lens)
+        metrics["loss"] = loss.item()
 
     if mix is not None and mix_metrics is None:
         mix_metrics = calculate_default_metrics(mix, target, sample_rate=sample_rate)
