@@ -690,7 +690,9 @@ def perform_eval(
 
 
 class CustomMlFlowLogger:
-    def __init__(self, *, flush_every: int = 256) -> None:
+    """NOTE: Not thread-safe"""
+
+    def __init__(self, *, flush_every: int = 512) -> None:
         # get current mlflow run
         active_run = mlflow.active_run()
         if active_run is None:
@@ -702,12 +704,13 @@ class CustomMlFlowLogger:
         self._queue = []
         self._flush_every = flush_every
 
-    def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous=False) -> None:
+    def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous: bool = False) -> None:
+        timestamp = mlflow.utils.time.get_current_time_millis()
         metrics_arr = [
             mlflow.entities.Metric(
                 key=key,
                 value=value,
-                timestamp=mlflow.utils.time.get_current_time_millis(),
+                timestamp=timestamp,
                 step=step,
                 run_id=self._run_id,
                 model_id=None,
@@ -721,7 +724,7 @@ class CustomMlFlowLogger:
         if len(self._queue) >= self._flush_every:
             self.flush(synchronous=synchronous)
 
-    def flush(self, *, synchronous=False) -> None:
+    def flush(self, *, synchronous: bool = False) -> None:
         if len(self._queue) == 0:
             return
 
@@ -738,7 +741,7 @@ class CustomMlFlowLogger:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.flush()
+        self.flush(synchronous=True)
 
 
 def aggregate_results(results: list[dict[str, object]]) -> dict:
