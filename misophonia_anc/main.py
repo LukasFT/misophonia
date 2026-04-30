@@ -188,6 +188,10 @@ def train(
             help="Whether to skip subtraction of input mix from model output when calculating metrics.",
         ),
     ] = True,
+    val_batch_size: Annotated[
+        int | None,
+        typer.Option(..., help="Batch size for validation dataloader. Defaults to same as training batch size."),
+    ] = None,
     mlflow_uri: Annotated[
         str | None, typer.Option(..., help="MLflow tracking URI.", envvar="MLFLOW_TRACKING_URI")
     ] = None,
@@ -243,7 +247,7 @@ def train(
     )
     val_loader = make_dataloader(
         shards_val,
-        batch_size=config.batch_size,
+        batch_size=val_batch_size if val_batch_size is not None else config.batch_size,
         num_workers=num_workers,
         include_clean_mix=model.ground_truth_target == "clean_mix"
         or (not skip_subtraction and config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
