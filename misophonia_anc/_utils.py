@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import eliot
+import mlflow
 import numpy as np
 import pandas as pd
 import pydantic
@@ -407,6 +408,7 @@ def calculate_default_metrics(
     mix: torch.Tensor | None = None,
     mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
+    loss_fn: callable | None = None,
 ) -> dict[str, float]:
     si_snr_both = si_snr(preds, target)
     snr_both = snr(preds, target)
@@ -427,6 +429,11 @@ def calculate_default_metrics(
         # "ild": ild,
         # "itd": itd,
     }
+
+    if loss_fn is not None:
+        # Call loss function like it is a batch
+        audio_lens = (target.shape[-1],)
+        metrics["loss"] = loss_fn(preds.unsqueeze(0), target.unsqueeze(0), audio_lens)
 
     if mix is not None and mix_metrics is None:
         mix_metrics = calculate_default_metrics(mix, target, sample_rate=sample_rate)
@@ -492,6 +499,8 @@ def perform_eval(
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
     warm_up_iters: int = 10,
+    mlflow_global_step: "SimpleCounter" | None = None,
+    loss_fn: callable | None = None,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -505,6 +514,7 @@ def perform_eval(
         save_samples_to: If not None, a directory to save example audio files of the mixes, gts, and predictions. Will save as .flac files.
         save_num_samples: If save_samples_to is not None, the maximum number of samples to save to disk. If 0, do not save any.
         warm_up_iters: Number of iterations to run for warming up the model before measuring latency.
+        mlflow_global_step: A counter to track the global step for MLflow logging.
 
     Returns:
         A tuple containing the individual sample results and the aggregated results.
@@ -529,13 +539,17 @@ def perform_eval(
 
     has_warned_clean_mix = False
     has_warned_isolated_trigger = False
+    num_asserts_precompute_to_perform = 100  # Calculate metrics without using precomputed mix metrics for the first N samples, and assert that they are close to the metrics calculated using the precomputed mix metrics
+
+    log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None
 
     with torch.no_grad():
-        for batch in tqdm(data_loader, desc="Evaluating", unit=" batches"):
+        for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
             inputs = batch["inputs"]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
+            batch_metrics = []
 
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
@@ -597,7 +611,7 @@ def perform_eval(
                 for pred_name, pred in output_items:
                     pred_i = pred[i, :, :valid_len]
 
-                    if pred_name == "x" and ground_truth_target == "isolated_trigger":
+                    if pred_name == "x" and ground_truth_target == "isolated_trigger":  # is not subtracted
                         precomputed_mix_metrics = (
                             sample_metdata.get("mix_vs_isolated_trigger_metrics", None) if sample_metdata else None
                         )
@@ -607,8 +621,32 @@ def perform_eval(
                             sample_rate=sample_rate,
                             mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
                             mix_metrics=precomputed_mix_metrics,
+                            loss_fn=loss_fn,
                         )
-                    else:
+                        if num_asserts_precompute_to_perform > 0 and precomputed_mix_metrics is not None:
+                            num_asserts_precompute_to_perform -= 1
+                            _metrics_not_precomputed = calculate_default_metrics(
+                                pred_i.to(device),
+                                isolated_trigger_i.to(device),
+                                sample_rate=sample_rate,
+                                mix=mix_i.to(device),
+                                mix_metrics=None,
+                                loss_fn=loss_fn,
+                            )
+                            if set(_metrics_not_precomputed.keys()) != set(metrics.keys()):
+                                eliot.log_message(
+                                    f"Differing metrics for precomputed and not. Metric names precomputed: {set(metrics.keys())}, metric names not precomputed: {set(_metrics_not_precomputed.keys())}. ",
+                                    level="warning",
+                                )
+                            else:
+                                for _m_name in _metrics_not_precomputed:
+                                    diff = _metrics_not_precomputed[_m_name] - metrics[_m_name]
+                                    if abs(diff) > 1e-4:
+                                        eliot.log_message(
+                                            f"Metric {_m_name} differs by {diff:.4f} when using precomputed mix metrics vs not using them. With precompute: {metrics[_m_name]}, without precompute: {_metrics_not_precomputed[_m_name]}. This warning will only be shown a certain number of times.",
+                                            level="warning",
+                                        )
+                    else:  # Is subtracted
                         precomputed_mix_metrics = (
                             sample_metdata.get("mix_vs_clean_mix_metrics", None) if sample_metdata else None
                         )
@@ -618,6 +656,7 @@ def perform_eval(
                             sample_rate=sample_rate,
                             mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
                             mix_metrics=precomputed_mix_metrics,
+                            loss_fn=loss_fn,
                         )
 
                     if save_sample:
@@ -639,12 +678,32 @@ def perform_eval(
                             "pred_name": pred_name,
                             "runtime_ms": runtime_ms,
                             "metrics": metrics,
+                            "batch_idx": batch_idx,
                             "batch_length": inputs["mix"].shape[-1],
                             "sample_length": valid_len,
                             "sample_metadata": sample_metdata,
                             "sample_files": sample_files,
                         }
                     )
+                    batch_metrics.append(metrics)
+
+                    if log_to_mlflow:
+                        mlflow.log_metrics(
+                            {
+                                f"sample/{pred_name}_{metric_name}": metric_value
+                                for metric_name, metric_value in metrics.items()
+                            },
+                            step=mlflow_global_step.current + batch_idx * batch_size + i,  # Batch step to sample step
+                        )
+            if log_to_mlflow:
+                mlflow_global_step.increment()
+                mlflow.log_metrics(
+                    {
+                        f"batch/{pred_name}_{metric_name}": metric_value
+                        for metric_name, metric_value in pd.DataFrame(batch_metrics).mean().items()
+                    },
+                    step=mlflow_global_step.current,  # Batch step
+                )
 
     eliot.log_message(f"Saving results to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
@@ -909,6 +968,22 @@ def log_dataset_config_diffs(
             )
     except Exception as e:
         eliot.log_message(f"Error occurred while comparing dataset configs for {split}: {e}", level="error")
+
+
+class SimpleCounter:
+    """Simple class to keep track of a count that can be incremented. Useful for tracking global steps for MLflow logging, etc."""
+
+    def __init__(self, start: int = 0) -> None:
+        self._count = start
+
+    def increment(self, n=1) -> None:
+        """Increment the counter by n"""
+        self._count += n
+
+    @property
+    def current(self) -> int:
+        """The current count."""
+        return self._count
 
 
 # FIXME: Remove unused (commented out) functions

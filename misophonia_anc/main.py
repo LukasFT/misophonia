@@ -296,8 +296,8 @@ def train(
             checkpoint_epoch=checkpoint_metadata.get("epoch", 0) if not reset_epoch else 0,
             loss_option=config.loss_option,
             save_dir=Path(model_dir),
-            global_step_train=checkpoint_metadata.get("global_step_train", 0),
-            global_step_val=checkpoint_metadata.get("global_step_val", 0),
+            global_step_train_start=checkpoint_metadata.get("global_step_train", 0),
+            global_step_val_start=checkpoint_metadata.get("global_step_val", 0),
             **config.model_hyperparams,
         )
     finally:
