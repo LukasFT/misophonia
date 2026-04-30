@@ -262,7 +262,7 @@ def train(
             mlflow_existing_id = checkpoint_metadata.get("mlflow_run_id", None) if resume_mlflow else None
             mlflow.start_run(
                 run_id=mlflow_existing_id,  # If resuming from checkpoint, continue the same MLflow run
-                run_name=f"Train at {datetime.now().isoformat()}",  # Name if starting new run
+                run_name=f"Train {name} at {datetime.now().isoformat()}",  # Name if starting new run
             )
 
             mlflow_artifact = f"parameters_{datetime.now().isoformat()}.json"
