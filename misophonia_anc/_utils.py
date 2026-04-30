@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 import eliot
 import mlflow
@@ -499,7 +499,7 @@ def perform_eval(
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
     warm_up_iters: int = 10,
-    mlflow_global_step: "SimpleCounter" | None = None,
+    mlflow_global_step: Optional["SimpleCounter"] = None,
     loss_fn: Callable | None = None,
 ) -> tuple[dict, dict | None]:
     """
