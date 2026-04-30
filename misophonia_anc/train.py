@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 def get_loss_fn_from_name(loss_option: str) -> Callable:
     if loss_option == "time":
         return _time_loss
+    elif loss_option == "time_with_si_snr":
+        return _time_snr_and_si_snr_loss
     elif loss_option == "freq":
         return _freq_loss
     elif loss_option == "combined":
@@ -46,7 +48,7 @@ def get_loss_fn_from_name(loss_option: str) -> Callable:
 
 def _time_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
     """
-    Computes loss with .7 weight on snr and .3 weight on si-snr. Applies double weighting to the right channel
+    Pure SNR, 50/50 from each channel
     """
     batch_size = pred.shape[0]
     batch_loss = []
@@ -58,6 +60,32 @@ def _time_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) 
 
         avg_term = 0.5 * left_term + 0.5 * right_term
         batch_loss.append(avg_term)
+    return sum(batch_loss) / len(batch_loss)
+
+
+def _time_snr_and_si_snr_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
+    """
+    Pure SNR, 50/50 from each channel
+    """
+    batch_size = pred.shape[0]
+    batch_loss = []
+    for i in range(batch_size):
+        left_pred = pred[i, 0, : audio_lens[i]]
+        right_pred = pred[i, 1, : audio_lens[i]]
+
+        left_term_snr = -snr(left_pred, tgt[i, 0, : audio_lens[i]])
+        right_term_snr = -snr(right_pred, tgt[i, 1, : audio_lens[i]])
+
+        avg_term_snr = 0.5 * left_term_snr + 0.5 * right_term_snr
+
+        left_term_si = -si_snr(left_pred, tgt[i, 0, : audio_lens[i]])
+        right_term_si = -si_snr(right_pred, tgt[i, 1, : audio_lens[i]])
+
+        avg_term_si = 0.5 * left_term_si + 0.5 * right_term_si
+
+        term = 0.9 * avg_term_snr + 0.1 * avg_term_si
+
+        batch_loss.append(term)
     return sum(batch_loss) / len(batch_loss)
 
 
