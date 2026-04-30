@@ -113,6 +113,7 @@ def train_epoch(
     model = model.train()
 
     batch_train_losses = []
+    log_to_mlflow = mlflow.active_run() is not None
 
     for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
         inputs = batch["inputs"]
@@ -140,8 +141,13 @@ def train_epoch(
 
         loss_value = loss.item()
         batch_train_losses.append(loss_value)
-        if mlflow.active_run() is not None:
-            mlflow.log_metric("train/loss_batch", loss_value, step=start_global_step + batch_idx)
+        if log_to_mlflow:
+            mlflow.log_metric(
+                "train/batch/loss",
+                loss_value,
+                step=start_global_step + batch_idx,
+                synchronous=False,
+            )
 
     epoch_train_loss = float(np.mean(batch_train_losses))
     return epoch_train_loss, start_global_step + batch_idx + 1
@@ -224,6 +230,7 @@ def train_model(
             mlflow_global_step=global_step_val_counter,
             loss_fn=loss_fn,
             skip_subtraction=True,
+            split_name="val",
         )
 
         val_si_snr = eval_results_agg["x"]["si_snr_mean"]

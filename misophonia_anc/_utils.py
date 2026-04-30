@@ -503,6 +503,7 @@ def perform_eval(
     mlflow_global_step: Optional["SimpleCounter"] = None,
     loss_fn: Callable | None = None,
     skip_subtraction: bool = False,
+    split_name: SplitT | None = None,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -543,7 +544,7 @@ def perform_eval(
     has_warned_isolated_trigger = False
     num_asserts_precompute_to_perform = 3  # Calculate metrics without using precomputed mix metrics for the first N samples, and assert that they are close to the metrics calculated using the precomputed mix metrics
 
-    log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None
+    log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
 
     with torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
@@ -698,7 +699,7 @@ def perform_eval(
                     if log_to_mlflow:
                         mlflow.log_metrics(
                             {
-                                f"sample/{pred_name}_{metric_name}": metric_value
+                                f"{split_name}/sample/{pred_name}_{metric_name}": metric_value
                                 for metric_name, metric_value in metrics.items()
                             },
                             step=mlflow_global_step.current * batch_size + i,  # Batch step to sample step
@@ -708,7 +709,7 @@ def perform_eval(
             if log_to_mlflow:
                 mlflow.log_metrics(
                     {
-                        f"batch/{pred_name}_{metric_name}": metric_value
+                        f"{split_name}/batch/{pred_name}_{metric_name}": metric_value
                         for metric_name, metric_value in pd.DataFrame(batch_metrics).mean().items()
                     },
                     step=mlflow_global_step.current,  # Batch step
