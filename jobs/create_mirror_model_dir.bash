@@ -41,4 +41,4 @@ else
     echo "Skipping symbolic link creation. You can set up the webdataset directory manually later."
 fi
 
-echo "Set up ${NEW_MODEL_DIR} by copying config from ${BASE_MODEL_DIR}"
+echo "Set up ${NEW_MODEL_DIR}"
