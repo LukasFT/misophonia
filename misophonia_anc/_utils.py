@@ -554,9 +554,6 @@ def perform_eval(
             inputs["is_control"] = inputs["is_control"].to(device)
             batch_metrics = []
 
-            if log_to_mlflow:
-                mlflow_global_step.increment()
-
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
                 _warm_up_model(model, inputs, num_iters=warm_up_iters)
@@ -696,17 +693,8 @@ def perform_eval(
                     )
                     batch_metrics.append(metrics)
 
-                    if log_to_mlflow:
-                        mlflow.log_metrics(
-                            {
-                                f"{split_name}/sample/{pred_name}_{metric_name}": metric_value
-                                for metric_name, metric_value in metrics.items()
-                            },
-                            step=mlflow_global_step.current * batch_size + i,  # Batch step to sample step
-                            synchronous=False,
-                        )
-
             if log_to_mlflow:
+                mlflow_global_step.increment()
                 mlflow.log_metrics(
                     {
                         f"{split_name}/batch/{pred_name}_{metric_name}": metric_value
