@@ -237,7 +237,8 @@ def train(
         shards_val,
         batch_size=config.batch_size,
         num_workers=num_workers,
-        include_clean_mix=model.ground_truth_target == "clean_mix",
+        include_clean_mix=model.ground_truth_target == "clean_mix"
+        or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
         include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
     )
 
