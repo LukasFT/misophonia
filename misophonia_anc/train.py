@@ -238,12 +238,12 @@ def train_model(
         val_loss = eval_results_agg["x"]["loss_mean"]
 
         epoch_metrics = {
-            "epoch/train_loss": train_loss,
-            "epoch/val_loss": val_loss,
-            "epoch/val_si_snr_improvement": val_si_snr_improvement,
-            "epoch/val_si_snr": val_si_snr,
-            "epoch/global_step_train": global_step_train,
-            "epoch/global_step_val": global_step_val_counter.current,
+            "train/epoch/loss": train_loss,
+            "val/epoch/loss": val_loss,
+            "val/epoch/si_snr_improvement": val_si_snr_improvement,
+            "val/epoch/si_snr": val_si_snr,
+            "train/epoch/global_step": global_step_train,
+            "val/epoch/global_step": global_step_val_counter.current,
         }
         eliot.log_message(
             f"Epoch {epoch}:\n{json.dumps(epoch_metrics, indent=4)}",
