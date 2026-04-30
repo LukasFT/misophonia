@@ -540,9 +540,6 @@ def perform_eval(
 
     ground_truth_target = model.ground_truth_target
 
-    has_warned_clean_mix = False
-    has_warned_isolated_trigger = False
-
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
 
     with torch.no_grad():
@@ -572,27 +569,10 @@ def perform_eval(
                 valid_len = int(batch["audio_lens"][i].item())  # To remove padding
                 mix_i = inputs["mix"][i, :, :valid_len]
 
-                if "clean_mix" in batch:
-                    clean_mix_i = batch["clean_mix"][i, :, :valid_len]
-                else:
-                    if not has_warned_clean_mix:
-                        eliot.log_message(
-                            "Batch does not contain clean_mix. Metrics comparing to clean_mix will be NaN. This warning will only be shown once.",
-                            level="warning",
-                        )
-                        has_warned_clean_mix = True
-                    clean_mix_i = torch.zeros_like(mix_i)
-
-                if "isolated_trigger" in batch:
-                    isolated_trigger_i = batch["isolated_trigger"][i, :, :valid_len]
-                else:
-                    if not has_warned_isolated_trigger:
-                        eliot.log_message(
-                            "Batch does not contain isolated_trigger. Metrics comparing to isolated_trigger will be NaN. This warning will only be shown once.",
-                            level="warning",
-                        )
-                        has_warned_isolated_trigger = True
-                    isolated_trigger_i = torch.zeros_like(mix_i)
+                isolated_trigger_i = (
+                    batch["isolated_trigger"][i, :, :valid_len] if "isolated_trigger" in batch else None
+                )
+                clean_mix_i = batch["clean_mix"][i, :, :valid_len] if "clean_mix" in batch else None
 
                 sample_metdata = batch["metadata"][i] if "metadata" in batch else None
                 sample_rate = sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE
@@ -601,12 +581,20 @@ def perform_eval(
                     save_sample = True
                     samples_left_to_save -= 1
                     mix_file = save_samples_to / f"sample_{sample_idx}_mix.flac"
-                    clean_mix_file = save_samples_to / f"sample_{sample_idx}_clean_mix.flac"
-                    isolated_trigger_file = save_samples_to / f"sample_{sample_idx}_isolated_trigger.flac"
+                    clean_mix_file = (
+                        save_samples_to / f"sample_{sample_idx}_clean_mix.flac" if clean_mix_i is not None else None
+                    )
+                    isolated_trigger_file = (
+                        save_samples_to / f"sample_{sample_idx}_isolated_trigger.flac"
+                        if isolated_trigger_i is not None
+                        else None
+                    )
 
                     _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
-                    _save_audio_stereo(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
-                    _save_audio_stereo(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
+                    if clean_mix_i is not None:
+                        _save_audio_stereo(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
+                    if isolated_trigger_i is not None:
+                        _save_audio_stereo(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
                 else:
                     save_sample = False
 
@@ -647,8 +635,8 @@ def perform_eval(
 
                         sample_files = {
                             "mix_file": str(mix_file.name),
-                            "clean_mix_file": str(clean_mix_file.name),
-                            "isolated_trigger_file": str(isolated_trigger_file.name),
+                            "clean_mix_file": str(clean_mix_file.name) if clean_mix_file else None,
+                            "isolated_trigger_file": str(isolated_trigger_file.name) if isolated_trigger_file else None,
                             "pred_file": str(pred_file.name),
                         }
                     else:
