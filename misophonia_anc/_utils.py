@@ -692,7 +692,7 @@ def perform_eval(
 class CustomMlFlowLogger:
     """NOTE: Not thread-safe"""
 
-    def __init__(self, *, flush_every: int = 512) -> None:
+    def __init__(self, *, flush_every: int = 1024) -> None:
         # get current mlflow run
         active_run = mlflow.active_run()
         if active_run is None:
