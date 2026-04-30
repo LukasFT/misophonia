@@ -109,7 +109,7 @@ def train_epoch(
     step_counter: SimpleCounter,
     epoch: int = 0,
     loss_fn: Callable = _time_loss,
-) -> float:
+) -> tuple[float, float]:
     model = model.train()
 
     batch_train_losses = []
@@ -150,8 +150,10 @@ def train_epoch(
                 synchronous=False,
             )
 
+    batch_train_losses = np.array(batch_train_losses)
     epoch_train_loss = float(np.mean(batch_train_losses))
-    return epoch_train_loss
+    epoch_train_loss_std = float(np.std(batch_train_losses))
+    return epoch_train_loss, epoch_train_loss_std
 
 
 def train_model(
@@ -203,7 +205,7 @@ def train_model(
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
         # Perform train epcoh
-        train_loss = train_epoch(
+        train_loss, train_loss_std = train_epoch(
             model,
             device=device,
             optimizer=optimizer,
@@ -239,13 +241,22 @@ def train_model(
         val_si_snr = eval_results_agg["x"]["si_snr_mean"]
         val_si_snr_improvement = eval_results_agg["x"]["si_snr_improvement_mean"]
         val_loss = eval_results_agg["x"]["loss_mean"]
-        val_metrics = {f"val/epoch/{k}": v for k, v in eval_results_agg["x"].items()}
 
         epoch_metrics = {
             "train/epoch/loss": train_loss,
+            "train/epoch/loss_std": train_loss_std,
+            "val/epoch/loss": val_loss,
+            "val/epoch/loss_std": eval_results_agg["x"]["loss_std"],
+            "val/epoch/si_snr_improvement": val_si_snr_improvement,
+            "val/epoch/si_snr_improvement_std": eval_results_agg["x"]["si_snr_improvement_std"],
+            "val/epoch/si_snr_std": eval_results_agg["x"]["si_snr_std"],
+            "val/epoch/si_snr": val_si_snr,
+            "val/epoch/snr_improvement": eval_results_agg["x"]["snr_improvement_mean"],
+            "val/epoch/snr_improvement_std": eval_results_agg["x"]["snr_improvement_std"],
+            "val/epoch/snr": eval_results_agg["x"]["snr_mean"],
+            "val/epoch/snr_std": eval_results_agg["x"]["snr_std"],
             "train/epoch/global_step": global_step_train_counter.current,
             "val/epoch/global_step": global_step_val_counter.current,
-            **val_metrics,
         }
         eliot.log_message(
             f"Epoch {epoch}:\n{json.dumps(epoch_metrics, indent=4)}",
