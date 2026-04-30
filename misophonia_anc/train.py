@@ -288,7 +288,7 @@ def train_model(
         eval_results, eval_results_agg = perform_eval(
             model,
             val_loader,
-            device,
+            device=device,
             save_results_to=save_dir / "debug" / f"eval_in_train_model_results_epoch_{epoch}.json",
             save_aggregated_results_to=save_dir / "debug" / f"eval_in_train_model_results_epoch_{epoch}_agg.json",
             save_samples_to=save_dir / "debug" / f"eval_in_train_model_samples_epoch_{epoch}",
