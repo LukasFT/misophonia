@@ -144,10 +144,27 @@ def train_epoch(
     log_to_mlflow = mlflow.active_run() is not None
     mlflow_logger = CustomMlFlowLogger()
 
-    debug_count = 0
-
     with mlflow_logger:
-        for batch in tqdm(train_loader, desc=f"Training (epoch {epoch})", unit="batch"):
+        for batch_num, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
+            if (
+                log_to_mlflow and (batch_num % 100 == 0 or batch_num % 100 == 1) and device == torch.device("cuda")
+            ):  # Log VRAM every 10 batches two times in a row
+                mlflow_logger.log_metrics(
+                    {
+                        "debug/train/batch_vram_allocated_gb": (torch.cuda.memory_allocated(device) / (1024**3)),
+                        "debug/train/batch_vram_reserved_gb": (torch.cuda.memory_reserved(device) / (1024**3)),
+                        "debug/train/batch_vram_free_gb": (
+                            torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
+                        )
+                        / (1024**3),
+                        "debug/train/batch_vram_total_gb": (
+                            torch.cuda.get_device_properties(device).total_memory / (1024**3)
+                        ),
+                    },
+                    step=step_counter.current,
+                    synchronous=False,
+                )
+
             inputs = batch["inputs"]
             gt = batch[model.ground_truth_target]
             audio_lens = batch["audio_lens"]
@@ -164,21 +181,6 @@ def train_epoch(
 
             optimizer.zero_grad()
 
-            # Mask output
-            if debug_count < 3:
-                debug_count += 1
-                eliot.log_message(
-                    (
-                        f"batch mix shape={tuple(inputs['mix'].shape)}, "
-                        f"gt shape={tuple(gt.shape)}, "
-                        f"audio_lens min={int(audio_lens.min())}, "
-                        f"max={int(audio_lens.max())}, "
-                        f"mean={float(audio_lens.float().mean()):.1f}, "
-                        f"cuda allocated={torch.cuda.memory_allocated() / 1024**3:.2f} GiB, "
-                        f"reserved={torch.cuda.memory_reserved() / 1024**3:.2f} GiB"
-                    ),
-                    level="debug",
-                )
             output = model(inputs)
 
             loss = loss_fn(output["x"], gt, audio_lens)
@@ -190,7 +192,10 @@ def train_epoch(
             step_counter.increment()
             if log_to_mlflow:
                 mlflow_logger.log_metrics(
-                    {"train/batch/loss": loss_value},
+                    {
+                        "train/batch/loss": loss_value,
+                        "debug/train/batch_vram_reserved_gb": (torch.cuda.memory_reserved(device) / (1024**3)),
+                    },
                     step=step_counter.current,
                     synchronous=False,
                 )
