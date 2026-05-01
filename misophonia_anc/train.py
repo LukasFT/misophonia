@@ -146,7 +146,7 @@ def train_epoch(
 
     with mlflow_logger:
         for batch_num, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
-            if log_to_mlflow and (batch_num % 100 == 0 or batch_num % 100 == 1):
+            if log_to_mlflow and (batch_num % 1000 == 0 or batch_num % 1000 == 1):
                 _debug_train_log(
                     mlflow_logger,
                     step_counter,
@@ -201,7 +201,7 @@ def _debug_train_log(
     mlflow_logger: CustomMlFlowLogger,
     step_counter: SimpleCounter,
     device: torch.device,
-    **other_things: dict,
+    other_things: dict,
 ) -> None:
     if device == torch.device("cuda"):
         mlflow_logger.log_metrics(
@@ -216,7 +216,12 @@ def _debug_train_log(
             },
             step=step_counter.current,
         )
-    mlflow_logger.log_metrics(other_things, step=step_counter.current)
+    mlflow_logger.log_metrics(
+        {
+            **{f"debug/train/{k}": v for k, v in other_things.items()},
+        },
+        step=step_counter.current,
+    )
 
 
 def train_model(
