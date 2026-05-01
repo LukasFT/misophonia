@@ -34,7 +34,7 @@ class MisophoniaANCNet(nn.Module):
         conditioning="mult",
         lookahead=True,
         ground_truth_target: GtTargets = "isolated_trigger",
-        decoder_batches_parallel_k: int = 512,
+        decoder_batches_parallel_k: int = 4000,
         gt_is_isolated_trigger=None,  # For backwards compatibility, use ground_truth_target instead
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
@@ -64,7 +64,7 @@ class MisophoniaANCNet(nn.Module):
             "conditioning": conditioning,
             "lookahead": lookahead,
             "ground_truth_target": ground_truth_target,
-            #  # Only affects speed, not the result, so do not store as hyperparameter
+            #  # Only affects speed, not the result, so do not store decoder_batches_parallel_k as hyperparameter
             # "decoder_batches_parallel_k": decoder_batches_parallel_k,
         }
 
@@ -335,7 +335,7 @@ class MaskNet(nn.Module):
         num_dec_layers,
         use_pos_enc,
         conditioning,
-        decoder_batches_parallel_k: int = 512,
+        decoder_batches_parallel_k: int = 4000,
     ) -> None:
         super(MaskNet, self).__init__()
 
