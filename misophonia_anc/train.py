@@ -146,23 +146,14 @@ def train_epoch(
 
     with mlflow_logger:
         for batch_num, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
-            if (
-                log_to_mlflow and (batch_num % 100 == 0 or batch_num % 100 == 1) and device == torch.device("cuda")
-            ):  # Log VRAM every 10 batches two times in a row
-                mlflow_logger.log_metrics(
-                    {
-                        "debug/train/batch_vram_allocated_gb": (torch.cuda.memory_allocated(device) / (1024**3)),
-                        "debug/train/batch_vram_reserved_gb": (torch.cuda.memory_reserved(device) / (1024**3)),
-                        "debug/train/batch_vram_free_gb": (
-                            torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
-                        )
-                        / (1024**3),
-                        "debug/train/batch_vram_total_gb": (
-                            torch.cuda.get_device_properties(device).total_memory / (1024**3)
-                        ),
-                    },
-                    step=step_counter.current,
-                    synchronous=False,
+            if log_to_mlflow and (batch_num % 100 == 0 or batch_num % 100 == 1):
+                _debug_train_log(
+                    mlflow_logger,
+                    step_counter,
+                    device,
+                    batch_size=batch["inputs"]["mix"].shape[0],
+                    max_len=max(batch["audio_lens"]).item(),
+                    min_len=min(batch["audio_lens"]).item(),
                 )
 
             inputs = batch["inputs"]
@@ -204,6 +195,28 @@ def train_epoch(
     epoch_train_loss = float(np.mean(batch_train_losses))
     epoch_train_loss_std = float(np.std(batch_train_losses))
     return epoch_train_loss, epoch_train_loss_std
+
+
+def _debug_train_log(
+    mlflow_logger: CustomMlFlowLogger,
+    step_counter: SimpleCounter,
+    device: torch.device,
+    **other_things: dict,
+) -> None:
+    if device == torch.device("cuda"):
+        mlflow_logger.log_metrics(
+            {
+                "debug/train/batch_vram_allocated_gb": (torch.cuda.memory_allocated(device) / (1024**3)),
+                "debug/train/batch_vram_reserved_gb": (torch.cuda.memory_reserved(device) / (1024**3)),
+                "debug/train/batch_vram_free_gb": (
+                    torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
+                )
+                / (1024**3),
+                "debug/train/batch_vram_total_gb": (torch.cuda.get_device_properties(device).total_memory / (1024**3)),
+            },
+            step=step_counter.current,
+        )
+    mlflow_logger.log_metrics(other_things, step=step_counter.current)
 
 
 def train_model(
