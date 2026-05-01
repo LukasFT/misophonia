@@ -563,6 +563,9 @@ def perform_eval(
 
     with mlflow_logger, torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
+            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
+                _debug_to_mlflow(mlflow_logger, mlflow_global_step, device, prefix="val_")
+
             inputs = batch["inputs"]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
@@ -1034,6 +1037,37 @@ class SimpleCounter:
     def current(self) -> int:
         """The current count."""
         return self._count
+
+
+def _debug_to_mlflow(
+    mlflow_logger: CustomMlFlowLogger,
+    step_counter: SimpleCounter,
+    device: torch.device,
+    prefix: str = "",
+    **other_things: dict,
+) -> None:
+    if device == torch.device("cuda"):
+        mlflow_logger.log_metrics(
+            {
+                f"debug/{prefix}batch_vram_allocated_gb": (torch.cuda.memory_allocated(device) / (1024**3)),
+                f"debug/{prefix}batch_vram_reserved_gb": (torch.cuda.memory_reserved(device) / (1024**3)),
+                f"debug/{prefix}batch_vram_free_gb": (
+                    torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
+                )
+                / (1024**3),
+                f"debug/{prefix}_batch_vram_total_gb": (
+                    torch.cuda.get_device_properties(device).total_memory / (1024**3)
+                ),
+            },
+            step=step_counter.current,
+        )
+    if len(other_things) > 0:
+        mlflow_logger.log_metrics(
+            {
+                **{f"debug/{prefix}{k}": v for k, v in other_things.items()},
+            },
+            step=step_counter.current,
+        )
 
 
 # FIXME: Remove unused (commented out) functions
