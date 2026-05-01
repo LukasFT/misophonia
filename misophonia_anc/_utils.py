@@ -196,7 +196,7 @@ class MisophoniaANCConfig(BaseModel):
     num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
     batch_size: int = pydantic.Field(1, description="Batch size for training.")
     loss_option: str = pydantic.Field(
-        "time", description="Domain in which to apply loss. Options are 'time', 'freq', 'combined'."
+        "time", description="Domain in which to apply loss. See train.get_loss_fn_from_name for options."
     )
 
     model_params: dict = pydantic.Field(
@@ -233,13 +233,17 @@ def make_custom_collate_fn(
     include_metadata: bool,
     include_isolated_trigger: bool,
     include_clean_mix: bool,
+    max_length: int | None = None,
 ) -> callable:
+    max_length = torch.inf if max_length is None else max_length
+
     def custom_collate_fn(
         batch: dict,
     ) -> dict:
         """
         Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
-        For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
+
+        If max_length is given, it will only use the first max_length samples of the audio.
 
         Also randomly assign control sounds a class in the label vector during training, since they don't have a specific class.
         This is done by randomly assigning a 1 to one of the trigger classes in the label vector.
@@ -278,11 +282,15 @@ def make_custom_collate_fn(
 
         # Longest sample in the batch determines the length to pad to
         chunk_size = max(sample["mix.flac"].shape[-1] for sample in batch)
+        chunk_size = min(chunk_size, max_length)
 
         for sample in batch:
             idxs.append(sample["__key__"])
             label = sample["label.npy"]
             mix = sample["mix.flac"]
+
+            if mix.shape[-1] > max_length:
+                mix = mix[:, :max_length]
 
             if include_metadata:
                 metadatas.append(sample["metadata.json"])
@@ -304,9 +312,15 @@ def make_custom_collate_fn(
             mixes.append(F.pad(mix, (0, chunk_size - L)))
 
             if include_isolated_trigger:
-                isolated_triggers.append(F.pad(sample["isolated_trigger.flac"], (0, chunk_size - L)))
+                isolated_trigger = F.pad(sample["isolated_trigger.flac"], (0, chunk_size - L))
+                if isolated_trigger.shape[-1] > max_length:
+                    isolated_trigger = isolated_trigger[:, :max_length]
+                isolated_triggers.append(isolated_trigger)
             if include_clean_mix:
-                clean_mixes.append(F.pad(sample["clean_mix.flac"], (0, chunk_size - L)))
+                clean_mix = F.pad(sample["clean_mix.flac"], (0, chunk_size - L))
+                if clean_mix.shape[-1] > max_length:
+                    clean_mix = clean_mix[:, :max_length]
+                clean_mixes.append(clean_mix)
 
         res = {
             "idxs": idxs,
@@ -337,6 +351,7 @@ def make_dataloader(
     include_isolated_trigger: bool = True,
     include_clean_mix: bool = True,
     include_metadata: bool = False,
+    max_length: int | None = None,
 ) -> wds.WebLoader:
     """
     Make a WebLoader from the given .tar files.
@@ -393,6 +408,7 @@ def make_dataloader(
             include_metadata=include_metadata,
             include_isolated_trigger=include_isolated_trigger,
             include_clean_mix=include_clean_mix,
+            max_length=max_length,
         ),
     )
 
@@ -547,6 +563,9 @@ def perform_eval(
 
     with mlflow_logger, torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
+            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
+                _debug_to_mlflow(mlflow_logger, mlflow_global_step, device, prefix="val_")
+
             inputs = batch["inputs"]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
@@ -696,7 +715,7 @@ class CustomMlFlowLogger:
     NOTE: Not thread-safe.
     """
 
-    def __init__(self, *, flush_every: int = 512) -> None:
+    def __init__(self, *, flush_queue_size: int = 512, flush_seconds: int = 30) -> None:
         # get current mlflow run
         active_run = mlflow.active_run()
         if active_run is None:
@@ -706,7 +725,9 @@ class CustomMlFlowLogger:
         self._run_id = active_run.info.run_id
         self._client = mlflow.MlflowClient()
         self._queue = []
-        self._flush_every = flush_every
+        self._flush_queue_size = flush_queue_size
+        self._flush_seconds = flush_seconds
+        self._last_flush_time = mlflow.utils.time.get_current_time_millis()
 
     def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous: bool = False) -> None:
         timestamp = mlflow.utils.time.get_current_time_millis()
@@ -725,10 +746,14 @@ class CustomMlFlowLogger:
         ]
         self._queue.extend(metrics_arr)
 
-        if len(self._queue) >= self._flush_every:
-            self.flush(synchronous=synchronous)
+        if (
+            len(self._queue) >= self._flush_queue_size
+            or (timestamp - self._last_flush_time) >= self._flush_seconds * 1000
+        ):
+            self.flush(synchronous=synchronous, timestamp=timestamp)
 
-    def flush(self, *, synchronous: bool = False) -> None:
+    def flush(self, *, synchronous: bool = False, timestamp: int | None = None) -> None:
+        self._last_flush_time = timestamp or mlflow.utils.time.get_current_time_millis()
         if len(self._queue) == 0:
             return
 
@@ -1012,6 +1037,37 @@ class SimpleCounter:
     def current(self) -> int:
         """The current count."""
         return self._count
+
+
+def _debug_to_mlflow(
+    mlflow_logger: CustomMlFlowLogger,
+    step_counter: SimpleCounter,
+    device: torch.device,
+    prefix: str = "",
+    **other_things: dict,
+) -> None:
+    if device == torch.device("cuda"):
+        mlflow_logger.log_metrics(
+            {
+                f"debug/{prefix}batch_vram_allocated_gb": (torch.cuda.memory_allocated(device) / (1024**3)),
+                f"debug/{prefix}batch_vram_reserved_gb": (torch.cuda.memory_reserved(device) / (1024**3)),
+                f"debug/{prefix}batch_vram_free_gb": (
+                    torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
+                )
+                / (1024**3),
+                f"debug/{prefix}batch_vram_total_gb": (
+                    torch.cuda.get_device_properties(device).total_memory / (1024**3)
+                ),
+            },
+            step=step_counter.current,
+        )
+    if len(other_things) > 0:
+        mlflow_logger.log_metrics(
+            {
+                **{f"debug/{prefix}{k}": v for k, v in other_things.items()},
+            },
+            step=step_counter.current,
+        )
 
 
 # FIXME: Remove unused (commented out) functions

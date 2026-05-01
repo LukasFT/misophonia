@@ -18,7 +18,7 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-from ._utils import CustomMlFlowLogger, SimpleCounter, perform_eval, prepare_dir_or_file
+from ._utils import CustomMlFlowLogger, SimpleCounter, _debug_to_mlflow, perform_eval, prepare_dir_or_file
 
 try:
     from .confidential_losses import mrccmse_loss  # noqa: F401
@@ -145,7 +145,10 @@ def train_epoch(
     mlflow_logger = CustomMlFlowLogger()
 
     with mlflow_logger:
-        for batch in tqdm(train_loader, desc=f"Training (epoch {epoch})", unit="batch"):
+        for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
+            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
+                _debug_to_mlflow(mlflow_logger, step_counter, device, prefix="train_")
+
             inputs = batch["inputs"]
             gt = batch[model.ground_truth_target]
             audio_lens = batch["audio_lens"]
@@ -162,7 +165,6 @@ def train_epoch(
 
             optimizer.zero_grad()
 
-            # Mask output
             output = model(inputs)
 
             loss = loss_fn(output["x"], gt, audio_lens)
