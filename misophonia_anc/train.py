@@ -201,7 +201,7 @@ def _debug_train_log(
     mlflow_logger: CustomMlFlowLogger,
     step_counter: SimpleCounter,
     device: torch.device,
-    other_things: dict,
+    **other_things: dict,
 ) -> None:
     if device == torch.device("cuda"):
         mlflow_logger.log_metrics(
