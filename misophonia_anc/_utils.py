@@ -712,7 +712,7 @@ class CustomMlFlowLogger:
     NOTE: Not thread-safe.
     """
 
-    def __init__(self, *, flush_every: int = 512) -> None:
+    def __init__(self, *, flush_queue_size: int = 512, flush_seconds: int = 30) -> None:
         # get current mlflow run
         active_run = mlflow.active_run()
         if active_run is None:
@@ -722,7 +722,9 @@ class CustomMlFlowLogger:
         self._run_id = active_run.info.run_id
         self._client = mlflow.MlflowClient()
         self._queue = []
-        self._flush_every = flush_every
+        self._flush_queue_size = flush_queue_size
+        self._flush_seconds = flush_seconds
+        self._last_flush_time = mlflow.utils.time.get_current_time_millis()
 
     def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous: bool = False) -> None:
         timestamp = mlflow.utils.time.get_current_time_millis()
@@ -741,10 +743,14 @@ class CustomMlFlowLogger:
         ]
         self._queue.extend(metrics_arr)
 
-        if len(self._queue) >= self._flush_every:
-            self.flush(synchronous=synchronous)
+        if (
+            len(self._queue) >= self._flush_queue_size
+            or (timestamp - self._last_flush_time) >= self._flush_seconds * 1000
+        ):
+            self.flush(synchronous=synchronous, timestamp=timestamp)
 
-    def flush(self, *, synchronous: bool = False) -> None:
+    def flush(self, *, synchronous: bool = False, timestamp: int | None = None) -> None:
+        self._last_flush_time = timestamp or mlflow.utils.time.get_current_time_millis()
         if len(self._queue) == 0:
             return
 
