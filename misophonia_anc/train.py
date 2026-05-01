@@ -147,14 +147,7 @@ def train_epoch(
     with mlflow_logger:
         for batch_num, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
             if log_to_mlflow and (batch_num % 1000 == 0 or batch_num % 1000 == 1):
-                _debug_train_log(
-                    mlflow_logger,
-                    step_counter,
-                    device,
-                    batch_size=batch["inputs"]["mix"].shape[0],
-                    max_len=max(batch["audio_lens"]).item(),
-                    min_len=min(batch["audio_lens"]).item(),
-                )
+                _debug_train_log(mlflow_logger, step_counter, device)
 
             inputs = batch["inputs"]
             gt = batch[model.ground_truth_target]
@@ -216,12 +209,13 @@ def _debug_train_log(
             },
             step=step_counter.current,
         )
-    mlflow_logger.log_metrics(
-        {
-            **{f"debug/train/{k}": v for k, v in other_things.items()},
-        },
-        step=step_counter.current,
-    )
+    if len(other_things) > 0:
+        mlflow_logger.log_metrics(
+            {
+                **{f"debug/train/{k}": v for k, v in other_things.items()},
+            },
+            step=step_counter.current,
+        )
 
 
 def train_model(
