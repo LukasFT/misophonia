@@ -34,6 +34,7 @@ class MisophoniaANCNet(nn.Module):
         conditioning="mult",
         lookahead=True,
         ground_truth_target: GtTargets = "isolated_trigger",
+        decoder_batches_parallel_k: int = 4000,
         gt_is_isolated_trigger=None,  # For backwards compatibility, use ground_truth_target instead
     ) -> None:
         super(MisophoniaANCNet, self).__init__()
@@ -63,6 +64,8 @@ class MisophoniaANCNet(nn.Module):
             "conditioning": conditioning,
             "lookahead": lookahead,
             "ground_truth_target": ground_truth_target,
+            #  # Only affects speed, not the result, so do not store decoder_batches_parallel_k as hyperparameter
+            # "decoder_batches_parallel_k": decoder_batches_parallel_k,
         }
 
         self.L = L
@@ -96,6 +99,7 @@ class MisophoniaANCNet(nn.Module):
             num_dec_layers=num_dec_layers,
             use_pos_enc=use_pos_enc,
             conditioning=conditioning,
+            decoder_batches_parallel_k=decoder_batches_parallel_k,
         )
 
         # Output conv layer
@@ -323,9 +327,19 @@ class MisophoniaANCNet(nn.Module):
 
 class MaskNet(nn.Module):
     def __init__(
-        self, model_dim, num_enc_layers, dec_buf_len, dec_chunk_size, num_dec_layers, use_pos_enc, conditioning
+        self,
+        model_dim,
+        num_enc_layers,
+        dec_buf_len,
+        dec_chunk_size,
+        num_dec_layers,
+        use_pos_enc,
+        conditioning,
+        decoder_batches_parallel_k: int = 4000,
     ) -> None:
         super(MaskNet, self).__init__()
+
+        self._decoder_batches_parallel_k = decoder_batches_parallel_k
 
         # Encoder based on dilated causal convolutions.
         self.encoder = DilatedCausalConvEncoder(channels=model_dim, num_layers=num_enc_layers)
@@ -360,6 +374,11 @@ class MaskNet(nn.Module):
         e, enc_buf = self.encoder(x, enc_buf)
 
         # Decoder conditioned on embedding
-        m, dec_buf = self.decoder(input=e, embedding=l, ctx_buf=dec_buf)
+        m, dec_buf = self.decoder(
+            input=e,
+            embedding=l,
+            ctx_buf=dec_buf,
+            K=self._decoder_batches_parallel_k,
+        )
 
         return m, enc_buf, dec_buf

@@ -2,12 +2,12 @@
 The main training script for training on synthetic data
 """
 
+import json
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import eliot
-import matplotlib.pyplot as plt
 import mlflow  # type: ignore
 import numpy as np
 import torch
@@ -17,6 +17,8 @@ import webdataset as wds  # noqa: F401
 from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
+
+from ._utils import CustomMlFlowLogger, SimpleCounter, _debug_to_mlflow, perform_eval, prepare_dir_or_file
 
 try:
     from .confidential_losses import mrccmse_loss  # noqa: F401
@@ -31,56 +33,86 @@ if TYPE_CHECKING:
     from .model import MisophoniaANCNet
 
 
-def loss_fn(
-    _output: dict[str, torch.Tensor], tgt: torch.Tensor, audio_lens: torch.Tensor, loss_option: str = "time"
-) -> torch.Tensor:
-    pred = _output["x"]
-
-    def _time_loss(
-        pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Computes loss with .7 weight on snr and .3 weight on si-snr. Applies double weighting to the right channel
-        """
-        B = pred.shape[0]
-        batch_loss = []
-        for i in range(B):
-            left_pred = pred[i, 0, : audio_lens[i]]
-            right_pred = pred[i, 1, : audio_lens[i]]
-            left_term = -snr(left_pred, tgt[i, 0, : audio_lens[i]])
-            right_term = -snr(right_pred, tgt[i, 1, : audio_lens[i]])
-
-            avg_term = 0.5 * left_term + 0.5 * right_term
-            batch_loss.append(avg_term)
-        return sum(batch_loss) / len(batch_loss)
-
-    def _freq_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
-        """
-        Computes multiresolution CCMSE on
-        """
-        B = pred.shape[0]
-        batch_loss = []
-        for i in range(B):
-            item_loss = mrccmse_loss(pred[i, :, : audio_lens[i]], tgt[i, :, : audio_lens[i]])  # type: ignore
-            batch_loss.append(item_loss)
-        return sum(batch_loss) / len(batch_loss)
-
+def get_loss_fn_from_name(loss_option: str) -> Callable:
     if loss_option == "time":
-        return _time_loss(pred, tgt, audio_lens)
+        return _time_loss
+    elif loss_option == "time_with_si_snr":
+        return _time_snr_and_si_snr_loss
     elif loss_option == "freq":
-        return _freq_loss(pred, tgt, audio_lens)
+        return _freq_loss
     elif loss_option == "combined":
-        return 0.5 * _freq_loss(pred, tgt, audio_lens) + 0.5 * _time_loss(pred, tgt, audio_lens)
+        return _combined_loss
     else:
         raise ValueError(f"Invalid loss option: {loss_option}")
+
+
+def _time_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
+    """
+    Pure SNR, 50/50 from each channel
+    """
+    batch_size = pred.shape[0]
+    batch_loss = []
+    for i in range(batch_size):
+        left_pred = pred[i, 0, : audio_lens[i]]
+        right_pred = pred[i, 1, : audio_lens[i]]
+        left_term = -snr(left_pred, tgt[i, 0, : audio_lens[i]])
+        right_term = -snr(right_pred, tgt[i, 1, : audio_lens[i]])
+
+        avg_term = 0.5 * left_term + 0.5 * right_term
+        batch_loss.append(avg_term)
+    return sum(batch_loss) / len(batch_loss)
+
+
+def _time_snr_and_si_snr_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
+    """
+    Pure SNR, 50/50 from each channel
+    """
+    batch_size = pred.shape[0]
+    batch_loss = []
+    for i in range(batch_size):
+        left_pred = pred[i, 0, : audio_lens[i]]
+        right_pred = pred[i, 1, : audio_lens[i]]
+
+        left_term_snr = -snr(left_pred, tgt[i, 0, : audio_lens[i]])
+        right_term_snr = -snr(right_pred, tgt[i, 1, : audio_lens[i]])
+
+        avg_term_snr = 0.5 * left_term_snr + 0.5 * right_term_snr
+
+        left_term_si = -si_snr(left_pred, tgt[i, 0, : audio_lens[i]])
+        right_term_si = -si_snr(right_pred, tgt[i, 1, : audio_lens[i]])
+
+        avg_term_si = 0.5 * left_term_si + 0.5 * right_term_si
+
+        term = 0.9 * avg_term_snr + 0.1 * avg_term_si
+
+        batch_loss.append(term)
+    return sum(batch_loss) / len(batch_loss)
+
+
+def _freq_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
+    """
+    Computes multiresolution CCMSE on
+    """
+    batch_size = pred.shape[0]
+    batch_loss = []
+    for i in range(batch_size):
+        item_loss = mrccmse_loss(pred[i, :, : audio_lens[i]], tgt[i, :, : audio_lens[i]])  # type: ignore
+        batch_loss.append(item_loss)
+    return sum(batch_loss) / len(batch_loss)
+
+
+def _combined_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
+    time_loss = _time_loss(pred, tgt, audio_lens)
+    freq_loss = _freq_loss(pred, tgt, audio_lens)
+    return 0.5 * time_loss + 0.5 * freq_loss
 
 
 def si_snr_improvement(
     mix: torch.tensor, pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor
 ) -> torch.Tensor:
-    B = pred.shape[0]
+    batch_size = pred.shape[0]
     si_snr_improvements = []
-    for i in range(B):
+    for i in range(batch_size):
         improvement = si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]) - si_snr(
             mix[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]
         )
@@ -89,9 +121,9 @@ def si_snr_improvement(
 
 
 def truncated_si_snr(pred: torch.tensor, gt: torch.tensor, audio_lens: torch.tensor) -> torch.Tensor:
-    B = pred.shape[0]
+    batch_size = pred.shape[0]
     si_snrs = []
-    for i in range(B):
+    for i in range(batch_size):
         si_snrs.append(si_snr(pred[i, :, : audio_lens[i]], gt[i, :, : audio_lens[i]]).mean())
     return sum(si_snrs) / len(si_snrs)
 
@@ -102,116 +134,57 @@ def train_epoch(
     device: torch.device,
     optimizer: optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
-    start_global_step: int = 0,
+    step_counter: SimpleCounter,
     epoch: int = 0,
-    loss_option: str = "time",
-) -> tuple[float, int]:
+    loss_fn: Callable = _time_loss,
+) -> tuple[float, float]:
     model = model.train()
 
     batch_train_losses = []
+    log_to_mlflow = mlflow.active_run() is not None
+    mlflow_logger = CustomMlFlowLogger()
 
-    for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
-        inputs = batch["inputs"]
-        gt = batch[model.ground_truth_target]
-        audio_lens = batch["audio_lens"]
+    with mlflow_logger:
+        for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
+            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
+                _debug_to_mlflow(mlflow_logger, step_counter, device, prefix="train_")
 
-        # in loader return mask that is [B, C, N]
-        # inputs = {k: v.to(device) for k, v in inputs.items()}
-        inputs["mix"] = inputs["mix"].to(device)
-        inputs["label_vector"] = inputs["label_vector"].to(device)
-        inputs["is_control"] = inputs["is_control"].to(device)
-
-        gt = gt.to(device)
-        audio_lens = audio_lens.to(device)
-        _, _, T = gt.shape  # noqa: N806
-
-        optimizer.zero_grad()
-
-        # Mask output
-        output = model(inputs)
-
-        loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
-        loss.backward()
-        optimizer.step()
-
-        loss_value = loss.item()
-        batch_train_losses.append(loss_value)
-        if mlflow.active_run() is not None:
-            mlflow.log_metric("train/loss_batch", loss_value, step=start_global_step + batch_idx)
-
-    epoch_train_loss = float(np.mean(batch_train_losses))
-    return epoch_train_loss, start_global_step + batch_idx + 1
-
-
-def val_epoch(
-    model: nn.Module,
-    device: torch.device,
-    val_loader: torch.utils.data.DataLoader,
-    *,
-    start_global_step: int = 0,
-    epoch: int = 0,
-    loss_option: str = "time",
-) -> tuple[float, float, int]:
-    """
-    Function to evaluate model on validation set each epoch.
-
-    Args:
-        See train_model() for arg description
-
-    Returns:
-        epoch_val_loss (float): epoch loss on val set
-        epoch_val_si_snr_improvement (float): si_snri on val set
-        global_step (int): number of val batches the on which the model has been ran
-
-    """
-    model = model.eval()
-
-    batch_val_losses = []
-    val_si_snr_improvements = []
-    val_si_snrs = []
-
-    with torch.no_grad():
-        for batch_idx, batch in tqdm(enumerate(val_loader), desc=f"Validation (epoch {epoch})", unit="batch"):
             inputs = batch["inputs"]
             gt = batch[model.ground_truth_target]
             audio_lens = batch["audio_lens"]
 
-            # inputs = {k: v.to(device) for k, v in inputs.items()}  # [B, 2, N]
+            # in loader return mask that is [B, C, N]
+            # inputs = {k: v.to(device) for k, v in inputs.items()}
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
 
-            _, _, T = gt.shape  # noqa: N806
-
             gt = gt.to(device)
             audio_lens = audio_lens.to(device)
+            _, _, T = gt.shape  # noqa: N806
 
-            # Mask output
+            optimizer.zero_grad()
+
             output = model(inputs)
-            pred = output["x"]
 
-            loss = loss_fn(output, gt, audio_lens, loss_option=loss_option)
+            loss = loss_fn(output["x"], gt, audio_lens)
+            loss.backward()
+            optimizer.step()
 
             loss_value = loss.item()
-            val_si_snr_improvement = si_snr_improvement(inputs["mix"], output["x"], gt, audio_lens).item()
-            val_si_snr = truncated_si_snr(output["x"], gt, audio_lens).item()
-
-            batch_val_losses.append(loss_value)
-            val_si_snr_improvements.append(val_si_snr_improvement)
-            val_si_snrs.append(val_si_snr)
-
-            if mlflow.active_run() is not None:
-                mlflow.log_metric("val/loss_batch", loss_value, step=start_global_step + batch_idx)
-                mlflow.log_metric(
-                    "val/si_snr_improvement_batch", val_si_snr_improvement, step=start_global_step + batch_idx
+            batch_train_losses.append(loss_value)
+            step_counter.increment()
+            if log_to_mlflow:
+                mlflow_logger.log_metrics(
+                    {"train/batch/loss": loss_value},
+                    step=step_counter.current,
+                    synchronous=False,
                 )
 
-    epoch_val_loss = float(np.mean(batch_val_losses))
-    epoch_val_si_snr_improvement = float(np.mean(val_si_snr_improvements))
-    epoch_val_si_snr = float(np.mean(val_si_snrs))
-    global_step = start_global_step + batch_idx
-
-    return epoch_val_loss, epoch_val_si_snr_improvement, epoch_val_si_snr, global_step + 1
+    batch_train_losses = np.array(batch_train_losses)
+    epoch_train_loss = float(np.mean(batch_train_losses))
+    epoch_train_loss_std = float(np.std(batch_train_losses))
+    return epoch_train_loss, epoch_train_loss_std
 
 
 def train_model(
@@ -224,10 +197,11 @@ def train_model(
     device: torch.device,
     loss_option: str,
     save_dir: Path,
+    skip_subtraction: bool = True,
     lr: float = 0.0005,
     weight_decay: float = 0.0,
-    global_step_train: int = 0,
-    global_step_val: int = 0,
+    global_step_train_start: int = 0,
+    global_step_val_start: int = 0,
 ) -> None:
     """
     Main function to run training loop on Misophonia ANC model. Checkpoints model weights after each epoch. Logs batch and epoch losses for both
@@ -243,62 +217,84 @@ def train_model(
         weight_decay (float): weight decay to apply to optimizer
         device (torch.device): cuda or cpu
         save_dir: Path to save model weights and metric plots
+        skip_subtraction: Skip subtraction methods when calculating metrics during val evaluation.
         global_step_train (int): Metadata for MLflow to report total number of training batches already logged.
         global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
     """
 
     model = model.to(device)
     optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
-
-    # Tracking metrics
-    train_losses = []
-    val_losses = []
-    val_si_snr_improvements = []
-    val_si_snrs = []
+    loss_fn = get_loss_fn_from_name(loss_option)
 
     # Checkpoint trackers
     best_epoch = -1
     best_val_si_snr_improvement = -np.inf
+
+    # FIXME: Counting global steps is done using two different implementations for val and train
+    global_step_train_counter = SimpleCounter(global_step_train_start)
+    global_step_val_counter = SimpleCounter(global_step_val_start)
+
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
-        train_loss, global_step_train = train_epoch(
+        # Perform train epcoh
+        train_loss, train_loss_std = train_epoch(
             model,
             device=device,
             optimizer=optimizer,
             train_loader=train_loader,
-            loss_option=loss_option,
-            start_global_step=global_step_train,
+            loss_fn=loss_fn,
+            step_counter=global_step_train_counter,
             epoch=epoch,
         )
-        train_losses.append(train_loss)
 
-        val_loss, val_si_snr_improvement, val_si_snr, global_step_val = val_epoch(
+        # Perform val epoch
+        results_file = save_dir / "eval_results" / f"original_run_{epoch}_val_results.json"
+        aggregated_results_file = save_dir / "eval_results" / f"original_run_{epoch}_val_aggregated_results.json"
+        samples_dir = save_dir / "samples" / f"original_run_{epoch}" / "val"
+
+        prepare_dir_or_file(results_file, overwrite=True, is_dir=False)
+        prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
+        prepare_dir_or_file(samples_dir, overwrite=True, is_dir=True)
+
+        _, eval_results_agg = perform_eval(
             model,
-            device,
             val_loader,
-            loss_option=loss_option,
-            start_global_step=global_step_val,
-            epoch=epoch,
+            device=device,
+            save_results_to=results_file,
+            save_aggregated_results_to=aggregated_results_file,
+            save_samples_to=samples_dir,
+            save_num_samples=20,
+            mlflow_global_step=global_step_val_counter,
+            loss_fn=loss_fn,
+            skip_subtraction=skip_subtraction,
+            split_name="val",
         )
-        val_losses.append(val_loss)
-        val_si_snrs.append(val_si_snr)
-        val_si_snr_improvements.append(val_si_snr_improvement)
 
+        val_si_snr = eval_results_agg["x"]["si_snr_mean"]
+        val_si_snr_improvement = eval_results_agg["x"]["si_snr_improvement_mean"]
+        val_loss = eval_results_agg["x"]["loss_mean"]
+
+        epoch_metrics = {
+            "train/epoch/loss": train_loss,
+            "train/epoch/loss_std": train_loss_std,
+            "val/epoch/loss": val_loss,
+            "val/epoch/loss_std": eval_results_agg["x"]["loss_std"],
+            "val/epoch/si_snr_improvement": val_si_snr_improvement,
+            "val/epoch/si_snr_improvement_std": eval_results_agg["x"]["si_snr_improvement_std"],
+            "val/epoch/si_snr_std": eval_results_agg["x"]["si_snr_std"],
+            "val/epoch/si_snr": val_si_snr,
+            "val/epoch/snr_improvement": eval_results_agg["x"]["snr_improvement_mean"],
+            "val/epoch/snr_improvement_std": eval_results_agg["x"]["snr_improvement_std"],
+            "val/epoch/snr": eval_results_agg["x"]["snr_mean"],
+            "val/epoch/snr_std": eval_results_agg["x"]["snr_std"],
+            "train/epoch/global_step": global_step_train_counter.current,
+            "val/epoch/global_step": global_step_val_counter.current,
+        }
         eliot.log_message(
-            f"Epoch {epoch}: Train Loss = {train_loss}, Val Loss = {val_loss}, Val SI-SNRi = {val_si_snr_improvement}",
+            f"Epoch {epoch}:\n{json.dumps(epoch_metrics, indent=4)}",
             level="debug",
         )
         if mlflow.active_run() is not None:
-            mlflow.log_metrics(
-                {
-                    "epoch/train_loss": train_loss,
-                    "epoch/val_loss": val_loss,
-                    "epoch/val_si_snr_improvement": val_si_snr_improvement,
-                    "epoch/val_si_snr": val_si_snr,
-                    "epoch/global_step_train": global_step_train,
-                    "epoch/global_step_val": global_step_val,
-                },
-                step=epoch,
-            )
+            mlflow.log_metrics(epoch_metrics, step=epoch)
 
         # Checkpointing
         ckpt_dir = save_dir / "checkpoints"
@@ -307,8 +303,8 @@ def train_model(
         model.save_checkpoint(
             ckpt_path,
             epoch=epoch,
-            global_step_train=global_step_train,
-            global_step_val=global_step_val,
+            global_step_train=global_step_train_counter.current,
+            global_step_val=global_step_val_counter.current,
             val_si_snr_improvement=val_si_snr_improvement,
             val_si_snr=val_si_snr,
             val_loss=val_loss,
@@ -319,55 +315,9 @@ def train_model(
             best_epoch = epoch
             best_val_si_snr_improvement = val_si_snr_improvement
 
-    # Plotting
-    plot_dir = save_dir / "plots"
-    plot_dir.mkdir(parents=True, exist_ok=True)
-    _make_plots(plot_dir, train_losses, val_losses, val_si_snrs, val_si_snr_improvements)
-
     # Rename best model weights
     best_ckpt = ckpt_dir / f"weights_epoch_{best_epoch}.pt"
     final_path = ckpt_dir / "best_weights.pt"
 
     if best_epoch >= 0:
         shutil.copy(best_ckpt, final_path)  # safer than rename
-
-
-def _make_plots(
-    plot_dir: Path, train_losses: list, val_losses: list, val_si_snrs: list, val_si_snr_improvements: list
-) -> None:
-    # Loss plot
-    plt.figure()
-    plt.plot(train_losses, label="Train Loss")
-    plt.plot(val_losses, label="Validation Loss")
-
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training and Validation Loss")
-    plt.legend()
-
-    plt.savefig(plot_dir / "loss_plot.png")
-    plt.close()
-
-    # Si-SNRi plot
-    plt.figure()
-    plt.plot(val_si_snr_improvements, label="Val Si-SNRi")
-
-    plt.xlabel("Epoch")
-    plt.ylabel("Si-SNRi")
-    plt.title("Validation Si-SNRi")
-    plt.legend()
-
-    plt.savefig(plot_dir / "si_snr_improvement_plot.png")
-    plt.close()
-
-    # Si-SNR plot
-    plt.figure()
-    plt.plot(val_si_snrs, label="Val Si-SNR")
-
-    plt.xlabel("Epoch")
-    plt.ylabel("Si-SNR")
-    plt.title("Validation Si-SNR")
-    plt.legend()
-
-    plt.savefig(plot_dir / "si_snr_plot.png")
-    plt.close()

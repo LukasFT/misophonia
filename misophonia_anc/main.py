@@ -1,4 +1,5 @@
 import itertools
+import json
 import math
 import os
 import subprocess
@@ -31,7 +32,7 @@ from ._utils import (
     print_mem,
 )
 from .model import MisophoniaANCNet
-from .train import train_model
+from .train import get_loss_fn_from_name, train_model
 
 setup_print_logging()
 load_dotenv()
@@ -180,6 +181,17 @@ def train(
             help="Whether to restart training from epoch 0. If false, will continue from the epoch specified in the checkpoint metadata (if checkpoint is provided).",
         ),
     ] = False,
+    skip_subtraction: Annotated[
+        bool,
+        typer.Option(
+            ...,
+            help="Whether to skip subtraction of input mix from model output when calculating metrics.",
+        ),
+    ] = True,
+    val_batch_size: Annotated[
+        int | None,
+        typer.Option(..., help="Batch size for validation dataloader. Defaults to same as training batch size."),
+    ] = None,
     mlflow_uri: Annotated[
         str | None, typer.Option(..., help="MLflow tracking URI.", envvar="MLFLOW_TRACKING_URI")
     ] = None,
@@ -232,13 +244,24 @@ def train(
         num_workers=num_workers,
         include_clean_mix=model.ground_truth_target == "clean_mix",
         include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+        max_length=(
+            config.dataset_splits["train"].generated_config.get("max_length")
+            if "train" in config.dataset_splits and config.dataset_splits["train"].generated_config is not None
+            else None
+        ),
     )
     val_loader = make_dataloader(
         shards_val,
-        batch_size=config.batch_size,
+        batch_size=val_batch_size if val_batch_size is not None else config.batch_size,
         num_workers=num_workers,
-        include_clean_mix=model.ground_truth_target == "clean_mix",
+        include_clean_mix=model.ground_truth_target == "clean_mix"
+        or (not skip_subtraction and config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
         include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+        max_length=(
+            config.dataset_splits["val"].generated_config.get("max_length")
+            if "val" in config.dataset_splits and config.dataset_splits["val"].generated_config is not None
+            else None
+        ),
     )
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
@@ -253,7 +276,7 @@ def train(
             mlflow_existing_id = checkpoint_metadata.get("mlflow_run_id", None) if resume_mlflow else None
             mlflow.start_run(
                 run_id=mlflow_existing_id,  # If resuming from checkpoint, continue the same MLflow run
-                run_name=f"Train at {datetime.now().isoformat()}",  # Name if starting new run
+                run_name=f"Train {name} at {datetime.now().isoformat()}",  # Name if starting new run
             )
 
             mlflow_artifact = f"parameters_{datetime.now().isoformat()}.json"
@@ -284,9 +307,6 @@ def train(
             eliot.log_message(f"Tracking using MLflow '{run_name}': {run_link}", level="info")
 
     try:
-        assert config.loss_option in ["time", "freq", "combined"], (
-            "Invalid loss option. Must be 'time', 'freq', or 'combined'."
-        )
         train_model(
             model,
             device=device,
@@ -296,8 +316,9 @@ def train(
             checkpoint_epoch=checkpoint_metadata.get("epoch", 0) if not reset_epoch else 0,
             loss_option=config.loss_option,
             save_dir=Path(model_dir),
-            global_step_train=checkpoint_metadata.get("global_step_train", 0),
-            global_step_val=checkpoint_metadata.get("global_step_val", 0),
+            global_step_train_start=checkpoint_metadata.get("global_step_train", 0),
+            global_step_val_start=checkpoint_metadata.get("global_step_val", 0),
+            skip_subtraction=skip_subtraction,
             **config.model_hyperparams,
         )
     finally:
@@ -390,11 +411,16 @@ def evaluate(
             include_clean_mix=model.ground_truth_target == "clean_mix"
             or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
             include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+            max_length=(
+                config.dataset_splits[split].generated_config.get("max_length")
+                if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+                else None
+            ),
         )
         if limit_samples is not None:
             split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
 
-        res, _ = perform_eval(
+        res, agg_res = perform_eval(
             model,
             split_loader,
             save_results_to=results_file,
@@ -403,7 +429,10 @@ def evaluate(
             save_samples_to=samples_dir,
             device=device,
             warm_up_iters=warm_up,
+            loss_fn=get_loss_fn_from_name(config.loss_option),
         )
+
+        eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
 
         eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
 

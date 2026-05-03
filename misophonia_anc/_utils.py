@@ -7,10 +7,14 @@ import os
 import subprocess
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 import eliot
+import mlflow
+import mlflow.entities
+import mlflow.utils.time
 import numpy as np
 import pandas as pd
 import pydantic
@@ -66,6 +70,18 @@ def preprocess_to_webdataset_pt(
         A glob pattern for the generated .tar shards. Used for loading wds.WebDataset.
     """
 
+    def _audio_to_flac_bytes(audio: np.ndarray | torch.Tensor, sample_rate: int) -> bytes:
+        if isinstance(audio, torch.Tensor):
+            audio = audio.detach().cpu().numpy()
+
+        audio = np.asarray(audio)
+        if audio.ndim != 2:
+            raise ValueError(f"Expected audio of shape [C, T], got {audio.shape}")
+
+        with BytesIO() as buffer:
+            sf.write(buffer, audio.T, samplerate=sample_rate, format="FLAC", subtype="PCM_24")
+            return buffer.getvalue()
+
     def process_item(idx) -> tuple[dict, dict]:
         item: MisophoniaItem = dataset_split[idx]
         # This function should call your actual preprocessing
@@ -98,13 +114,16 @@ def preprocess_to_webdataset_pt(
             "bg_freesound_ids": tuple(bg.source_item.freesound_id for bg in item.backgrounds),
         }
         metadata_str = json.dumps(metadata)
+        mix_flac = _audio_to_flac_bytes(mix_array, sample_rate)
+        isolated_trigger_flac = _audio_to_flac_bytes(isolated_trigger_array, sample_rate)
+        clean_mix_flac = _audio_to_flac_bytes(clean_mix_array, sample_rate)
 
         sample = {
             "__key__": f"{idx:09d}",
-            "mix.npy": mix_array,
+            "mix.flac": mix_flac,
             "label.npy": label_array,
-            "isolated_trigger.npy": isolated_trigger_array,
-            "clean_mix.npy": clean_mix_array,
+            "isolated_trigger.flac": isolated_trigger_flac,
+            "clean_mix.flac": clean_mix_flac,
             "metadata.json": metadata_str,
         }
         return sample, metadata
@@ -177,7 +196,7 @@ class MisophoniaANCConfig(BaseModel):
     num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
     batch_size: int = pydantic.Field(1, description="Batch size for training.")
     loss_option: str = pydantic.Field(
-        "time", description="Domain in which to apply loss. Options are 'time', 'freq', 'combined'."
+        "time", description="Domain in which to apply loss. See train.get_loss_fn_from_name for options."
     )
 
     model_params: dict = pydantic.Field(
@@ -214,13 +233,17 @@ def make_custom_collate_fn(
     include_metadata: bool,
     include_isolated_trigger: bool,
     include_clean_mix: bool,
+    max_length: int | None = None,
 ) -> callable:
+    max_length = torch.inf if max_length is None else max_length
+
     def custom_collate_fn(
         batch: dict,
     ) -> dict:
         """
         Pads mixes and gt so that they are equal length. Passes length of each audio to properly mask on loss function.
-        For audio that is longer than 5 seconds, randomly sample a 5s contiguous chunk.
+
+        If max_length is given, it will only use the first max_length samples of the audio.
 
         Also randomly assign control sounds a class in the label vector during training, since they don't have a specific class.
         This is done by randomly assigning a 1 to one of the trigger classes in the label vector.
@@ -228,8 +251,15 @@ def make_custom_collate_fn(
             it might need to predict silence if there is no trigger sound of that category in the mix.
         """
 
-        # Longest sample in the batch determines the length to pad to
-        chunk_size = max(sample["mix.npy"].shape[-1] for sample in batch)
+        def _to_audio_tensor(audio: np.ndarray | torch.Tensor | bytes) -> torch.Tensor:
+            if isinstance(audio, torch.Tensor):
+                return audio.float()
+            if isinstance(audio, np.ndarray):
+                return torch.from_numpy(audio).float()
+            if isinstance(audio, (bytes, bytearray, memoryview)):
+                decoded_audio, _ = sf.read(BytesIO(audio), dtype="float32", always_2d=True)
+                return torch.from_numpy(decoded_audio.T).float()
+            raise TypeError(f"Unsupported audio type: {type(audio)!r}")
 
         mixes = []
         if include_isolated_trigger:
@@ -242,10 +272,25 @@ def make_custom_collate_fn(
         metadatas = []
         idxs = []
 
+        # Convert to torch
+        for sample in batch:
+            for key in sample:
+                if key.endswith(".flac"):
+                    sample[key] = _to_audio_tensor(sample[key])
+                elif key.endswith(".npy"):
+                    sample[key] = torch.from_numpy(sample[key]).float()
+
+        # Longest sample in the batch determines the length to pad to
+        chunk_size = max(sample["mix.flac"].shape[-1] for sample in batch)
+        chunk_size = min(chunk_size, max_length)
+
         for sample in batch:
             idxs.append(sample["__key__"])
             label = sample["label.npy"]
-            mix = sample["mix.npy"]
+            mix = sample["mix.flac"]
+
+            if mix.shape[-1] > max_length:
+                mix = mix[:, :max_length]
 
             if include_metadata:
                 metadatas.append(sample["metadata.json"])
@@ -258,20 +303,24 @@ def make_custom_collate_fn(
                 random_class = rng.integers(0, len(label))
                 label[random_class] = 1
 
-            labels.append(torch.from_numpy(label).float())
+            labels.append(label)
 
             L = mix.shape[-1]  # noqa: N806
+            audio_lens.append(L)
             # audio is shorter than chunk_size → pad
-            mix_chunk = F.pad(torch.from_numpy(mix).float(), (0, chunk_size - L))
+
+            mixes.append(F.pad(mix, (0, chunk_size - L)))
 
             if include_isolated_trigger:
-                isolated_trigger = sample["isolated_trigger.npy"]
-                isolated_triggers.append(F.pad(isolated_trigger.float(), (0, chunk_size - L)))
+                isolated_trigger = F.pad(sample["isolated_trigger.flac"], (0, chunk_size - L))
+                if isolated_trigger.shape[-1] > max_length:
+                    isolated_trigger = isolated_trigger[:, :max_length]
+                isolated_triggers.append(isolated_trigger)
             if include_clean_mix:
-                clean_mix = sample["clean_mix.npy"]
-                clean_mixes.append(F.pad(clean_mix.float(), (0, chunk_size - L)))
-
-            mixes.append(mix_chunk)
+                clean_mix = F.pad(sample["clean_mix.flac"], (0, chunk_size - L))
+                if clean_mix.shape[-1] > max_length:
+                    clean_mix = clean_mix[:, :max_length]
+                clean_mixes.append(clean_mix)
 
         res = {
             "idxs": idxs,
@@ -302,6 +351,7 @@ def make_dataloader(
     include_isolated_trigger: bool = True,
     include_clean_mix: bool = True,
     include_metadata: bool = False,
+    max_length: int | None = None,
 ) -> wds.WebLoader:
     """
     Make a WebLoader from the given .tar files.
@@ -323,19 +373,19 @@ def make_dataloader(
         level="debug",
     )
 
-    included_filenames = {"mix.npy", "label.npy", "metadata.json"}
+    included_filenames = {"mix.flac", "label.npy", "metadata.json"}
     if include_isolated_trigger:
-        included_filenames.add("isolated_trigger.npy")
+        included_filenames.add("isolated_trigger.flac")
     if include_clean_mix:
-        included_filenames.add("clean_mix.npy")
+        included_filenames.add("clean_mix.flac")
 
     def _include_file(fname: str) -> bool:
         """
         Only include files that are in the included_filenames set.
 
         Example:
-            _include_file("000000991.mix.npy") -> True
-            _include_file("000000991.isolated_trigger.npy") -> True if include_isolated_trigger is True, False otherwise
+            _include_file("000000991.mix.flac") -> True
+            _include_file("000000991.isolated_trigger.flac") -> True if include_isolated_trigger is True, False otherwise
 
         """
         return any(fname.endswith(included_fname) for included_fname in included_filenames)
@@ -358,6 +408,7 @@ def make_dataloader(
             include_metadata=include_metadata,
             include_isolated_trigger=include_isolated_trigger,
             include_clean_mix=include_clean_mix,
+            max_length=max_length,
         ),
     )
 
@@ -375,6 +426,7 @@ def calculate_default_metrics(
     mix: torch.Tensor | None = None,
     mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
+    loss_fn: Callable | None = None,
 ) -> dict[str, float]:
     si_snr_both = si_snr(preds, target)
     snr_both = snr(preds, target)
@@ -395,6 +447,12 @@ def calculate_default_metrics(
         # "ild": ild,
         # "itd": itd,
     }
+
+    if loss_fn is not None:
+        # Call loss function like it is a batch
+        audio_lens = (target.shape[-1],)
+        loss = loss_fn(preds.unsqueeze(0), target.unsqueeze(0), audio_lens)
+        metrics["loss"] = loss.item()
 
     if mix is not None and mix_metrics is None:
         mix_metrics = calculate_default_metrics(mix, target, sample_rate=sample_rate)
@@ -460,6 +518,10 @@ def perform_eval(
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
     warm_up_iters: int = 10,
+    mlflow_global_step: Optional["SimpleCounter"] = None,
+    loss_fn: Callable | None = None,
+    skip_subtraction: bool = False,
+    split_name: SplitT | None = None,
 ) -> tuple[dict, dict | None]:
     """
     Run inference on the given model and dataloader and evaluate.
@@ -473,6 +535,7 @@ def perform_eval(
         save_samples_to: If not None, a directory to save example audio files of the mixes, gts, and predictions. Will save as .flac files.
         save_num_samples: If save_samples_to is not None, the maximum number of samples to save to disk. If 0, do not save any.
         warm_up_iters: Number of iterations to run for warming up the model before measuring latency.
+        mlflow_global_step: A counter to track the global step for MLflow logging.
 
     Returns:
         A tuple containing the individual sample results and the aggregated results.
@@ -495,12 +558,19 @@ def perform_eval(
 
     ground_truth_target = model.ground_truth_target
 
-    with torch.no_grad():
-        for batch in tqdm(data_loader, desc="Evaluating", unit=" batches"):
+    log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
+    mlflow_logger = CustomMlFlowLogger()
+
+    with mlflow_logger, torch.no_grad():
+        for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
+            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
+                _debug_to_mlflow(mlflow_logger, mlflow_global_step, device, prefix="val_")
+
             inputs = batch["inputs"]
             inputs["mix"] = inputs["mix"].to(device)
             inputs["label_vector"] = inputs["label_vector"].to(device)
             inputs["is_control"] = inputs["is_control"].to(device)
+            batch_metrics = []
 
             # Warm up on the first round to get better latency measurements
             if has_wamed_up is False:
@@ -519,9 +589,12 @@ def perform_eval(
             for i in range(batch_size):
                 sample_idx = batch["idxs"][i]
                 valid_len = int(batch["audio_lens"][i].item())  # To remove padding
-                clean_mix_i = batch["clean_mix"][i, :, :valid_len]
-                isolated_trigger_i = batch["isolated_trigger"][i, :, :valid_len]
                 mix_i = inputs["mix"][i, :, :valid_len]
+
+                isolated_trigger_i = (
+                    batch["isolated_trigger"][i, :, :valid_len] if "isolated_trigger" in batch else None
+                )
+                clean_mix_i = batch["clean_mix"][i, :, :valid_len] if "clean_mix" in batch else None
 
                 sample_metdata = batch["metadata"][i] if "metadata" in batch else None
                 sample_rate = sample_metdata.get("sample_rate", SAMPLE_RATE) if sample_metdata else SAMPLE_RATE
@@ -530,37 +603,56 @@ def perform_eval(
                     save_sample = True
                     samples_left_to_save -= 1
                     mix_file = save_samples_to / f"sample_{sample_idx}_mix.flac"
-                    clean_mix_file = save_samples_to / f"sample_{sample_idx}_clean_mix.flac"
-                    isolated_trigger_file = save_samples_to / f"sample_{sample_idx}_isolated_trigger.flac"
+                    clean_mix_file = (
+                        save_samples_to / f"sample_{sample_idx}_clean_mix.flac" if clean_mix_i is not None else None
+                    )
+                    isolated_trigger_file = (
+                        save_samples_to / f"sample_{sample_idx}_isolated_trigger.flac"
+                        if isolated_trigger_i is not None
+                        else None
+                    )
 
                     _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
-                    _save_audio_stereo(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
-                    _save_audio_stereo(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
+                    if clean_mix_i is not None:
+                        _save_audio_stereo(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
+                    if isolated_trigger_i is not None:
+                        _save_audio_stereo(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
                 else:
                     save_sample = False
 
                 for pred_name, pred in output_items:
+                    if skip_subtraction and pred_name != "x":
+                        continue
+
                     pred_i = pred[i, :, :valid_len]
 
-                    if pred_name == "x" and ground_truth_target == "isolated_trigger":
+                    if pred_name == "x" and ground_truth_target == "isolated_trigger":  # is not subtracted
+                        # precomputed_mix_metrics = (
+                        #     sample_metdata.get("mix_vs_isolated_trigger_metrics", None) if sample_metdata else None
+                        # )
+                        # FIXME: Since we truncate in the dataloader now, we cannot use precomputed metrics
+                        precomputed_mix_metrics = None
                         metrics = calculate_default_metrics(
-                            pred_i,
-                            isolated_trigger_i,
+                            pred_i.to(device),
+                            isolated_trigger_i.to(device),
                             sample_rate=sample_rate,
-                            mix=mix_i,
-                            # Do not use pre-comuted mix metrics since the batching truncates the audio
-                            # mix_metrics=sample_metdata.get("mix_vs_isolated_trigger_metrics")
-                            # if sample_metdata
-                            # else None,
+                            mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
+                            mix_metrics=precomputed_mix_metrics,
+                            loss_fn=loss_fn,
                         )
-                    else:
+                    else:  # Is subtracted
+                        # precomputed_mix_metrics = (
+                        #     sample_metdata.get("mix_vs_clean_mix_metrics", None) if sample_metdata else None
+                        # )
+                        # FIXME: Since we truncate in the dataloader now, we cannot use precomputed metrics
+                        precomputed_mix_metrics = None
                         metrics = calculate_default_metrics(
-                            pred_i,
-                            clean_mix_i,
+                            pred_i.to(device),
+                            clean_mix_i.to(device),
                             sample_rate=sample_rate,
-                            mix=mix_i,
-                            # Do not use pre-comuted mix metrics since the batching truncates the audio
-                            # mix_metrics=sample_metdata.get("mix_vs_clean_mix_metrics") if sample_metdata else None,
+                            mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
+                            mix_metrics=precomputed_mix_metrics,
+                            loss_fn=loss_fn,
                         )
 
                     if save_sample:
@@ -569,8 +661,8 @@ def perform_eval(
 
                         sample_files = {
                             "mix_file": str(mix_file.name),
-                            "clean_mix_file": str(clean_mix_file.name),
-                            "isolated_trigger_file": str(isolated_trigger_file.name),
+                            "clean_mix_file": str(clean_mix_file.name) if clean_mix_file else None,
+                            "isolated_trigger_file": str(isolated_trigger_file.name) if isolated_trigger_file else None,
                             "pred_file": str(pred_file.name),
                         }
                     else:
@@ -582,12 +674,29 @@ def perform_eval(
                             "pred_name": pred_name,
                             "runtime_ms": runtime_ms,
                             "metrics": metrics,
+                            "batch_idx": batch_idx,
                             "batch_length": inputs["mix"].shape[-1],
                             "sample_length": valid_len,
                             "sample_metadata": sample_metdata,
                             "sample_files": sample_files,
                         }
                     )
+                    if pred_name == "x":  # Only mlflow log the main prediction
+                        batch_metrics.append(metrics)
+
+            if log_to_mlflow:
+                mlflow_global_step.increment()
+                mlflow_logger.log_metrics(
+                    {
+                        "val/batch/si_snr_improvement": np.mean([m["si_snr_improvement"] for m in batch_metrics]),
+                        "val/batch/si_snr": np.mean([m["si_snr"] for m in batch_metrics]),
+                        "val/batch/snr_improvement": np.mean([m["snr_improvement"] for m in batch_metrics]),
+                        "val/batch/snr": np.mean([m["snr"] for m in batch_metrics]),
+                        "val/batch/loss": np.mean([m["loss"] for m in batch_metrics]),
+                    },
+                    step=mlflow_global_step.current,  # Batch step
+                    synchronous=False,
+                )
 
     eliot.log_message(f"Saving results to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
@@ -598,10 +707,74 @@ def perform_eval(
 
     eliot.log_message(f"Aggregating results and saving to {save_aggregated_results_to}", level="info")
     agg_res = aggregate_results(results)
-    eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
     with save_aggregated_results_to.open("w") as f:
         json.dump(agg_res, f, indent=4)
     return results, agg_res
+
+
+class CustomMlFlowLogger:
+    """
+    Custom logger that only initilize the client once and keeps a queue to make batch requests to the MLflow server.
+
+    NOTE: Not thread-safe.
+    """
+
+    def __init__(self, *, flush_queue_size: int = 512, flush_seconds: int = 30) -> None:
+        # get current mlflow run
+        active_run = mlflow.active_run()
+        if active_run is None:
+            raise ValueError(
+                "No active MLflow run found. Please start an MLflow run before initializing CustomMlFlowLogger."
+            )
+        self._run_id = active_run.info.run_id
+        self._client = mlflow.MlflowClient()
+        self._queue = []
+        self._flush_queue_size = flush_queue_size
+        self._flush_seconds = flush_seconds
+        self._last_flush_time = mlflow.utils.time.get_current_time_millis()
+
+    def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous: bool = False) -> None:
+        timestamp = mlflow.utils.time.get_current_time_millis()
+        metrics_arr = [
+            mlflow.entities.Metric(
+                key=key,
+                value=value,
+                timestamp=timestamp,
+                step=step,
+                run_id=self._run_id,
+                model_id=None,
+                dataset_name=None,
+                dataset_digest=None,
+            )
+            for key, value in metrics.items()
+        ]
+        self._queue.extend(metrics_arr)
+
+        if (
+            len(self._queue) >= self._flush_queue_size
+            or (timestamp - self._last_flush_time) >= self._flush_seconds * 1000
+        ):
+            self.flush(synchronous=synchronous, timestamp=timestamp)
+
+    def flush(self, *, synchronous: bool = False, timestamp: int | None = None) -> None:
+        self._last_flush_time = timestamp or mlflow.utils.time.get_current_time_millis()
+        if len(self._queue) == 0:
+            return
+
+        self._client.log_batch(
+            run_id=self._run_id,
+            metrics=self._queue,
+            params=[],
+            tags=[],
+            synchronous=synchronous,
+        )
+        self._queue = []
+
+    def __enter__(self) -> "CustomMlFlowLogger":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.flush(synchronous=True)
 
 
 def aggregate_results(results: list[dict[str, object]]) -> dict:
@@ -852,6 +1025,53 @@ def log_dataset_config_diffs(
             )
     except Exception as e:
         eliot.log_message(f"Error occurred while comparing dataset configs for {split}: {e}", level="error")
+
+
+class SimpleCounter:
+    """Simple class to keep track of a count that can be incremented. Useful for tracking global steps for MLflow logging, etc."""
+
+    def __init__(self, start: int = 0) -> None:
+        self._count = start
+
+    def increment(self, n=1) -> None:
+        """Increment the counter by n"""
+        self._count += n
+
+    @property
+    def current(self) -> int:
+        """The current count."""
+        return self._count
+
+
+def _debug_to_mlflow(
+    mlflow_logger: CustomMlFlowLogger,
+    step_counter: SimpleCounter,
+    device: torch.device,
+    prefix: str = "",
+    **other_things: dict,
+) -> None:
+    if device == torch.device("cuda"):
+        mlflow_logger.log_metrics(
+            {
+                f"debug/{prefix}batch_vram_allocated_gb": (torch.cuda.memory_allocated(device) / (1024**3)),
+                f"debug/{prefix}batch_vram_reserved_gb": (torch.cuda.memory_reserved(device) / (1024**3)),
+                f"debug/{prefix}batch_vram_free_gb": (
+                    torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
+                )
+                / (1024**3),
+                f"debug/{prefix}batch_vram_total_gb": (
+                    torch.cuda.get_device_properties(device).total_memory / (1024**3)
+                ),
+            },
+            step=step_counter.current,
+        )
+    if len(other_things) > 0:
+        mlflow_logger.log_metrics(
+            {
+                **{f"debug/{prefix}{k}": v for k, v in other_things.items()},
+            },
+            step=step_counter.current,
+        )
 
 
 # FIXME: Remove unused (commented out) functions
