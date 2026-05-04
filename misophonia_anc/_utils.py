@@ -213,6 +213,11 @@ class MisophoniaANCConfig(BaseModel):
         "See MisophoniaANCNet.register_subtraction_method for details.",
     )
 
+    stereo_to_mono: bool = pydantic.Field(
+        False,  # noqa: FBT003
+        description="Wheater to split each sample into two mono samples, effectively doubling the batch size, i.e. (B, T, 2) -> (2B, T, 1).",
+    )
+
     mlflow_experiment: str | None = pydantic.Field(
         None, description="MLflow experiment name to log training metrics to."
     )
@@ -234,8 +239,33 @@ def make_custom_collate_fn(
     include_isolated_trigger: bool,
     include_clean_mix: bool,
     max_length: int | None = None,
-) -> callable:
+    stereo_to_mono: bool = False,
+) -> Callable[[dict], dict]:
     max_length = torch.inf if max_length is None else max_length
+
+    def stereo_to_mono_batch(batch: dict) -> dict:
+        """Make the batch twice the size by converting stereo audio to mono (two samples per sample)."""
+        # (B, T, C) -> (2B, T, 1)
+        original_batch_size = batch["inputs"]["mix"].shape[0]
+        batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(-1, batch["inputs"]["mix"].shape[-1])
+        if "isolated_trigger" in batch:
+            batch["isolated_trigger"] = batch["isolated_trigger"].reshape(-1, batch["isolated_trigger"].shape[-1])
+        if "clean_mix" in batch:
+            batch["clean_mix"] = batch["clean_mix"].reshape(-1, batch["clean_mix"].shape[-1])
+        batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"].repeat_interleave(2, dim=0)
+        batch["inputs"]["is_control"] = batch["inputs"]["is_control"].repeat_interleave(2, dim=0)
+        batch["audio_lens"] = batch["audio_lens"].repeat_interleave(2, dim=0)
+        assert len(batch["inputs"]["mix"].shape) == 3 and batch["inputs"]["mix"].shape[2] == 1, (
+            "Expected mix to have shape (2B, T, 1) after stereo to mono conversion"
+        )
+        assert (
+            batch["inputs"]["mix"].shape[0]
+            == batch["inputs"]["label_vector"].shape[0]
+            == batch["inputs"]["is_control"].shape[0]
+            == batch["audio_lens"].shape[0]
+            == 2 * original_batch_size
+        )
+        return batch
 
     def custom_collate_fn(
         batch: dict,
@@ -338,6 +368,9 @@ def make_custom_collate_fn(
         if include_clean_mix:
             res["clean_mix"] = torch.stack(clean_mixes)
 
+        if stereo_to_mono:
+            batch = stereo_to_mono_batch(res)
+
         return res
 
     return custom_collate_fn
@@ -352,6 +385,7 @@ def make_dataloader(
     include_clean_mix: bool = True,
     include_metadata: bool = False,
     max_length: int | None = None,
+    stereo_to_mono: bool = False,
 ) -> wds.WebLoader:
     """
     Make a WebLoader from the given .tar files.
@@ -409,6 +443,7 @@ def make_dataloader(
             include_isolated_trigger=include_isolated_trigger,
             include_clean_mix=include_clean_mix,
             max_length=max_length,
+            stereo_to_mono=stereo_to_mono,
         ),
     )
 

@@ -249,6 +249,7 @@ def train(
             if "train" in config.dataset_splits and config.dataset_splits["train"].generated_config is not None
             else None
         ),
+        stereo_to_mono=config.stereo_to_mono,
     )
     val_loader = make_dataloader(
         shards_val,
@@ -262,6 +263,7 @@ def train(
             if "val" in config.dataset_splits and config.dataset_splits["val"].generated_config is not None
             else None
         ),
+        stereo_to_mono=config.stereo_to_mono,
     )
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
@@ -416,6 +418,7 @@ def evaluate(
                 if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
                 else None
             ),
+            stereo_to_mono=config.stereo_to_mono,
         )
         if limit_samples is not None:
             split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
