@@ -612,11 +612,11 @@ def perform_eval(
                         else None
                     )
 
-                    _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
+                    _save_audio(mix_i, mix_file, sample_rate=sample_rate)
                     if clean_mix_i is not None:
-                        _save_audio_stereo(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
+                        _save_audio(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
                     if isolated_trigger_i is not None:
-                        _save_audio_stereo(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
+                        _save_audio(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
                 else:
                     save_sample = False
 
@@ -657,7 +657,7 @@ def perform_eval(
 
                     if save_sample:
                         pred_file = save_samples_to / f"sample_{sample_idx}_{pred_name}.flac"
-                        _save_audio_stereo(pred_i, pred_file, sample_rate=sample_rate)
+                        _save_audio(pred_i, pred_file, sample_rate=sample_rate)
 
                         sample_files = {
                             "mix_file": str(mix_file.name),
@@ -816,21 +816,18 @@ def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_
             _ = model(inputs)
 
 
-def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
+def _save_audio(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
     """
     Save audio tensor of shape [C, T] as wav.
-    Assumes C is 2.
+    Assumes C is 1 or 2.
     """
     assert path.suffix == ".flac"
     if isinstance(audio, torch.Tensor):
         audio = audio.detach().cpu().float().numpy()
 
     assert isinstance(audio, np.ndarray)
-    assert audio.ndim == 2, f"Expected audio of shape [C, T], got {audio.shape}"
-
-    # soundfile expects [T] or [T, C]
-    if audio.ndim != 2:
-        raise ValueError(f"Expected audio of shape [C, T], got {audio.shape}")
+    assert len(audio.shape) == 2, f"Expected audio of shape [C, T], got {audio.shape}"
+    assert audio.ndim in (1, 2), f"Expected audio with 1 or 2 channels, got {audio.shape}"
 
     audio = audio.T  # [T, C]
     sf.write(
