@@ -440,13 +440,15 @@ def calculate_default_metrics(
     metrics = {
         "si_snr": si_snr_both.mean().item(),
         "snr": snr_both.mean().item(),
-        "si_snr_left": si_snr_both[..., 0].mean().item(),
-        "si_snr_right": si_snr_both[..., 1].mean().item(),
-        "snr_left": snr_both[..., 0].mean().item(),
-        "snr_right": snr_both[..., 1].mean().item(),
         # "ild": ild,
         # "itd": itd,
     }
+
+    if si_snr_both.shape[-1] == 2:
+        metrics["si_snr_left"] = si_snr_both[..., 0].mean().item()
+        metrics["si_snr_right"] = si_snr_both[..., 1].mean().item()
+        metrics["snr_left"] = snr_both[..., 0].mean().item()
+        metrics["snr_right"] = snr_both[..., 1].mean().item()
 
     if loss_fn is not None:
         # Call loss function like it is a batch
@@ -462,11 +464,13 @@ def calculate_default_metrics(
             metrics["snr_improvement"] = metrics["snr"] - mix_metrics["snr"]
         if "si_snr" in mix_metrics:
             metrics["si_snr_improvement"] = metrics["si_snr"] - mix_metrics["si_snr"]
-        if "snr_left" in mix_metrics and "snr_right" in mix_metrics:
+        if "snr_left" in mix_metrics and "snr_left" in metrics:
             metrics["snr_improvement_left"] = metrics["snr_left"] - mix_metrics["snr_left"]
+        if "snr_right" in mix_metrics and "snr_right" in metrics:
             metrics["snr_improvement_right"] = metrics["snr_right"] - mix_metrics["snr_right"]
-        if "si_snr_left" in mix_metrics and "si_snr_right" in mix_metrics:
+        if "si_snr_left" in mix_metrics and "si_snr_left" in metrics:
             metrics["si_snr_improvement_left"] = metrics["si_snr_left"] - mix_metrics["si_snr_left"]
+        if "si_snr_right" in mix_metrics and "si_snr_right" in metrics:
             metrics["si_snr_improvement_right"] = metrics["si_snr_right"] - mix_metrics["si_snr_right"]
 
     return metrics
