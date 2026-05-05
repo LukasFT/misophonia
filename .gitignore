@@ -226,9 +226,11 @@ pyrightconfig.json
 notebooks/playground/
 !notebooks/playground/.gitkeep
 playground.py
+data
 data/*
 !data/.gitkeep
 playground*
-out/
+out
+out/*
 SemanticHearing
 misophonia_anc/confidential_losses.py
