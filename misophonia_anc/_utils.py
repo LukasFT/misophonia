@@ -369,7 +369,7 @@ def make_custom_collate_fn(
             res["clean_mix"] = torch.stack(clean_mixes)
 
         if stereo_to_mono:
-            batch = stereo_to_mono_batch(res)
+            res = stereo_to_mono_batch(res)
 
         return res
 
