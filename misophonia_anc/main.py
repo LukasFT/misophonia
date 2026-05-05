@@ -348,6 +348,15 @@ def cp_best_epoch(
         best_metric = None
         best_checkpoint = None
         for checkpoint_file in checkpoints_dir.glob("*.pt"):
+            if checkpoint_file.name == "best_weights.pt":
+                old_best_file = checkpoint_file.with_name(f"best_weights.old-{datetime.now().isoformat()}.pt")
+                shutil.move(checkpoint_file, old_best_file)
+                eliot.log_message(
+                    f"Renamed existing best checkpoint {checkpoint_file} to {old_best_file}",
+                    level="warning",
+                )
+                continue  # Skip previously copied best checkpoint to avoid confusion
+
             checkpoint_data = torch.load(checkpoint_file, map_location="cpu")
             checkpoint_metric = checkpoint_data.get(metric, None)
             if checkpoint_metric is None:
