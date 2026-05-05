@@ -332,7 +332,7 @@ def train(
 
 @app.command()
 def cp_best_epoch(
-    names: Annotated[list[str] | str, typer.Argument(..., help="Name of model directory.")],
+    names: Annotated[list[str], typer.Argument(..., help="Name of model directory.")],
     *,
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
     metric: Annotated[
