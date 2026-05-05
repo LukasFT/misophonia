@@ -346,6 +346,13 @@ def cp_best_epoch(
         eliot.log_message(f"Finding best checkpoint for model {name} based on metric {metric}...", level="info")
         model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
         checkpoints_dir = model_dir / "checkpoints"
+
+        if not checkpoints_dir.exists():
+            eliot.log_message(
+                f"Checkpoints directory {checkpoints_dir} does not exist for {name}. Skipping.", level="error"
+            )
+            continue
+
         best_metric = None
         best_checkpoint = None
         for checkpoint_file in checkpoints_dir.glob("*.pt"):
