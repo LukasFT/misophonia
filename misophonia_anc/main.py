@@ -2,6 +2,7 @@ import itertools
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -323,9 +324,48 @@ def train(
             skip_subtraction=skip_subtraction,
             **config.model_hyperparams,
         )
+        cp_best_epoch(name, data_base_dir=data_base_dir)
     finally:
         if mlflow_uri is not None:
             mlflow.end_run()
+
+
+@app.command()
+def cp_best_epoch(
+    names: Annotated[list[str] | str, typer.Argument(..., help="Name of model directory.")],
+    *,
+    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+    metric: Annotated[
+        str, typer.Option(..., help="Metric name to determine best checkpoint.")
+    ] = "val_si_snr_improvement",
+) -> None:
+    if isinstance(names, str):
+        names = [names]
+    for name in names:
+        eliot.log_message(f"Finding best checkpoint for model {name} based on metric {metric}...", level="info")
+        model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
+        checkpoints_dir = model_dir / "checkpoints"
+        best_metric = None
+        best_checkpoint = None
+        for checkpoint_file in checkpoints_dir.glob("*.pt"):
+            checkpoint_data = torch.load(checkpoint_file, map_location="cpu")
+            checkpoint_metric = checkpoint_data.get(metric, None)
+            if checkpoint_metric is None:
+                eliot.log_message(
+                    f"Checkpoint {checkpoint_file} does not contain metric {metric}. Skipping this checkpoint for best checkpoint selection.",
+                    level="warning",
+                )
+                continue
+            if best_metric is None or checkpoint_metric > best_metric:
+                best_metric = checkpoint_metric
+                best_checkpoint = checkpoint_file
+
+        if best_checkpoint is not None:
+            best_checkpoint_path = checkpoints_dir / "best_weights.pt"
+            shutil.copy(best_checkpoint, best_checkpoint_path)
+            eliot.log_message(f"Copied best checkpoint {best_checkpoint} to {best_checkpoint_path}", level="info")
+        else:
+            eliot.log_message(f"No checkpoint found with metric {metric} for model {name}", level="warning")
 
 
 @app.command()

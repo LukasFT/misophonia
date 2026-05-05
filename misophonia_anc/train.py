@@ -3,7 +3,6 @@ The main training script for training on synthetic data
 """
 
 import json
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -226,11 +225,6 @@ def train_model(
     optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
     loss_fn = get_loss_fn_from_name(loss_option)
 
-    # Checkpoint trackers
-    best_epoch = -1
-    best_val_si_snr_improvement = -np.inf
-
-    # FIXME: Counting global steps is done using two different implementations for val and train
     global_step_train_counter = SimpleCounter(global_step_train_start)
     global_step_val_counter = SimpleCounter(global_step_val_start)
 
@@ -310,14 +304,3 @@ def train_model(
             val_loss=val_loss,
             train_loss=train_loss,
         )
-
-        if val_si_snr_improvement > best_val_si_snr_improvement:
-            best_epoch = epoch
-            best_val_si_snr_improvement = val_si_snr_improvement
-
-    # Rename best model weights
-    best_ckpt = ckpt_dir / f"weights_epoch_{best_epoch}.pt"
-    final_path = ckpt_dir / "best_weights.pt"
-
-    if best_epoch >= 0:
-        shutil.copy(best_ckpt, final_path)  # safer than rename
