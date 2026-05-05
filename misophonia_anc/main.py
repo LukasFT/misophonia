@@ -358,7 +358,14 @@ def cp_best_epoch(
         for checkpoint_file in checkpoints_dir.glob("*.pt"):
             if checkpoint_file.name == "best_weights.pt":
                 old_best_file = checkpoint_file.with_name(f"best_weights.old-{datetime.now().isoformat()}.pt")
-                shutil.move(checkpoint_file, old_best_file)
+                try:
+                    shutil.move(checkpoint_file, old_best_file)
+                except Exception as e:
+                    eliot.log_message(
+                        f"Failed to rename existing best checkpoint {checkpoint_file} to {old_best_file}: {e}",
+                        level="error",
+                    )
+                    continue
                 eliot.log_message(
                     f"Renamed existing best checkpoint {checkpoint_file} to {old_best_file}",
                     level="warning",
@@ -379,7 +386,14 @@ def cp_best_epoch(
 
         if best_checkpoint is not None:
             best_checkpoint_path = checkpoints_dir / "best_weights.pt"
-            shutil.copy(best_checkpoint, best_checkpoint_path)
+            try:
+                shutil.copy(best_checkpoint, best_checkpoint_path)
+            except Exception as e:
+                eliot.log_message(
+                    f"Failed to copy best checkpoint {best_checkpoint} to {best_checkpoint_path}: {e}",
+                    level="error",
+                )
+                continue
             eliot.log_message(f"Copied best checkpoint {best_checkpoint} to {best_checkpoint_path}", level="info")
         else:
             eliot.log_message(f"No checkpoint found with metric {metric} for model {name}", level="warning")
