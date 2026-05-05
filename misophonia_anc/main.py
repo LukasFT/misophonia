@@ -339,6 +339,7 @@ def cp_best_epoch(
         str, typer.Option(..., help="Metric name to determine best checkpoint.")
     ] = "val_si_snr_improvement",
 ) -> None:
+    """Copy the best checkpoint based on the specified metric to a file named 'best_weights.pt' in the checkpoints directory."""
     if isinstance(names, str):
         names = [names]
     for name in names:
