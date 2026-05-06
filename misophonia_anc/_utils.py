@@ -257,26 +257,30 @@ def make_custom_collate_fn(
         raise NotImplementedError(
             "Implement stereo_to_mono_batch function to convert stereo audio to mono and double the batch size."
         )
-        original_batch_size = batch["inputs"]["mix"].shape[0]
-        batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(-1, batch["inputs"]["mix"].shape[-1])
-        if "isolated_trigger" in batch:
-            batch["isolated_trigger"] = batch["isolated_trigger"].reshape(-1, batch["isolated_trigger"].shape[-1])
-        if "clean_mix" in batch:
-            batch["clean_mix"] = batch["clean_mix"].reshape(-1, batch["clean_mix"].shape[-1])
-        batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"].repeat_interleave(2, dim=0)
-        batch["inputs"]["is_control"] = batch["inputs"]["is_control"].repeat_interleave(2, dim=0)
-        batch["audio_lens"] = batch["audio_lens"].repeat_interleave(2, dim=0)
-        assert len(batch["inputs"]["mix"].shape) == 3 and batch["inputs"]["mix"].shape[2] == 1, (
-            "Expected mix to have shape (2B, T, 1) after stereo to mono conversion"
-        )
-        assert (
-            batch["inputs"]["mix"].shape[0]
-            == batch["inputs"]["label_vector"].shape[0]
-            == batch["inputs"]["is_control"].shape[0]
-            == batch["audio_lens"].shape[0]
-            == 2 * original_batch_size
-        )
-        return batch
+        # original_mix_shape = batch["inputs"]["mix"].shape
+        # original_label_vector_shape = batch["inputs"]["label_vector"].shape
+        # original_is_control_shape = batch["inputs"]["is_control"].shape
+        # original_audio_lens_shape = batch["audio_lens"].shape
+        # # original_clean
+        # batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(-1, 1, batch["inputs"]["mix"].shape[-1])
+        # if "isolated_trigger" in batch:
+        #     batch["isolated_trigger"] = batch["isolated_trigger"].reshape(-1, 1, batch["isolated_trigger"].shape[-1])
+        # if "clean_mix" in batch:
+        #     batch["clean_mix"] = batch["clean_mix"].reshape(-1, 1, batch["clean_mix"].shape[-1])
+        # batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"].repeat_interleave(2, dim=0)
+        # batch["inputs"]["is_control"] = batch["inputs"]["is_control"].repeat_interleave(2, dim=0)
+        # batch["audio_lens"] = batch["audio_lens"].repeat_interleave(2, dim=0)
+        # assert len(batch["inputs"]["mix"].shape) == 3 and batch["inputs"]["mix"].shape[2] == 1, (
+        #     "Expected mix to have shape (2B, T, 1) after stereo to mono conversion"
+        # )
+        # assert (
+        #     batch["inputs"]["mix"].shape[0]
+        #     == batch["inputs"]["label_vector"].shape[0]
+        #     == batch["inputs"]["is_control"].shape[0]
+        #     == batch["audio_lens"].shape[0]
+        #     == 2 * original_batch_size
+        # )
+        # return batch
 
     def custom_collate_fn(
         batch: dict,
@@ -972,7 +976,12 @@ def aggregate_results(
 def _agg_results_calc(df: pd.DataFrame) -> dict:
     grouped = df.groupby("pred_name").agg(["mean", "std"])
     grouped.columns = [f"{metric}_{stat}" for metric, stat in grouped.columns]
-    return grouped.to_dict(orient="index")
+    res = grouped.to_dict(orient="index")
+    # apply _json_safe to all values in res
+    for pred_name in res:
+        for metric_stat in res[pred_name]:
+            res[pred_name][metric_stat] = _json_safe(res[pred_name][metric_stat])
+    return res
 
 
 def _normalize_group_by(
