@@ -248,6 +248,15 @@ def make_custom_collate_fn(
     def stereo_to_mono_batch(batch: dict) -> dict:
         """Make the batch twice the size by converting stereo audio to mono (two samples per sample)."""
         # (B, T, C) -> (2B, T, 1)
+        for key in batch["inputs"].keys():
+            try:
+                eliot.log_message(f"{key} {batch['inputs'][key].shape=}", level="warning")
+            except Exception as e:
+                eliot.log_message(f"Error logging shape for key {key}: {e}", level="error")
+                eliot.log_message(f"{batch['inputs'][key]=}", level="error")
+        raise NotImplementedError(
+            "Implement stereo_to_mono_batch function to convert stereo audio to mono and double the batch size."
+        )
         original_batch_size = batch["inputs"]["mix"].shape[0]
         batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(-1, batch["inputs"]["mix"].shape[-1])
         if "isolated_trigger" in batch:
