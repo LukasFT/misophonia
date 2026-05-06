@@ -440,6 +440,7 @@ def evaluate(
     """
     Function to compare sample gts and mixes to model outputs.
     """
+    n_errors = 0
     for name in names:
         model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -518,15 +519,20 @@ def evaluate(
 
                 eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
 
-                eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
+                eliot.log_message(f"{name}: Evaluated {len(res)} {split} samples", level="info")
             except Exception as e:
+                n_errors += 1
                 eliot.log_message(
                     f"Error during evaluation of model {name} on split {split} with checkpoint {checkpoint}: {e}",
                     level="error",
                 )
                 continue
 
-        eliot.log_message(f"Completed evaluation for checkpoint {checkpoint} on splits: {splits}", level="info")
+    eliot.log_message(
+        f"Completed evaluation for models {names} on splits {splits} with checkpoint {checkpoint}."
+        + (f" Encountered {n_errors} errors." if n_errors > 0 else ""),
+        level="info" if n_errors == 0 else "error",
+    )
 
 
 if __name__ == "__main__":
