@@ -1123,16 +1123,23 @@ def prepare_dir_or_file(target: Path, *, is_dir: bool, overwrite: bool) -> None:
     """Prepare a directory or file for writing. If it already exists, either overwrite it or raise an error based on the `overwrite` flag."""
 
     if target.exists():
-        if overwrite:
-            if is_dir:
-                eliot.log_message(f"Deleting existing directory at {target}", level="warning")
-                for file in target.glob("*"):
-                    file.unlink()
-            else:
-                eliot.log_message(f"Overwriting existing file at {target}", level="warning")
-                target.unlink()
+        if is_dir and not target.is_dir():
+            raise FileExistsError(f"A file already exists at {target}, but a directory is expected.")
+        if not is_dir and not target.is_file():
+            raise FileExistsError(f"A directory already exists at {target}, but a file is expected.")
+        if is_dir and target.is_dir() and not any(target.iterdir()):
+            pass  # Do nothing if the directory already exists and is empty
         else:
-            raise FileExistsError(f"Directory already exists at {target}. Use --overwrite to overwrite.")
+            if overwrite:
+                if is_dir:
+                    eliot.log_message(f"Deleting existing directory at {target}", level="warning")
+                    for file in target.glob("*"):
+                        file.unlink()
+                else:
+                    eliot.log_message(f"Overwriting existing file at {target}", level="warning")
+                    target.unlink()
+            else:
+                raise FileExistsError(f"Directory already exists at {target}. Use --overwrite to overwrite.")
 
     if is_dir:
         target.mkdir(parents=True, exist_ok=True)
