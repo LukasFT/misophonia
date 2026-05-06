@@ -5,11 +5,11 @@
 import json
 import os
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 import eliot
 import mlflow
@@ -554,6 +554,7 @@ def perform_eval(
     device: torch.device,
     save_results_to: Path,
     save_aggregated_results_to: Path | None = None,
+    aggregated_results_kwargs: dict | None = None,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
     warm_up_iters: int = 10,
@@ -571,6 +572,7 @@ def perform_eval(
         device: The torch.device to run inference on.
         save_results_to: A path to save the evaluation results as a JSON file. Will include metrics and metadata for each sample.
         save_aggregated_results_to: If not None, a path to save aggregated evaluation results (e.g. average metrics across all samples) as a JSON file.
+        aggregated_results_kwargs: See aggregate_results() for details on the kwargs.
         save_samples_to: If not None, a directory to save example audio files of the mixes, gts, and predictions. Will save as .flac files.
         save_num_samples: If save_samples_to is not None, the maximum number of samples to save to disk. If 0, do not save any.
         warm_up_iters: Number of iterations to run for warming up the model before measuring latency.
@@ -745,7 +747,7 @@ def perform_eval(
         return results, None
 
     eliot.log_message(f"Aggregating results and saving to {save_aggregated_results_to}", level="info")
-    agg_res = aggregate_results(results)
+    agg_res = aggregate_results(results, **(aggregated_results_kwargs or {}))
     with save_aggregated_results_to.open("w") as f:
         json.dump(agg_res, f, indent=4)
     return results, agg_res
@@ -816,33 +818,149 @@ class CustomMlFlowLogger:
         self.flush(synchronous=True)
 
 
-def aggregate_results(results: list[dict[str, object]]) -> dict:
+GroupSpec = str | Sequence[str]
+
+
+def aggregate_results(
+    results: list[dict[str, object]],
+    *,
+    group_by: None | GroupSpec | Sequence[GroupSpec] = None,
+) -> dict:
     """
     Aggregate the results from perform_eval into overall metrics.
 
-    Args:
-        results: A list of dictionaries containing metrics for each sample, as output by perform_eval.
+    Examples:
+        aggregate_results(results)
+
+        aggregate_results(
+            results,
+            group_by=[
+                ("fg_categories", "is_trigger"),
+                "is_trigger",
+            ],
+        )
+
+    Semantics:
+        If fg_categories is ["a", "b"], it is treated as the exact group
+        ("a", "b"). It is not counted in the "a" or "b" groups.
     """
-    df = pd.DataFrame(
-        [
-            {
-                **result["metrics"],
-                "pred_name": result["pred_name"],
-                "runtime_ms": result.get("runtime_ms"),
-                "batch_length": result.get("batch_length"),
-                "sample_length": result.get("sample_length"),
-            }
-            for result in results
-        ]
-    )
+    if not results:
+        return {}
+
+    rows = [
+        {
+            **result["metrics"],
+            **(result.get("sample_metadata") or {}),
+            "pred_name": result["pred_name"],
+            "runtime_ms": result.get("runtime_ms"),
+            "batch_length": result.get("batch_length"),
+            "sample_length": result.get("sample_length"),
+        }
+        for result in results
+    ]
+
+    df = pd.DataFrame(rows)
+
+    metric_keys = list(results[0]["metrics"].keys())
+    metadata_keys = list(results[0].get("sample_metadata", {}).keys())
+
+    overlap = set(metric_keys).intersection(metadata_keys)
+    if overlap:
+        raise ValueError(f"Metric keys overlap with metadata keys: {overlap}")
+
+    group_specs = _normalize_group_by(group_by)
+
+    all_group_by_cols = {col for group in group_specs for col in group}
+    missing_groupby_keys = all_group_by_cols.difference(metadata_keys)
+    if missing_groupby_keys:
+        raise ValueError(f"Group by keys {missing_groupby_keys} not found in metadata columns {metadata_keys}")
+
     if "runtime_ms" in df.columns and "batch_length" in df.columns:
-        df["runtime_ms_pr_length"] = (
-            df["runtime_ms"] / df["batch_length"]
-        )  # Model is run on batch-level, so normalize on that
+        df["runtime_ms_pr_length"] = df["runtime_ms"] / df["batch_length"]
+
+    agg_metrics = _agg_results_calc(df[metric_keys + ["pred_name"]])
+
+    # Normalize list-valued / unhashable group columns.
+    for col in all_group_by_cols:
+        df[col] = df[col].map(_normalize_group_value)
+
+    for group_cols in group_specs:
+        for group_values, group_df in df.groupby(list(group_cols), dropna=False, sort=True):
+            key = _format_group_key(group_cols, group_values)
+            agg_metrics[key] = _agg_results_calc(group_df[metric_keys + ["pred_name"]])
+
+    return agg_metrics
+
+
+def _agg_results_calc(df: pd.DataFrame) -> dict:
     grouped = df.groupby("pred_name").agg(["mean", "std"])
     grouped.columns = [f"{metric}_{stat}" for metric, stat in grouped.columns]
-    agg_metrics = grouped.to_dict(orient="index")
-    return agg_metrics
+    return grouped.to_dict(orient="index")
+
+
+def _normalize_group_by(
+    group_by: None | GroupSpec | Sequence[GroupSpec],
+) -> tuple[tuple[str, ...], ...]:
+    if group_by is None:
+        return ()
+
+    if isinstance(group_by, str):
+        return ((group_by,),)
+
+    # group_by=("fg_categories", "is_trigger")
+    # Ambiguous: is this one compound group or two single groups?
+    # I recommend requiring compound groups to be nested:
+    # group_by=[("fg_categories", "is_trigger")]
+    #
+    # But for backward compatibility, treat a flat sequence of strings
+    # as multiple single-column groupings.
+    if all(isinstance(x, str) for x in group_by):
+        return tuple((x,) for x in group_by)  # type: ignore[arg-type]
+
+    out: list[tuple[str, ...]] = []
+    for spec in group_by:  # type: ignore[union-attr]
+        if isinstance(spec, str):
+            out.append((spec,))
+        else:
+            out.append(tuple(spec))
+    return tuple(out)
+
+
+def _normalize_group_value(value: Any) -> Any:  # noqa: ANN401
+    """
+    Normalize group values so pandas can group by them.
+
+    Important:
+        ["a", "b"] is treated as the exact group ("a", "b"),
+        not as membership in "a" and membership in "b".
+    """
+    if isinstance(value, list):
+        return tuple(value)
+
+    if isinstance(value, set):
+        return tuple(sorted(value))
+
+    if isinstance(value, dict):
+        return tuple(sorted(value.items()))
+
+    return value
+
+
+def _format_group_value(value: Any) -> str:  # noqa: ANN401
+    if isinstance(value, tuple):
+        return ",".join(map(str, value))
+    return str(value)
+
+
+def _format_group_key(group_cols: tuple[str, ...], group_values: Any) -> str:  # noqa: ANN401
+    if len(group_cols) == 1:
+        group_values = (group_values,)
+    elif not isinstance(group_values, tuple):
+        group_values = (group_values,)
+
+    parts = [f"{col}={_format_group_value(value)}" for col, value in zip(group_cols, group_values)]
+
+    return "by:" + "&".join(parts)
 
 
 def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int) -> None:
