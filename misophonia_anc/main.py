@@ -411,6 +411,13 @@ def evaluate(
             help="Dataset split to generate (e.g., 'train', 'val', 'test')",
         ),
     ] = ["train", "val", "test"],
+    collect_to: Annotated[
+        str | None,
+        typer.Option(
+            ...,
+            help="Extra name of dir the copy results files to (will also copy to the model dir).",
+        ),
+    ] = None,
     checkpoint: Annotated[
         str,
         typer.Option(..., help="Name of model checkpoint to load. If 'init', a random untrained model will be used."),
@@ -441,6 +448,11 @@ def evaluate(
     Function to compare sample gts and mixes to model outputs.
     """
     n_errors = 0
+    collect_to = (
+        get_data_dir(dataset_name=collect_to, base_dir=data_base_dir) / "collected_eval_results"
+        if collect_to is not None
+        else None
+    )
     for name in names:
         model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -514,6 +526,7 @@ def evaluate(
                             ("fg_categories", "is_trigger"),
                             "__len__(fg_categories)",
                             "__len__(bg_categories)",
+                            ("__len__(fg_categories)", "__len__(bg_categories)"),
                             "is_trigger",
                         )
                     },
@@ -527,6 +540,19 @@ def evaluate(
                 eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
 
                 eliot.log_message(f"{name}: Evaluated {len(res)} {split} samples", level="info")
+
+                if collect_to is not None:
+                    extra_results_file = collect_to / f"{name}_{results_file.name}"
+                    extra_aggregated_results_file = collect_to / f"{name}_{aggregated_results_file.name}"
+                    prepare_dir_or_file(extra_results_file, overwrite=overwrite, is_dir=False)
+                    prepare_dir_or_file(extra_aggregated_results_file, overwrite=True, is_dir=False)
+                    shutil.copy(results_file, extra_results_file)
+                    shutil.copy(aggregated_results_file, extra_aggregated_results_file)
+                    eliot.log_message(
+                        f"Copied results to {collect_to} at {extra_results_file} and {extra_aggregated_results_file}",
+                        level="info",
+                    )
+
             except Exception as e:
                 n_errors += 1
                 eliot.log_message(
