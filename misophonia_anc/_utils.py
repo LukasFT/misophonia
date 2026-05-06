@@ -3,9 +3,11 @@
 # ruff: noqa: ANN001 # FIXME: Improve quality
 
 import json
+import math
 import os
+import re
 import subprocess
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Sequence, Sized
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
@@ -837,6 +839,30 @@ class CustomMlFlowLogger:
 GroupSpec = str | Sequence[str]
 
 
+_LEN_GROUP_RE = re.compile(r"^__len__\((?P<col>[^()]+)\)$")
+
+
+def _parse_len_group_col(col: str) -> str | None:
+    match = _LEN_GROUP_RE.match(col)
+    if not match:
+        return None
+    return match.group("col")
+
+
+def _group_len(value: Any) -> int:  # noqa: ANN401
+    if value is None:
+        return 0
+
+    # Treat scalar strings as a single value, not character sequences.
+    if isinstance(value, str):
+        return 1
+
+    if isinstance(value, Sized):
+        return len(value)
+
+    return 1
+
+
 def aggregate_results(
     results: list[dict[str, object]],
     *,
@@ -852,6 +878,7 @@ def aggregate_results(
             results,
             group_by=[
                 ("fg_categories", "is_trigger"),
+                ("__len__(fg_categories)",),
                 "is_trigger",
             ],
         )
@@ -887,9 +914,30 @@ def aggregate_results(
     group_specs = _normalize_group_by(group_by)
 
     all_group_by_cols = {col for group in group_specs for col in group}
-    missing_groupby_keys = all_group_by_cols.difference(metadata_keys)
-    if missing_groupby_keys:
-        raise ValueError(f"Group by keys {missing_groupby_keys} not found in metadata columns {metadata_keys}")
+
+    derived_len_cols: dict[str, str] = {}
+    plain_group_by_cols: set[str] = set()
+
+    for col in all_group_by_cols:
+        len_source_col = _parse_len_group_col(col)
+
+        if len_source_col is None:
+            plain_group_by_cols.add(col)
+        else:
+            derived_len_cols[col] = len_source_col
+
+    missing_plain_keys = plain_group_by_cols.difference(metadata_keys)
+    if missing_plain_keys:
+        raise ValueError(f"Group by keys {missing_plain_keys} not found in metadata columns {metadata_keys}")
+
+    missing_len_source_keys = set(derived_len_cols.values()).difference(metadata_keys)
+    if missing_len_source_keys:
+        raise ValueError(
+            f"Group by __len__ source keys {missing_len_source_keys} not found in metadata columns {metadata_keys}"
+        )
+
+    for derived_col, source_col in derived_len_cols.items():
+        df[derived_col] = df[source_col].map(_group_len)
 
     if "runtime_ms" in df.columns and "batch_length" in df.columns:
         df["runtime_ms_pr_length"] = df["runtime_ms"] / df["batch_length"]
@@ -904,8 +952,10 @@ def aggregate_results(
         for group_values, group_df in df.groupby(list(group_cols), dropna=False, sort=True):
             key = _format_group_key(group_cols, group_values)
             agg_metrics[key] = _agg_results_calc(group_df[metric_keys + ["pred_name"]])
-            agg_metrics[key]["__len__"] = len(group_df)
-            agg_metrics[key]["__group_values__"] = group_values
+            agg_metrics[key]["__count__"] = len(group_df)
+            agg_metrics[key]["__grouped_by__"] = {
+                _json_safe(col): _json_safe(group_values[i]) for i, col in enumerate(group_cols)
+            }
 
     return agg_metrics
 
@@ -979,6 +1029,31 @@ def _format_group_key(group_cols: tuple[str, ...], group_values: Any) -> str:  #
     parts = [f"{col}={_format_group_value(value)}" for col, value in zip(group_cols, group_values)]
 
     return "by:" + "&".join(parts)
+
+
+def _json_safe(value: Any) -> Any:  # noqa: ANN401
+    if value is pd.NA:
+        return None
+
+    if isinstance(value, np.generic):
+        return value.item()
+
+    if isinstance(value, float) and math.isnan(value):
+        return None
+
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, set):
+        return [_json_safe(v) for v in sorted(value)]
+
+    if isinstance(value, dict):
+        return {str(_json_safe(k)): _json_safe(v) for k, v in value.items()}
+
+    return value
 
 
 def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int) -> None:
