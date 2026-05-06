@@ -587,6 +587,13 @@ def visualize_data(
         str,
         typer.Option(..., help="Dataset split to visualize (e.g., 'train', 'val', 'test')"),
     ] = "train",
+    num_workers: Annotated[
+        int,
+        typer.Option(
+            ...,
+            help="Number of workers for data loading. A few will suffice, too many will consume extensive memory.",
+        ),
+    ] = 2,
     save_background: Annotated[
         bool, typer.Option(..., help="Whether to save background spectrograms (i.e., non-trigger samples) separately.")
     ] = False,
@@ -602,7 +609,7 @@ def visualize_data(
     split_loader = make_dataloader(
         shards_split,
         batch_size=config.batch_size,
-        num_workers=config.num_workers,
+        num_workers=num_workers,
         include_metadata=True,
         include_clean_mix=True,
         include_isolated_trigger=True,
