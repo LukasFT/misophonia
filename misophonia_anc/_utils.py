@@ -600,7 +600,7 @@ def perform_eval(
     ground_truth_target = model.ground_truth_target
 
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
-    mlflow_logger = CustomMlFlowLogger()
+    mlflow_logger = CustomMlFlowLogger(allow_inactive=True)  # Allow it to do nothing if MLFlow is not active
 
     with mlflow_logger, torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
@@ -760,13 +760,23 @@ class CustomMlFlowLogger:
     NOTE: Not thread-safe.
     """
 
-    def __init__(self, *, flush_queue_size: int = 512, flush_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        *,
+        flush_queue_size: int = 512,
+        flush_seconds: int = 30,
+        allow_inactive: bool = False,
+    ) -> None:
         # get current mlflow run
         active_run = mlflow.active_run()
         if active_run is None:
-            raise ValueError(
-                "No active MLflow run found. Please start an MLflow run before initializing CustomMlFlowLogger."
-            )
+            if not allow_inactive:
+                raise ValueError(
+                    "No active MLflow run found. Please start an MLflow run before initializing CustomMlFlowLogger."
+                )
+            self._run_id = None
+            return
+
         self._run_id = active_run.info.run_id
         self._client = mlflow.MlflowClient()
         self._queue = []
@@ -775,6 +785,9 @@ class CustomMlFlowLogger:
         self._last_flush_time = mlflow.utils.time.get_current_time_millis()
 
     def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous: bool = False) -> None:
+        if self._run_id is None:
+            return
+
         timestamp = mlflow.utils.time.get_current_time_millis()
         metrics_arr = [
             mlflow.entities.Metric(
@@ -798,6 +811,9 @@ class CustomMlFlowLogger:
             self.flush(synchronous=synchronous, timestamp=timestamp)
 
     def flush(self, *, synchronous: bool = False, timestamp: int | None = None) -> None:
+        if self._run_id is None:
+            return
+
         self._last_flush_time = timestamp or mlflow.utils.time.get_current_time_millis()
         if len(self._queue) == 0:
             return
