@@ -28,11 +28,11 @@ from ._utils import (
     log_dataset_config_diffs,
     make_dataloader,
     perform_eval,
+    plot_average_spectogram_background,
+    plot_average_spectrogram_by_trigger_category,
     prepare_dir_or_file,
     preprocess_to_webdataset_pt,
     print_mem,
-    plot_average_spectrogram_by_trigger_category,
-    plot_average_spectogram_background,
 )
 from .model import MisophoniaANCNet
 from .train import get_loss_fn_from_name, train_model
