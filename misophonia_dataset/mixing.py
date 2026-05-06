@@ -193,10 +193,11 @@ def binaural_mix(
     scaled_clean_background = clean_background * alpha
 
     calculated_snr_db = _calculate_snr(isolated_trigger, scaled_clean_background)
-    if target_snr_range[0] - 1 <= calculated_snr_db <= target_snr_range[1] + 1:
+    if not (target_snr_range[0] - 1 <= calculated_snr_db <= target_snr_range[1] + 1):
         eliot.log_message(
-            f"SNR is within the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB",
+            f"SNR is outside the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB",
             level="warning",
+            to_stderr=True,  # Stdout is supressed by Binamix quickfix
         )
 
     # Added small tolerance since their may be numerical imprecision for tiny background power.
