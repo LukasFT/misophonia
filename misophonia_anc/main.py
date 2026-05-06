@@ -401,7 +401,7 @@ def cp_best_epoch(
 
 @app.command()
 def evaluate(
-    name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    names: Annotated[list[str], typer.Argument(..., help="Name of model directory.")],
     *,
     splits: Annotated[
         list[str],  # list[SplitT] but that causes typer error
@@ -437,81 +437,86 @@ def evaluate(
     """
     Function to compare sample gts and mixes to model outputs.
     """
-    model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    for name in names:
+        model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    for split in splits:
-        checkpoint_without_pt = checkpoint.replace(".pt", "")
-
-        filename_prefix = (
-            f"{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
-        )
-        results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
-        aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
-        prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
-        prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
-
-        if save_samples == 0:
-            samples_dir = None
-        else:
-            samples_dir = model_dir / "samples" / checkpoint_without_pt / split
-            prepare_dir_or_file(samples_dir, overwrite=overwrite, is_dir=True)
-
-        checkpoint_file = model_dir / "checkpoints" / checkpoint
-        if checkpoint == "init":
-            checkpoint_file = None
-            eliot.log_message("Using random untrained model for inference.", level="info")
-
-        config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
-        model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
-        model.eval()
-
-        dataset_split_dir = model_dir / "webdataset" / split
-        eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
-        shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
-        if len(shards_split) == 0:
+        for split in splits:
             eliot.log_message(
-                f"No data shards found for split {split} at {dataset_split_dir}. Skipping evaluation for this split.",
-                level="error",
+                f"Evaluating model {name} on split {split} using checkpoint {checkpoint} with limit_samples={limit_samples} and save_samples={save_samples}...",
+                level="info",
             )
-            continue
-        log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
-        split_loader = make_dataloader(
-            shards_split,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            include_metadata=True,
-            include_clean_mix=model.ground_truth_target == "clean_mix"
-            or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
-            include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
-            max_length=(
-                config.dataset_splits[split].generated_config.get("max_length")
-                if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
-                else None
-            ),
-            stereo_to_mono=config.stereo_to_mono,
-        )
-        if limit_samples is not None:
-            split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
+            checkpoint_without_pt = checkpoint.replace(".pt", "")
 
-        res, agg_res = perform_eval(
-            model,
-            split_loader,
-            save_results_to=results_file,
-            save_aggregated_results_to=aggregated_results_file,
-            aggregated_results_kwargs={"group_by": (("fg_categories", "is_trigger"),)},
-            save_num_samples=save_samples,
-            save_samples_to=samples_dir,
-            device=device,
-            warm_up_iters=warm_up,
-            loss_fn=get_loss_fn_from_name(config.loss_option),
-        )
+            filename_prefix = (
+                f"{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+            )
+            results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
+            aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
+            prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
+            prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
 
-        eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
+            if save_samples == 0:
+                samples_dir = None
+            else:
+                samples_dir = model_dir / "samples" / checkpoint_without_pt / split
+                prepare_dir_or_file(samples_dir, overwrite=overwrite, is_dir=True)
 
-        eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
+            checkpoint_file = model_dir / "checkpoints" / checkpoint
+            if checkpoint == "init":
+                checkpoint_file = None
+                eliot.log_message("Using random untrained model for inference.", level="info")
 
-    eliot.log_message(f"Completed evaluation for checkpoint {checkpoint} on splits: {splits}", level="info")
+            config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
+            model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+            model.eval()
+
+            dataset_split_dir = model_dir / "webdataset" / split
+            eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
+            shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
+            if len(shards_split) == 0:
+                eliot.log_message(
+                    f"No data shards found for split {split} at {dataset_split_dir}. Skipping evaluation for this split.",
+                    level="error",
+                )
+                continue
+            log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
+            split_loader = make_dataloader(
+                shards_split,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                include_metadata=True,
+                include_clean_mix=model.ground_truth_target == "clean_mix"
+                or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
+                include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+                max_length=(
+                    config.dataset_splits[split].generated_config.get("max_length")
+                    if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+                    else None
+                ),
+                stereo_to_mono=config.stereo_to_mono,
+            )
+            if limit_samples is not None:
+                split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
+
+            res, agg_res = perform_eval(
+                model,
+                split_loader,
+                save_results_to=results_file,
+                save_aggregated_results_to=aggregated_results_file,
+                aggregated_results_kwargs={"group_by": (("fg_categories", "is_trigger"),)},
+                save_num_samples=save_samples,
+                save_samples_to=samples_dir,
+                device=device,
+                warm_up_iters=warm_up,
+                loss_fn=get_loss_fn_from_name(config.loss_option),
+            )
+
+            eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
+
+            eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
+
+        eliot.log_message(f"Completed evaluation for checkpoint {checkpoint} on splits: {splits}", level="info")
 
 
 if __name__ == "__main__":
