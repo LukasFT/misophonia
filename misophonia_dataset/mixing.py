@@ -203,6 +203,7 @@ def binaural_mix(
         eliot.log_message(
             f"SNR is within the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB",
             level="debug",
+            to_stderr=True,  # Stdout is supressed by Binamix quickfix
         )
 
     # Added small tolerance since their may be numerical imprecision for tiny background power.
