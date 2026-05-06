@@ -421,7 +421,10 @@ def evaluate(
         typer.Option(..., help="Number of samples to examine model output"),
     ] = None,
     save_samples: Annotated[int, typer.Option(..., help="Number of examples to save to disk.")] = 50,
-    batch_size: Annotated[int, typer.Option(..., help="Batch size for evaluation.")] = 4,
+    batch_size: Annotated[
+        int | None,
+        typer.Option(..., help="Batch size for evaluation. Defaults to the value specified in the model config."),
+    ] = None,
     num_workers: Annotated[
         int,
         typer.Option(
@@ -483,7 +486,7 @@ def evaluate(
             log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
             split_loader = make_dataloader(
                 shards_split,
-                batch_size=batch_size,
+                batch_size=batch_size if batch_size is not None else config.batch_size,
                 num_workers=num_workers,
                 include_metadata=True,
                 include_clean_mix=model.ground_truth_target == "clean_mix"
