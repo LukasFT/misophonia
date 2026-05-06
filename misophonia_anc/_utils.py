@@ -904,6 +904,8 @@ def aggregate_results(
         for group_values, group_df in df.groupby(list(group_cols), dropna=False, sort=True):
             key = _format_group_key(group_cols, group_values)
             agg_metrics[key] = _agg_results_calc(group_df[metric_keys + ["pred_name"]])
+            agg_metrics[key]["__len__"] = len(group_df)
+            agg_metrics[key]["__group_values__"] = group_values
 
     return agg_metrics
 
