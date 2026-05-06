@@ -31,6 +31,8 @@ from ._utils import (
     prepare_dir_or_file,
     preprocess_to_webdataset_pt,
     print_mem,
+    plot_average_spectrogram_by_trigger_category,
+    plot_average_spectogram_background,
 )
 from .model import MisophoniaANCNet
 from .train import get_loss_fn_from_name, train_model
@@ -575,6 +577,52 @@ def evaluate(
         )
     else:
         eliot.log_message("Completed evaluation with no errors.", level="info")
+
+
+@app.command()
+def visualize_data(
+    name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    *,
+    split: Annotated[
+        str,
+        typer.Option(..., help="Dataset split to visualize (e.g., 'train', 'val', 'test')"),
+    ] = "train",
+    save_background: Annotated[
+        bool, typer.Option(..., help="Whether to save background spectrograms (i.e., non-trigger samples) separately.")
+    ] = False,
+    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+) -> None:
+    model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    dataset_split_dir = model_dir / "webdataset" / split
+    eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
+    shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
+    split_loader = make_dataloader(
+        shards_split,
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        include_metadata=True,
+        include_clean_mix=True,
+        include_isolated_trigger=True,
+        max_length=(
+            config.dataset_splits[split].generated_config.get("max_length")
+            if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+            else None
+        ),
+    )
+
+    eliot.log_message(f"Calculating average spectrograms of trigger categories of split {split}", level="info")
+    plot_average_spectrogram_by_trigger_category(model_dir=model_dir, split=split, loader=split_loader, device=device)
+    eliot.log_message(
+        f"Saved average spectrograms of trigger categories to {model_dir}/spectrograms/{split}", level="info"
+    )
+
+    if save_background:
+        eliot.log_message(f"Calculating average spectorgram of background sounds of split {split}", level="info")
+        plot_average_spectogram_background(model_dir, split, loader=split_loader, device=device)
+        eliot.log_message(f"Saved average spectogram of background sounds to {model_dir}/spectrograms/{split}")
 
 
 if __name__ == "__main__":

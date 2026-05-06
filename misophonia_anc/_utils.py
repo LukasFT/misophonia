@@ -7,6 +7,7 @@ import math
 import os
 import re
 import subprocess
+from collections import defaultdict
 from collections.abc import Iterable, Sequence, Sized
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 import eliot
+import matplotlib.pyplot as plt
 import mlflow
 import mlflow.entities
 import mlflow.utils.time
@@ -23,6 +25,7 @@ import pydantic
 import soundfile as sf
 import torch
 import torch.nn.functional as F  # noqa: N812  # noqa: N812
+import torchaudio
 import webdataset as wds
 import yaml
 from torch.profiler import ProfilerActivity, profile, record_function
@@ -1612,8 +1615,149 @@ def _debug_to_mlflow(
         )
 
 
-# FIXME: Remove unused (commented out) functions
+#################################
+# Spectrogram Visualization
+#################################
 
+
+def plot_average_spectrogram_by_trigger_category(
+    model_dir: str,
+    split: str,
+    loader: wds.WebLoader,
+    n_fft: int = 1024,
+    hop_length: int = 256,
+    power: float = 2.0,
+    device: str = "cpu",
+    *,
+    only_triggers: bool = True,
+) -> None:
+    """
+    Iterate over a WebLoader, group isolated trigger audio by trigger category,
+    and plot the average spectrogram for each category.
+
+    Assumes each batch contains:
+        batch["isolated_trigger"]: Tensor shaped [B, C, T] or [B, T]
+        batch["metadata"]: list[dict] or list[str] or dict of batched fields
+    """
+
+    spec_transform = torchaudio.transforms.Spectrogram(
+        n_fft=n_fft,
+        hop_length=hop_length,
+        power=power,
+    ).to(device)
+
+    spec_sums = defaultdict(lambda: None)
+    spec_counts = defaultdict(int)
+
+    for batch in loader:
+        isolated_trigger = batch["isolated_trigger"].to(device)
+
+        # Shape: [B, T] -> [B, 1, T]
+        if isolated_trigger.ndim == 2:
+            isolated_trigger = isolated_trigger.unsqueeze(1)
+
+        metadata = batch["metadata"]
+
+        for x, meta in zip(isolated_trigger, metadata):
+            if only_triggers and not meta.get("is_trigger", False):
+                continue
+
+            categories = meta.get("fg_categories", [])
+            if isinstance(categories, str):
+                categories = [categories]
+
+            # Convert binaural audio to mono for one averaged spectrogram.
+            x = x.mean(dim=0)
+
+            spec = spec_transform(x)  # [freq, time]
+
+            for category in categories:
+                category = str(category)
+
+                if spec_sums[category] is None:
+                    spec_sums[category] = spec.detach().clone()
+                else:
+                    spec_sums[category] += spec.detach()
+
+                spec_counts[category] += 1
+
+    avg_specs = {
+        category: spec_sums[category] / spec_counts[category] for category in spec_sums if spec_counts[category] > 0
+    }
+
+    _plot_avg_specs(model_dir, split, avg_specs)
+
+
+def plot_average_spectogram_background(
+    model_dir: str,
+    split: str,
+    loader: wds.WebLoader,
+    n_fft: int = 1024,
+    hop_length: int = 256,
+    power: float = 2.0,
+    device: str = "cpu",
+) -> None:
+    spec_transform = torchaudio.transforms.Spectrogram(
+        n_fft=n_fft,
+        hop_length=hop_length,
+        power=power,
+    ).to(device)
+
+    spec_sums = defaultdict(lambda: None)
+    spec_counts = defaultdict(int)
+
+    for batch in loader:
+        if "clean_mix" not in batch:
+            raise ValueError("Data loader was created without clean mix.")
+
+        background = batch["clean_mix"]
+
+        if background.ndim == 2:
+            background = background.unsqueeze(1)
+
+        for x in background:
+            x = x.mean(dim=0)
+            spec = spec_transform(x)
+
+            spec_sums += spec.detach()
+            spec_counts += 1
+
+    if spec_counts == 0:
+        raise ValueError("No background audio found in the dataset.")
+
+    background_specs = {"background": spec_sums / spec_counts}
+    _plot_avg_specs(model_dir, split, background_specs)
+
+
+def _plot_avg_specs(model_dir: str, split: str, avg_specs: dict[str, torch.Tensor]) -> None:
+    """
+    Plots and saves average spectrogram for each trigger category into model_dir/spectograms/avg_spec_{category}.png
+    """
+    n = len(avg_specs)
+
+    if n == 0:
+        print("No trigger categories found.")
+        return
+
+    for category, spec in sorted(avg_specs.items()):
+        spec_db = torchaudio.functional.amplitude_to_DB(
+            spec.cpu(),
+            multiplier=10.0,
+            amin=1e-10,
+            db_multiplier=0.0,
+        )
+
+        plt.figure(figsize=(8, 4))
+        plt.imshow(spec_db.numpy(), origin="lower", aspect="auto")
+        plt.title(f"Average spectrogram: {category}")
+        plt.xlabel("Time frames")
+        plt.ylabel("Frequency bins")
+        plt.colorbar(label="dB")
+        plt.tight_layout()
+        plt.savefig(f"{model_dir}/spectrograms/{split}_avg_spec_{category}.png")
+
+
+# FIXME: Remove unused (commented out) function
 # import numpy.fft as fft  # Semantic Hearinc also used mklfft, which is optimized for Intel
 # import pyroomacoustics as pra  # Not installed, do we need it?
 # import torch
