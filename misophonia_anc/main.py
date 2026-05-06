@@ -499,6 +499,7 @@ def evaluate(
             split_loader,
             save_results_to=results_file,
             save_aggregated_results_to=aggregated_results_file,
+            aggregated_results_kwargs={"group_by": (("fg_categories", "is_trigger"),)},
             save_num_samples=save_samples,
             save_samples_to=samples_dir,
             device=device,
