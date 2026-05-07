@@ -196,6 +196,7 @@ def train_model(
     loss_option: str,
     save_dir: Path,
     skip_subtraction: bool = True,
+    eval_mono_to_stereo: bool = False,
     lr: float = 0.0005,
     weight_decay: float = 0.0,
     global_step_train_start: int = 0,
@@ -216,6 +217,7 @@ def train_model(
         device (torch.device): cuda or cpu
         save_dir: Path to save model weights and metric plots
         skip_subtraction: Skip subtraction methods when calculating metrics during val evaluation.
+        eval_mono_to_stereo: If True, combine every other pair of predictions into a stereo signal.
         global_step_train (int): Metadata for MLflow to report total number of training batches already logged.
         global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
     """
@@ -228,7 +230,7 @@ def train_model(
     global_step_val_counter = SimpleCounter(global_step_val_start)
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
-        # Perform train epcoh
+        # Perform train epoch
         train_loss, train_loss_std = train_epoch(
             model,
             device=device,
@@ -260,6 +262,7 @@ def train_model(
             loss_fn=loss_fn,
             skip_subtraction=skip_subtraction,
             split_name="val",
+            mono_to_stereo=eval_mono_to_stereo,
         )
 
         val_si_snr = eval_results_agg["x"]["si_snr_mean"]

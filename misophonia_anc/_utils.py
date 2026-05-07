@@ -25,7 +25,6 @@ import torch
 import torch.nn.functional as F  # noqa: N812  # noqa: N812
 import webdataset as wds
 import yaml
-from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
 from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr
 from torchmetrics.functional.audio import signal_noise_ratio as snr
@@ -245,6 +244,84 @@ class MisophoniaANCConfig(BaseModel):
         return cls(**conf)
 
 
+def to_mono_batch(batch: dict) -> dict:
+    """Make the batch twice the size by converting stereo audio to mono (two samples per sample)."""
+    # (B, N, T) -> (N*B, 1, T)
+    original_batch_size, original_channels, length = batch["inputs"]["mix"].shape
+    new_batch_size = original_batch_size * original_channels
+    new_channels = 1
+
+    batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(new_batch_size, new_channels, length)
+
+    if "isolated_trigger" in batch:
+        batch["isolated_trigger"] = batch["isolated_trigger"].reshape(new_batch_size, new_channels, length)
+
+    if "clean_mix" in batch:
+        batch["clean_mix"] = batch["clean_mix"].reshape(new_batch_size, new_channels, length)
+
+    batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"].repeat_interleave(original_channels, dim=0)
+    batch["inputs"]["is_control"] = batch["inputs"]["is_control"].repeat_interleave(original_channels, dim=0)
+    batch["audio_lens"] = batch["audio_lens"].repeat_interleave(original_channels, dim=0)
+
+    batch["idxs"] = [f"{idx}_{ch}" for idx in batch["idxs"] for ch in range(original_channels)]
+
+    if "metadata" in batch:
+        batch["metadata"] = [batch["metadata"][i // original_channels] for i in range(new_batch_size)]
+        # remove pre-computed metrics
+        for metadata in batch["metadata"]:
+            if "mix_vs_isolated_trigger_metrics" in metadata:
+                del metadata["mix_vs_isolated_trigger_metrics"]
+            if "mix_vs_clean_mix_metrics" in metadata:
+                del metadata["mix_vs_clean_mix_metrics"]
+
+    return batch
+
+
+def to_stereo_batch(batch: dict) -> dict:
+    """Convert a batch of mono audio back to stereo by duplicating the mono channel."""
+    # (B, 1, T) -> (B/2, 2, T)
+    original_batch_size, original_channels, length = batch["inputs"]["mix"].shape
+    assert original_channels == 1
+    assert original_batch_size % 2 == 0
+
+    new_batch_size = original_batch_size // 2
+    new_channels = 2
+    batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(new_batch_size, new_channels, length)
+    if "isolated_trigger" in batch:
+        batch["isolated_trigger"] = batch["isolated_trigger"].reshape(new_batch_size, new_channels, length)
+    if "clean_mix" in batch:
+        batch["clean_mix"] = batch["clean_mix"].reshape(new_batch_size, new_channels, length)
+
+    # Remove every other label, len etc. since they are duplicated
+    batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"][::2]
+    batch["inputs"]["is_control"] = batch["inputs"]["is_control"][::2]
+    batch["audio_lens"] = batch["audio_lens"][::2]
+    batch["idxs"] = [idx.rsplit("_", 1)[0] for idx in batch["idxs"][::2]]
+
+    if "metadata" in batch:
+        batch["metadata"] = batch["metadata"][::2]
+
+    return batch
+
+
+def to_stereo_output(output: dict) -> dict:
+    """Convert a batch of mono outputs back to stereo by duplicating the mono channel."""
+    # (B, 1, T) -> (B/2, 2, T)
+
+    res = {}
+    for pred_name, pred in output.items():
+        original_batch_size, original_channels, length = pred.shape
+        assert original_channels == 1
+        assert original_batch_size % 2 == 0
+
+        new_batch_size = original_batch_size // 2
+        new_channels = 2
+
+        res[pred_name] = pred.reshape(new_batch_size, new_channels, length)
+
+    return res
+
+
 def make_custom_collate_fn(
     *,
     include_metadata: bool,
@@ -254,38 +331,6 @@ def make_custom_collate_fn(
     stereo_to_mono: bool = False,
 ) -> Callable[[dict], dict]:
     max_length = torch.inf if max_length is None else max_length
-
-    def to_mono_batch(batch: dict) -> dict:
-        """Make the batch twice the size by converting stereo audio to mono (two samples per sample)."""
-        # (B, N, T) -> (N*B, 1, T)
-        original_batch_size, original_channels, length = batch["inputs"]["mix"].shape
-        new_batch_size = original_batch_size * original_channels
-        new_channels = 1
-
-        batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(new_batch_size, new_channels, length)
-
-        if include_isolated_trigger:
-            batch["isolated_trigger"] = batch["isolated_trigger"].reshape(new_batch_size, new_channels, length)
-
-        if include_clean_mix:
-            batch["clean_mix"] = batch["clean_mix"].reshape(new_batch_size, new_channels, length)
-
-        batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"].repeat_interleave(original_channels, dim=0)
-        batch["inputs"]["is_control"] = batch["inputs"]["is_control"].repeat_interleave(original_channels, dim=0)
-        batch["audio_lens"] = batch["audio_lens"].repeat_interleave(original_channels, dim=0)
-
-        batch["idxs"] = [f"{idx}_{ch}" for idx in batch["idxs"] for ch in range(original_channels)]
-
-        if include_metadata:
-            batch["metadata"] = [batch["metadata"][i // original_channels] for i in range(new_batch_size)]
-            # remove pre-computed metrics
-            for metadata in batch["metadata"]:
-                if "mix_vs_isolated_trigger_metrics" in metadata:
-                    del metadata["mix_vs_isolated_trigger_metrics"]
-                if "mix_vs_clean_mix_metrics" in metadata:
-                    del metadata["mix_vs_clean_mix_metrics"]
-
-        return batch
 
     def custom_collate_fn(
         batch: dict,
@@ -482,21 +527,14 @@ def calculate_default_metrics(
     mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
     loss_fn: Callable | None = None,
+    calculate_ild_itd: bool = False,
 ) -> dict[str, float]:
     si_snr_both = si_snr(preds, target)
     snr_both = snr(preds, target)
 
-    # FIXME: ild and itd encounter divide by zero etc.
-    # # FIXME: Improve efficiency by implementing these functions using torch operations
-    # preds_np, target_np = preds.cpu().numpy(), target.cpu().numpy()
-    # ild = ild_diff(preds_np, target_np)
-    # itd = itd_diff(preds_np, target_np, sr=sample_rate)
-
     metrics = {
         "si_snr": si_snr_both.mean().item(),
         "snr": snr_both.mean().item(),
-        # "ild": ild,
-        # "itd": itd,
     }
 
     if si_snr_both.shape[-1] == 2:
@@ -510,6 +548,10 @@ def calculate_default_metrics(
         audio_lens = (target.shape[-1],)
         loss = loss_fn(preds.unsqueeze(0), target.unsqueeze(0), audio_lens)
         metrics["loss"] = loss.item()
+
+    if calculate_ild_itd:
+        metrics["ild_diff"] = ild_diff_torch(preds, target)
+        metrics["itd_diff"] = itd_diff_torch(preds, target, sr=sample_rate)
 
     if mix is not None and mix_metrics is None:
         mix_metrics = calculate_default_metrics(mix, target, sample_rate=sample_rate)
@@ -575,6 +617,8 @@ def perform_eval(
     save_results_to: Path,
     save_aggregated_results_to: Path | None = None,
     aggregated_results_kwargs: dict | None = None,
+    calculate_metrics_kwargs: dict | None = None,
+    mono_to_stereo: bool = False,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
     warm_up_iters: int = 10,
@@ -593,6 +637,8 @@ def perform_eval(
         save_results_to: A path to save the evaluation results as a JSON file. Will include metrics and metadata for each sample.
         save_aggregated_results_to: If not None, a path to save aggregated evaluation results (e.g. average metrics across all samples) as a JSON file.
         aggregated_results_kwargs: See aggregate_results() for details on the kwargs.
+        calculate_metrics_kwargs: Additional kwargs to pass to the calculate_default_metrics() function when calculating metrics for each sample.
+        mono_to_stereo: If True, combine every other channel in the batch into a stereo sample, i.e. (2B, T, 1) -> (B, T, 2).
         save_samples_to: If not None, a directory to save example audio files of the mixes, gts, and predictions. Will save as .flac files.
         save_num_samples: If save_samples_to is not None, the maximum number of samples to save to disk. If 0, do not save any.
         warm_up_iters: Number of iterations to run for warming up the model before measuring latency.
@@ -645,8 +691,12 @@ def perform_eval(
                 profiling=False,
             )
 
-            batch_size = inputs["mix"].shape[0]
+            batch = to_stereo_batch(batch) if mono_to_stereo else batch
+            output = to_stereo_output(output) if mono_to_stereo else output
             output_items = output.items()
+
+            batch_size = inputs["mix"].shape[0]
+
             for i in range(batch_size):
                 sample_idx = batch["idxs"][i]
                 valid_len = int(batch["audio_lens"][i].item())  # To remove padding
@@ -700,6 +750,7 @@ def perform_eval(
                             mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
                             mix_metrics=precomputed_mix_metrics,
                             loss_fn=loss_fn,
+                            **(calculate_metrics_kwargs or {}),
                         )
                     else:  # Is subtracted
                         # precomputed_mix_metrics = (
@@ -714,6 +765,7 @@ def perform_eval(
                             mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
                             mix_metrics=precomputed_mix_metrics,
                             loss_fn=loss_fn,
+                            **(calculate_metrics_kwargs or {}),
                         )
 
                     if save_sample:
@@ -1177,50 +1229,218 @@ def get_git_sha() -> str | None:
 ##############
 
 
-def compute_itd(s_left, s_right, sr, t_max=None) -> float:
-    corr = signal.correlate(s_left, s_right)
-    corr /= np.max(corr)
-
-    mid = len(corr) // 2 + 1
-
-    cc = np.concatenate((corr[-mid:], corr[:mid]))
-
-    if t_max is not None:
-        cc = np.concatenate([cc[-t_max + 1 :], cc[: t_max + 1]])
-    else:
-        t_max = mid
-
-    tau = np.argmax(np.abs(cc))
-    tau -= t_max
-
-    return tau / sr * 1e6
-
-
-def compute_ild(s_left, s_right) -> np.ndarray:
-    sum_sq_left = np.sum(s_left**2, axis=-1)
-    sum_sq_right = np.sum(s_right**2, axis=-1)
-    return 10 * np.log10(sum_sq_left / sum_sq_right)
-
-
-def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
+def compute_itd_torch(
+    s_left: torch.Tensor,
+    s_right: torch.Tensor,
+    sr: int,
+    t_max: int | None = None,
+) -> torch.Tensor:
     """
-    Computes the ITD error between model estimate and ground truth
-    input: (*, 2, T), (*, 2, T)
+    Estimate ITD in microseconds from two mono tensors.
+
+    Inputs:
+        s_left:  shape (T,)
+        s_right: shape (T,)
+        sr:      sampling rate
+        t_max:   maximum lag in samples, e.g. int(round(1e-3 * sr))
+
+    Returns:
+        ITD in microseconds as a scalar tensor.
+
+    Convention:
+        Positive ITD means the right channel lags the left channel.
     """
-    tmax = int(round(1e-3 * sr))
-    itd_est = compute_itd(s_est[..., 0, :], s_est[..., 1, :], sr, tmax)
-    itd_gt = compute_itd(s_gt[..., 0, :], s_gt[..., 1, :], sr, tmax)
-    return np.abs(itd_est - itd_gt)
+    if s_left.ndim != 1 or s_right.ndim != 1:
+        raise ValueError("compute_itd_torch expects 1D tensors with shape (T,).")
+
+    if s_left.shape != s_right.shape:
+        raise ValueError("Left and right signals must have the same shape.")
+
+    T = s_left.shape[-1]  # noqa: N806
+
+    if t_max is None:
+        t_max = T - 1
+
+    t_max = min(t_max, T - 1)
+
+    # Remove DC offset to make correlation more stable.
+    s_left = s_left - s_left.mean()
+    s_right = s_right - s_right.mean()
+
+    # Full linear cross-correlation via FFT.
+    # Length of full correlation is 2T - 1.
+    n_corr = 2 * T - 1
+    n_fft = 1 << (n_corr - 1).bit_length()
+
+    X_left = torch.fft.rfft(s_left, n=n_fft)  # noqa: N806
+    X_right = torch.fft.rfft(s_right, n=n_fft)  # noqa: N806
+
+    corr = torch.fft.irfft(X_left * torch.conj(X_right), n=n_fft)
+
+    # Reorder FFT correlation output to match lags [-(T-1), ..., 0, ..., T-1].
+    corr = torch.cat([corr[-(T - 1) :], corr[:T]])
+
+    lags = torch.arange(
+        -(T - 1),
+        T,
+        device=s_left.device,
+        dtype=torch.long,
+    )
+
+    keep = torch.abs(lags) <= t_max
+    corr = corr[keep]
+    lags = lags[keep]
+
+    lag = lags[torch.argmax(corr)]
+
+    return lag.to(s_left.dtype) / sr * 1e6
 
 
-def ild_diff(s_est: np.ndarray, s_gt: np.ndarray) -> np.ndarray:
+def compute_ild_torch(
+    s_left: torch.Tensor,
+    s_right: torch.Tensor,
+    eps: float = 1e-12,
+) -> torch.Tensor:
     """
-    Computes the ILD error between model estimate and ground truth
-    input: (*, 2, T), (*, 2, T)
+    Compute ILD in dB.
+
+    Inputs:
+        s_left:  shape (T,)
+        s_right: shape (T,)
+
+    Returns:
+        ILD in dB as a scalar tensor.
+
+    Convention:
+        Positive ILD means the left channel has higher energy than the right channel.
     """
-    ild_est = compute_ild(s_est[..., 0, :], s_est[..., 1, :])
-    ild_gt = compute_ild(s_gt[..., 0, :], s_gt[..., 1, :])
-    return np.abs(ild_est - ild_gt)
+    if s_left.ndim != 1 or s_right.ndim != 1:
+        raise ValueError("compute_ild_torch expects 1D tensors with shape (T,).")
+
+    if s_left.shape != s_right.shape:
+        raise ValueError("Left and right signals must have the same shape.")
+
+    e_left = torch.sum(s_left**2)
+    e_right = torch.sum(s_right**2)
+
+    return 10.0 * torch.log10((e_left + eps) / (e_right + eps))
+
+
+def itd_diff_torch(
+    s_est: torch.Tensor,
+    s_gt: torch.Tensor,
+    sr: int,
+) -> float | None:
+    """
+    Compute absolute ITD error between estimate and ground truth.
+
+    Inputs:
+        s_est: shape (2, T)
+        s_gt:  shape (2, T)
+
+    Returns:
+        Absolute ITD error in microseconds as a scalar tensor.
+    """
+    try:
+        if s_est.ndim != 2 or s_gt.ndim != 2:
+            raise ValueError("Expected inputs with shape (2, T).")
+
+        if s_est.shape[0] != 2 or s_gt.shape[0] != 2:
+            raise ValueError("Expected first dimension to contain left/right channels.")
+
+        if s_est.shape != s_gt.shape:
+            raise ValueError("Estimate and ground truth must have the same shape.")
+
+        t_max = int(round(1e-3 * sr))
+
+        itd_est = compute_itd_torch(s_est[0], s_est[1], sr, t_max)
+        itd_gt = compute_itd_torch(s_gt[0], s_gt[1], sr, t_max)
+
+        return torch.abs(itd_est - itd_gt).item()
+    except Exception as e:
+        eliot.log_message(f"Error computing ITD diff: {e}", level="error")
+        return None
+
+
+def ild_diff_torch(
+    s_est: torch.Tensor,
+    s_gt: torch.Tensor,
+) -> float | None:
+    """
+    Compute absolute ILD error between estimate and ground truth.
+
+    Inputs:
+        s_est: shape (2, T)
+        s_gt:  shape (2, T)
+
+    Returns:
+        Absolute ILD error in dB as a scalar tensor.
+    """
+    try:
+        if s_est.ndim != 2 or s_gt.ndim != 2:
+            raise ValueError("Expected inputs with shape (2, T).")
+
+        if s_est.shape[0] != 2 or s_gt.shape[0] != 2:
+            raise ValueError("Expected first dimension to contain left/right channels.")
+
+        if s_est.shape != s_gt.shape:
+            raise ValueError("Estimate and ground truth must have the same shape.")
+
+        ild_est = compute_ild_torch(s_est[0], s_est[1])
+        ild_gt = compute_ild_torch(s_gt[0], s_gt[1])
+
+        return torch.abs(ild_est - ild_gt).item()
+    except Exception as e:
+        eliot.log_message(f"Error computing ILD diff: {e}", level="error")
+        return None
+
+
+# from scipy import signal
+
+# def compute_itd(s_left, s_right, sr, t_max=None) -> float:
+#     corr = signal.correlate(s_left, s_right)
+#     corr /= np.max(corr)
+
+#     mid = len(corr) // 2 + 1
+
+#     cc = np.concatenate((corr[-mid:], corr[:mid]))
+
+#     if t_max is not None:
+#         cc = np.concatenate([cc[-t_max + 1 :], cc[: t_max + 1]])
+#     else:
+#         t_max = mid
+
+#     tau = np.argmax(np.abs(cc))
+#     tau -= t_max
+
+#     return tau / sr * 1e6
+
+
+# def compute_ild(s_left, s_right) -> np.ndarray:
+#     sum_sq_left = np.sum(s_left**2, axis=-1)
+#     sum_sq_right = np.sum(s_right**2, axis=-1)
+#     return 10 * np.log10(sum_sq_left / sum_sq_right)
+
+
+# def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
+#     """
+#     Computes the ITD error between model estimate and ground truth
+#     input: (*, 2, T), (*, 2, T)
+#     """
+#     tmax = int(round(1e-3 * sr))
+#     itd_est = compute_itd(s_est[..., 0, :], s_est[..., 1, :], sr, tmax)
+#     itd_gt = compute_itd(s_gt[..., 0, :], s_gt[..., 1, :], sr, tmax)
+#     return np.abs(itd_est - itd_gt)
+
+
+# def ild_diff(s_est: np.ndarray, s_gt: np.ndarray) -> np.ndarray:
+#     """
+#     Computes the ILD error between model estimate and ground truth
+#     input: (*, 2, T), (*, 2, T)
+#     """
+#     ild_est = compute_ild(s_est[..., 0, :], s_est[..., 1, :])
+#     ild_gt = compute_ild(s_gt[..., 0, :], s_gt[..., 1, :])
+#     return np.abs(ild_est - ild_gt)
 
 
 def prepare_dir_or_file(target: Path, *, is_dir: bool, overwrite: bool) -> None:

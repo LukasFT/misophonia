@@ -322,6 +322,7 @@ def train(
             global_step_train_start=checkpoint_metadata.get("global_step_train", 0),
             global_step_val_start=checkpoint_metadata.get("global_step_val", 0),
             skip_subtraction=skip_subtraction,
+            eval_mono_to_stereo=config.stereo_to_mono,
             **config.model_hyperparams,
         )
         cp_best_epoch(name, data_base_dir=data_base_dir)
@@ -530,6 +531,10 @@ def evaluate(
                             "is_trigger",
                         )
                     },
+                    calculate_metrics_kwargs={
+                        "calculate_ild_itd": True,
+                    },
+                    mono_to_stereo=config.stereo_to_mono,
                     save_num_samples=save_samples,
                     save_samples_to=samples_dir,
                     device=device,
