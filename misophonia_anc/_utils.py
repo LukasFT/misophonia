@@ -1734,12 +1734,16 @@ def _plot_avg_specs(model_dir: str, split: str, avg_specs: dict[str, torch.Tenso
     Plots and saves average spectrogram for each trigger category into model_dir/spectograms/avg_spec_{category}.png
     """
     n = len(avg_specs)
-
     if n == 0:
         print("No trigger categories found.")
         return
 
+    os.makedirs(f"{model_dir}/spectrograms", exist_ok=True)
+
     for category, spec in sorted(avg_specs.items()):
+        if category == "chewing_gum":
+            category = "Chewing"
+        category = category.replace("_", " ").title()
         spec_db = torchaudio.functional.amplitude_to_DB(
             spec.cpu(),
             multiplier=10.0,
