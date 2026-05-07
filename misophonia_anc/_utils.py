@@ -1587,6 +1587,7 @@ def plot_average_spectrogram_by_trigger_category(
     model_dir: str,
     split: str,
     loader: wds.WebLoader,
+    sample_rate: int = 44100,
     n_fft: int = 1024,
     hop_length: int = 256,
     power: float = 2.0,
@@ -1648,13 +1649,14 @@ def plot_average_spectrogram_by_trigger_category(
         category: spec_sums[category] / spec_counts[category] for category in spec_sums if spec_counts[category] > 0
     }
 
-    _plot_avg_specs(model_dir, split, avg_specs)
+    _plot_avg_specs(model_dir, split, avg_specs, sample_rate=sample_rate, hop_length=hop_length, n_fft=n_fft)
 
 
 def plot_average_spectogram_background(
     model_dir: str,
     split: str,
     loader: wds.WebLoader,
+    sample_rate: int = 44100,
     n_fft: int = 1024,
     hop_length: int = 256,
     power: float = 2.0,
@@ -1693,13 +1695,21 @@ def plot_average_spectogram_background(
         raise ValueError("No background audio found in the dataset.")
 
     background_specs = {"background": spec_sums / spec_counts}
-    _plot_avg_specs(model_dir, split, background_specs)
+    _plot_avg_specs(model_dir, split, background_specs, sample_rate=sample_rate, hop_length=hop_length, n_fft=n_fft)
 
 
-def _plot_avg_specs(model_dir: str, split: str, avg_specs: dict[str, torch.Tensor]) -> None:
+def _plot_avg_specs(
+    model_dir: str,
+    split: str,
+    avg_specs: dict[str, torch.Tensor],
+    sample_rate: int,
+    hop_length: int,
+    n_fft: int,
+) -> None:
     """
-    Plots and saves average spectrogram for each trigger category into model_dir/spectograms/avg_spec_{category}.png
+    Plots and saves average spectrograms with real frequency/time axes.
     """
+
     n = len(avg_specs)
     if n == 0:
         print("No trigger categories found.")
@@ -1708,6 +1718,7 @@ def _plot_avg_specs(model_dir: str, split: str, avg_specs: dict[str, torch.Tenso
     os.makedirs(f"{model_dir}/spectrograms", exist_ok=True)
 
     items = []
+
     for category, spec in sorted(avg_specs.items()):
         display_category = "Chewing" if category == "chewing_gum" else category
         display_category = display_category.replace("_", " ").title()
@@ -1725,31 +1736,49 @@ def _plot_avg_specs(model_dir: str, split: str, avg_specs: dict[str, torch.Tenso
     vmax = max(spec.max() for _, spec in items)
 
     nrows, ncols = 2, 4
-    fig, axes = plt.subplots(nrows, ncols, figsize=(20, 8), sharex=True, sharey=True)
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(20, 8),
+        sharex=True,
+        sharey=True,
+    )
+
     axes = axes.flatten()
 
     for ax, (category, spec_db) in zip(axes, items):
+        n_freqs, n_frames = spec_db.shape
+        max_freq = sample_rate / 2
+        duration_sec = (n_frames * hop_length) / sample_rate
+
         im = ax.imshow(
             spec_db,
             origin="lower",
             aspect="auto",
             vmin=vmin,
             vmax=vmax,
+            extent=[0, duration_sec, 0, max_freq],
         )
 
         ax.set_title(category)
-        ax.set_xlabel("Time frames")
-        ax.set_ylabel("Frequency bins")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Frequency (Hz)")
 
-    # Hide unused subplots, if fewer than 8 categories
+    # Hide unused subplots
     for ax in axes[len(items) :]:
         ax.axis("off")
 
     fig.suptitle(f"Average spectrograms: {split}", fontsize=16)
+
     fig.colorbar(im, ax=axes, label="dB", shrink=0.9)
 
     plt.tight_layout()
-    plt.savefig(f"{model_dir}/spectrograms/{split}_avg_specs_grid.png", dpi=300)
+
+    plt.savefig(
+        f"{model_dir}/spectrograms/{split}_avg_specs_grid.png",
+        dpi=300,
+    )
+
     plt.close(fig)
 
 
