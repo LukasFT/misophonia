@@ -231,6 +231,7 @@ def train_model(
     scheduler = None
     activate_scheduler_after_epoch = 0  # First apply the scheduler from this epoch onwards
     scheduler_metric = None
+    last_learning_rate = lr
     if lr_schedule_config is not None and len(lr_schedule_config) > 0:
         if lr_schedule_config.get("type") == "ReduceLROnPlateau":
             if checkpoint_epoch != 0:
@@ -240,7 +241,6 @@ def train_model(
                 mode=lr_schedule_config.get("mode", "max"),
                 factor=lr_schedule_config.get("factor", 0.5),
                 patience=lr_schedule_config.get("patience", 5),
-                verbose=True,
             )
             activate_scheduler_after_epoch = lr_schedule_config.get("activate_after_epoch", 40)
             scheduler_metric = lr_schedule_config.get("scheduler_metric", "val/epoch/snr")
@@ -315,6 +315,11 @@ def train_model(
 
         if scheduler is not None and epoch >= activate_scheduler_after_epoch:
             scheduler.step(epoch_metrics[scheduler_metric])
+
+            new_lr = optimizer.param_groups[0]["lr"]
+            if new_lr != last_learning_rate:
+                eliot.log_message(f"Learning rate changed from {last_learning_rate} to {new_lr}", level="debug")
+                last_learning_rate = new_lr
 
         # Checkpointing
         ckpt_dir = save_dir / "checkpoints"
