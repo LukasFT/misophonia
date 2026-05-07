@@ -229,13 +229,14 @@ def train_model(
     loss_fn = get_loss_fn_from_name(loss_option)
 
     scheduler = None
-    activate_scheduler_after_epoch = 0  # First apply the scheduler from this epoch onwards
+    activate_scheduler_after_epoch = lr_schedule_config.get("activate_after_epoch", 0)
+    """ First apply the scheduler from this epoch onwards  """
     scheduler_metric = None
     last_learning_rate = lr
     if lr_schedule_config is not None and len(lr_schedule_config) > 0:
+        if checkpoint_epoch > activate_scheduler_after_epoch:
+            raise NotImplementedError("Checkpointing after LR scheduler is activated is currently not supported.")
         if lr_schedule_config.get("type") == "ReduceLROnPlateau":
-            if checkpoint_epoch != 0:
-                raise NotImplementedError("LR scheduler currently not supported on resumed training.")
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode=lr_schedule_config.get("mode", "max"),
