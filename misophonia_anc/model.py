@@ -25,6 +25,7 @@ class MisophoniaANCNet(nn.Module):
         *,
         L=8,  # noqa: N803 # TODO: Improve name?
         model_dim=128,  # Original 512
+        audio_channels=2,
         num_enc_layers=10,
         dec_buf_len=100,
         num_dec_layers=2,
@@ -55,6 +56,7 @@ class MisophoniaANCNet(nn.Module):
             "label_len": label_len,
             "L": L,
             "model_dim": model_dim,
+            "audio_channels": audio_channels,
             "num_enc_layers": num_enc_layers,
             "dec_buf_len": dec_buf_len,
             "num_dec_layers": num_dec_layers,
@@ -76,7 +78,14 @@ class MisophoniaANCNet(nn.Module):
         # Input conv to convert input audio to a latent representation
         kernel_size = 3 * L if lookahead else L
         self.in_conv = nn.Sequential(
-            nn.Conv1d(in_channels=2, out_channels=model_dim, kernel_size=kernel_size, stride=L, padding=0, bias=False),
+            nn.Conv1d(
+                in_channels=audio_channels,
+                out_channels=model_dim,
+                kernel_size=kernel_size,
+                stride=L,
+                padding=0,
+                bias=False,
+            ),
             nn.ReLU(),
         )
 
@@ -106,7 +115,7 @@ class MisophoniaANCNet(nn.Module):
         self.out_conv = nn.Sequential(
             nn.ConvTranspose1d(
                 in_channels=model_dim,
-                out_channels=2,
+                out_channels=audio_channels,
                 kernel_size=(out_buf_len + 1) * L,
                 stride=L,
                 padding=out_buf_len * L,

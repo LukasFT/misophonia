@@ -1,5 +1,6 @@
 from collections.abc import Collection
 
+import eliot
 import numpy as np
 
 from ._binamix import custom_mix_tracks_binaural, setup_binamix
@@ -20,7 +21,7 @@ def prepare_track_specs(
     fg_track_options: dict | None = None,
     bg_track_options: dict | None = None,
     rng: np.random.Generator | None = None,
-    max_length: int =  308700 # 7 seconds at 44.1 kHz
+    max_length: int = 308700,  # 7 seconds at 44.1 kHz
 ) -> tuple[tuple[TrackAudioSpec, ...], tuple[TrackAudioSpec, ...]]:
     """
     Prepares track specifications for binaural mixing for foreground and background audios. Locates meaningful audio in background sounds to use in mix.
@@ -92,7 +93,6 @@ def prepare_track_specs(
         )
 
         return track, audio
-
 
     fg_audios = tuple((item, item.load_audio(sample_rate=global_params.sample_rate)[0]) for item in fg_items)
     bg_audios = tuple((item, item.load_audio(sample_rate=global_params.sample_rate)[0]) for item in bg_items)
@@ -193,9 +193,13 @@ def binaural_mix(
     scaled_clean_background = clean_background * alpha
 
     calculated_snr_db = _calculate_snr(isolated_trigger, scaled_clean_background)
-    assert target_snr_range[0] - 1 <= calculated_snr_db <= target_snr_range[1] + 1, (
-        f"SNR is not within the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB"
-    )
+    if not (target_snr_range[0] - 1 <= calculated_snr_db <= target_snr_range[1] + 1):
+        eliot.log_message(
+            f"SNR is outside the target range after scaling. Calculated SNR: {calculated_snr_db:.2f} dB, Target range: {target_snr_range} dB",
+            level="warning",
+            to_stderr=True,  # Stdout is supressed by Binamix quickfix
+        )
+
     # Added small tolerance since their may be numerical imprecision for tiny background power.
     mix = isolated_trigger + scaled_clean_background
 

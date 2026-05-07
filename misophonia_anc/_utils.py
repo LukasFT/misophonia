@@ -3,13 +3,15 @@
 # ruff: noqa: ANN001 # FIXME: Improve quality
 
 import json
+import math
 import os
+import re
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence, Sized
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 import eliot
 import mlflow
@@ -23,7 +25,6 @@ import torch
 import torch.nn.functional as F  # noqa: N812  # noqa: N812
 import webdataset as wds
 import yaml
-from scipy import signal
 from torch.profiler import ProfilerActivity, profile, record_function
 from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as si_snr
 from torchmetrics.functional.audio import signal_noise_ratio as snr
@@ -213,9 +214,24 @@ class MisophoniaANCConfig(BaseModel):
         "See MisophoniaANCNet.register_subtraction_method for details.",
     )
 
+    stereo_to_mono: bool = pydantic.Field(
+        False,  # noqa: FBT003
+        description="Wheater to split each sample into two mono samples, effectively doubling the batch size, i.e. (B, T, 2) -> (2B, T, 1).",
+    )
+
     mlflow_experiment: str | None = pydantic.Field(
         None, description="MLflow experiment name to log training metrics to."
     )
+
+    # validate the if stereo_to_mono = True, then model_params.audio_channels must be 1
+    @pydantic.model_validator(mode="before")
+    @classmethod
+    def validate_stereo_to_mono(cls, values: dict[str, Any]) -> dict[str, Any]:
+        stereo_to_mono = values.get("stereo_to_mono", False)
+        audio_channels = (values.get("model_params") or {}).get("audio_channels", 2)
+        if stereo_to_mono and audio_channels != 1:
+            raise ValueError("If stereo_to_mono is True, model_params.audio_channels must be 1.")
+        return values
 
     @classmethod
     def from_yaml(cls, yaml_path: str | Path, *, defaults={}) -> "MisophoniaANCConfig":
@@ -228,13 +244,92 @@ class MisophoniaANCConfig(BaseModel):
         return cls(**conf)
 
 
+def to_mono_batch(batch: dict) -> dict:
+    """Make the batch twice the size by converting stereo audio to mono (two samples per sample)."""
+    # (B, N, T) -> (N*B, 1, T)
+    original_batch_size, original_channels, length = batch["inputs"]["mix"].shape
+    new_batch_size = original_batch_size * original_channels
+    new_channels = 1
+
+    batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(new_batch_size, new_channels, length)
+
+    if "isolated_trigger" in batch:
+        batch["isolated_trigger"] = batch["isolated_trigger"].reshape(new_batch_size, new_channels, length)
+
+    if "clean_mix" in batch:
+        batch["clean_mix"] = batch["clean_mix"].reshape(new_batch_size, new_channels, length)
+
+    batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"].repeat_interleave(original_channels, dim=0)
+    batch["inputs"]["is_control"] = batch["inputs"]["is_control"].repeat_interleave(original_channels, dim=0)
+    batch["audio_lens"] = batch["audio_lens"].repeat_interleave(original_channels, dim=0)
+
+    batch["idxs"] = [f"{idx}_{ch}" for idx in batch["idxs"] for ch in range(original_channels)]
+
+    if "metadata" in batch:
+        batch["metadata"] = [batch["metadata"][i // original_channels] for i in range(new_batch_size)]
+        # remove pre-computed metrics
+        for metadata in batch["metadata"]:
+            if "mix_vs_isolated_trigger_metrics" in metadata:
+                del metadata["mix_vs_isolated_trigger_metrics"]
+            if "mix_vs_clean_mix_metrics" in metadata:
+                del metadata["mix_vs_clean_mix_metrics"]
+
+    return batch
+
+
+def to_stereo_batch(batch: dict) -> dict:
+    """Convert a batch of mono audio back to stereo by duplicating the mono channel."""
+    # (B, 1, T) -> (B/2, 2, T)
+    original_batch_size, original_channels, length = batch["inputs"]["mix"].shape
+    assert original_channels == 1
+    assert original_batch_size % 2 == 0
+
+    new_batch_size = original_batch_size // 2
+    new_channels = 2
+    batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(new_batch_size, new_channels, length)
+    if "isolated_trigger" in batch:
+        batch["isolated_trigger"] = batch["isolated_trigger"].reshape(new_batch_size, new_channels, length)
+    if "clean_mix" in batch:
+        batch["clean_mix"] = batch["clean_mix"].reshape(new_batch_size, new_channels, length)
+
+    # Remove every other label, len etc. since they are duplicated
+    batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"][::2]
+    batch["inputs"]["is_control"] = batch["inputs"]["is_control"][::2]
+    batch["audio_lens"] = batch["audio_lens"][::2]
+    batch["idxs"] = [idx.rsplit("_", 1)[0] for idx in batch["idxs"][::2]]
+
+    if "metadata" in batch:
+        batch["metadata"] = batch["metadata"][::2]
+
+    return batch
+
+
+def to_stereo_output(output: dict) -> dict:
+    """Convert a batch of mono outputs back to stereo by duplicating the mono channel."""
+    # (B, 1, T) -> (B/2, 2, T)
+
+    res = {}
+    for pred_name, pred in output.items():
+        original_batch_size, original_channels, length = pred.shape
+        assert original_channels == 1
+        assert original_batch_size % 2 == 0
+
+        new_batch_size = original_batch_size // 2
+        new_channels = 2
+
+        res[pred_name] = pred.reshape(new_batch_size, new_channels, length)
+
+    return res
+
+
 def make_custom_collate_fn(
     *,
     include_metadata: bool,
     include_isolated_trigger: bool,
     include_clean_mix: bool,
     max_length: int | None = None,
-) -> callable:
+    stereo_to_mono: bool = False,
+) -> Callable[[dict], dict]:
     max_length = torch.inf if max_length is None else max_length
 
     def custom_collate_fn(
@@ -338,6 +433,9 @@ def make_custom_collate_fn(
         if include_clean_mix:
             res["clean_mix"] = torch.stack(clean_mixes)
 
+        if stereo_to_mono:
+            res = to_mono_batch(res)
+
         return res
 
     return custom_collate_fn
@@ -352,6 +450,7 @@ def make_dataloader(
     include_clean_mix: bool = True,
     include_metadata: bool = False,
     max_length: int | None = None,
+    stereo_to_mono: bool = False,
 ) -> wds.WebLoader:
     """
     Make a WebLoader from the given .tar files.
@@ -409,6 +508,7 @@ def make_dataloader(
             include_isolated_trigger=include_isolated_trigger,
             include_clean_mix=include_clean_mix,
             max_length=max_length,
+            stereo_to_mono=stereo_to_mono,
         ),
     )
 
@@ -427,32 +527,31 @@ def calculate_default_metrics(
     mix_metrics: dict | None = None,
     sample_rate: int = SAMPLE_RATE,
     loss_fn: Callable | None = None,
+    calculate_ild_itd: bool = False,
 ) -> dict[str, float]:
     si_snr_both = si_snr(preds, target)
     snr_both = snr(preds, target)
 
-    # FIXME: ild and itd encounter divide by zero etc.
-    # # FIXME: Improve efficiency by implementing these functions using torch operations
-    # preds_np, target_np = preds.cpu().numpy(), target.cpu().numpy()
-    # ild = ild_diff(preds_np, target_np)
-    # itd = itd_diff(preds_np, target_np, sr=sample_rate)
-
     metrics = {
         "si_snr": si_snr_both.mean().item(),
         "snr": snr_both.mean().item(),
-        "si_snr_left": si_snr_both[..., 0].mean().item(),
-        "si_snr_right": si_snr_both[..., 1].mean().item(),
-        "snr_left": snr_both[..., 0].mean().item(),
-        "snr_right": snr_both[..., 1].mean().item(),
-        # "ild": ild,
-        # "itd": itd,
     }
+
+    if si_snr_both.shape[-1] == 2:
+        metrics["si_snr_left"] = si_snr_both[..., 0].mean().item()
+        metrics["si_snr_right"] = si_snr_both[..., 1].mean().item()
+        metrics["snr_left"] = snr_both[..., 0].mean().item()
+        metrics["snr_right"] = snr_both[..., 1].mean().item()
 
     if loss_fn is not None:
         # Call loss function like it is a batch
         audio_lens = (target.shape[-1],)
         loss = loss_fn(preds.unsqueeze(0), target.unsqueeze(0), audio_lens)
         metrics["loss"] = loss.item()
+
+    if calculate_ild_itd:
+        metrics["ild_diff"] = ild_diff_torch(preds, target)
+        metrics["itd_diff"] = itd_diff_torch(preds, target, sr=sample_rate)
 
     if mix is not None and mix_metrics is None:
         mix_metrics = calculate_default_metrics(mix, target, sample_rate=sample_rate)
@@ -462,11 +561,13 @@ def calculate_default_metrics(
             metrics["snr_improvement"] = metrics["snr"] - mix_metrics["snr"]
         if "si_snr" in mix_metrics:
             metrics["si_snr_improvement"] = metrics["si_snr"] - mix_metrics["si_snr"]
-        if "snr_left" in mix_metrics and "snr_right" in mix_metrics:
+        if "snr_left" in mix_metrics and "snr_left" in metrics:
             metrics["snr_improvement_left"] = metrics["snr_left"] - mix_metrics["snr_left"]
+        if "snr_right" in mix_metrics and "snr_right" in metrics:
             metrics["snr_improvement_right"] = metrics["snr_right"] - mix_metrics["snr_right"]
-        if "si_snr_left" in mix_metrics and "si_snr_right" in mix_metrics:
+        if "si_snr_left" in mix_metrics and "si_snr_left" in metrics:
             metrics["si_snr_improvement_left"] = metrics["si_snr_left"] - mix_metrics["si_snr_left"]
+        if "si_snr_right" in mix_metrics and "si_snr_right" in metrics:
             metrics["si_snr_improvement_right"] = metrics["si_snr_right"] - mix_metrics["si_snr_right"]
 
     return metrics
@@ -515,6 +616,9 @@ def perform_eval(
     device: torch.device,
     save_results_to: Path,
     save_aggregated_results_to: Path | None = None,
+    aggregated_results_kwargs: dict | None = None,
+    calculate_metrics_kwargs: dict | None = None,
+    mono_to_stereo: bool = False,
     save_samples_to: Path | None = None,
     save_num_samples: int = 0,
     warm_up_iters: int = 10,
@@ -532,6 +636,9 @@ def perform_eval(
         device: The torch.device to run inference on.
         save_results_to: A path to save the evaluation results as a JSON file. Will include metrics and metadata for each sample.
         save_aggregated_results_to: If not None, a path to save aggregated evaluation results (e.g. average metrics across all samples) as a JSON file.
+        aggregated_results_kwargs: See aggregate_results() for details on the kwargs.
+        calculate_metrics_kwargs: Additional kwargs to pass to the calculate_default_metrics() function when calculating metrics for each sample.
+        mono_to_stereo: If True, combine every other channel in the batch into a stereo sample, i.e. (2B, T, 1) -> (B, T, 2).
         save_samples_to: If not None, a directory to save example audio files of the mixes, gts, and predictions. Will save as .flac files.
         save_num_samples: If save_samples_to is not None, the maximum number of samples to save to disk. If 0, do not save any.
         warm_up_iters: Number of iterations to run for warming up the model before measuring latency.
@@ -584,8 +691,12 @@ def perform_eval(
                 profiling=False,
             )
 
-            batch_size = inputs["mix"].shape[0]
+            batch = to_stereo_batch(batch) if mono_to_stereo else batch
+            output = to_stereo_output(output) if mono_to_stereo else output
             output_items = output.items()
+
+            batch_size = inputs["mix"].shape[0]
+
             for i in range(batch_size):
                 sample_idx = batch["idxs"][i]
                 valid_len = int(batch["audio_lens"][i].item())  # To remove padding
@@ -612,11 +723,11 @@ def perform_eval(
                         else None
                     )
 
-                    _save_audio_stereo(mix_i, mix_file, sample_rate=sample_rate)
+                    _save_audio(mix_i, mix_file, sample_rate=sample_rate)
                     if clean_mix_i is not None:
-                        _save_audio_stereo(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
+                        _save_audio(clean_mix_i, clean_mix_file, sample_rate=sample_rate)
                     if isolated_trigger_i is not None:
-                        _save_audio_stereo(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
+                        _save_audio(isolated_trigger_i, isolated_trigger_file, sample_rate=sample_rate)
                 else:
                     save_sample = False
 
@@ -639,6 +750,7 @@ def perform_eval(
                             mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
                             mix_metrics=precomputed_mix_metrics,
                             loss_fn=loss_fn,
+                            **(calculate_metrics_kwargs or {}),
                         )
                     else:  # Is subtracted
                         # precomputed_mix_metrics = (
@@ -653,11 +765,12 @@ def perform_eval(
                             mix=mix_i.to(device) if precomputed_mix_metrics is None else None,
                             mix_metrics=precomputed_mix_metrics,
                             loss_fn=loss_fn,
+                            **(calculate_metrics_kwargs or {}),
                         )
 
                     if save_sample:
                         pred_file = save_samples_to / f"sample_{sample_idx}_{pred_name}.flac"
-                        _save_audio_stereo(pred_i, pred_file, sample_rate=sample_rate)
+                        _save_audio(pred_i, pred_file, sample_rate=sample_rate)
 
                         sample_files = {
                             "mix_file": str(mix_file.name),
@@ -706,7 +819,7 @@ def perform_eval(
         return results, None
 
     eliot.log_message(f"Aggregating results and saving to {save_aggregated_results_to}", level="info")
-    agg_res = aggregate_results(results)
+    agg_res = aggregate_results(results, **(aggregated_results_kwargs or {}))
     with save_aggregated_results_to.open("w") as f:
         json.dump(agg_res, f, indent=4)
     return results, agg_res
@@ -719,13 +832,23 @@ class CustomMlFlowLogger:
     NOTE: Not thread-safe.
     """
 
-    def __init__(self, *, flush_queue_size: int = 512, flush_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        *,
+        flush_queue_size: int = 512,
+        flush_seconds: int = 30,
+        allow_inactive: bool = True,
+    ) -> None:
         # get current mlflow run
         active_run = mlflow.active_run()
         if active_run is None:
-            raise ValueError(
-                "No active MLflow run found. Please start an MLflow run before initializing CustomMlFlowLogger."
-            )
+            if not allow_inactive:
+                raise ValueError(
+                    "No active MLflow run found. Please start an MLflow run before initializing CustomMlFlowLogger."
+                )
+            self._run_id = None
+            return
+
         self._run_id = active_run.info.run_id
         self._client = mlflow.MlflowClient()
         self._queue = []
@@ -734,6 +857,9 @@ class CustomMlFlowLogger:
         self._last_flush_time = mlflow.utils.time.get_current_time_millis()
 
     def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous: bool = False) -> None:
+        if self._run_id is None:
+            return
+
         timestamp = mlflow.utils.time.get_current_time_millis()
         metrics_arr = [
             mlflow.entities.Metric(
@@ -757,6 +883,9 @@ class CustomMlFlowLogger:
             self.flush(synchronous=synchronous, timestamp=timestamp)
 
     def flush(self, *, synchronous: bool = False, timestamp: int | None = None) -> None:
+        if self._run_id is None:
+            return
+
         self._last_flush_time = timestamp or mlflow.utils.time.get_current_time_millis()
         if len(self._queue) == 0:
             return
@@ -777,33 +906,233 @@ class CustomMlFlowLogger:
         self.flush(synchronous=True)
 
 
-def aggregate_results(results: list[dict[str, object]]) -> dict:
+GroupSpec = str | Sequence[str]
+
+
+_LEN_GROUP_RE = re.compile(r"^__len__\((?P<col>[^()]+)\)$")
+
+
+def _parse_len_group_col(col: str) -> str | None:
+    match = _LEN_GROUP_RE.match(col)
+    if not match:
+        return None
+    return match.group("col")
+
+
+def _group_len(value: Any) -> int:  # noqa: ANN401
+    if value is None:
+        return 0
+
+    # Treat scalar strings as a single value, not character sequences.
+    if isinstance(value, str):
+        return 1
+
+    if isinstance(value, Sized):
+        return len(value)
+
+    return 1
+
+
+def aggregate_results(
+    results: list[dict[str, object]],
+    *,
+    group_by: None | GroupSpec | Sequence[GroupSpec] = None,
+) -> dict:
     """
     Aggregate the results from perform_eval into overall metrics.
 
-    Args:
-        results: A list of dictionaries containing metrics for each sample, as output by perform_eval.
+    Examples:
+        aggregate_results(results)
+
+        aggregate_results(
+            results,
+            group_by=[
+                ("fg_categories", "is_trigger"),
+                ("__len__(fg_categories)",),
+                "is_trigger",
+            ],
+        )
+
+    Semantics:
+        If fg_categories is ["a", "b"], it is treated as the exact group
+        ("a", "b"). It is not counted in the "a" or "b" groups.
     """
-    df = pd.DataFrame(
-        [
-            {
-                **result["metrics"],
-                "pred_name": result["pred_name"],
-                "runtime_ms": result.get("runtime_ms"),
-                "batch_length": result.get("batch_length"),
-                "sample_length": result.get("sample_length"),
-            }
-            for result in results
-        ]
-    )
+    if not results:
+        return {}
+
+    rows = [
+        {
+            **result["metrics"],
+            **(result.get("sample_metadata") or {}),
+            "pred_name": result["pred_name"],
+            "runtime_ms": result.get("runtime_ms"),
+            "batch_length": result.get("batch_length"),
+            "sample_length": result.get("sample_length"),
+        }
+        for result in results
+    ]
+
+    df = pd.DataFrame(rows)
+
     if "runtime_ms" in df.columns and "batch_length" in df.columns:
-        df["runtime_ms_pr_length"] = (
-            df["runtime_ms"] / df["batch_length"]
-        )  # Model is run on batch-level, so normalize on that
+        df["runtime_ms_pr_length"] = df["runtime_ms"] / df["batch_length"]
+
+    metric_keys = list(results[0]["metrics"].keys())
+
+    agg_metrics = _agg_results_calc(df[metric_keys + ["pred_name"]])
+
+    if group_by is None or len(group_by) == 0:
+        return agg_metrics  # Return overall metrics without grouping
+
+    # Group metrics by:
+    metadata_keys = list((results[0].get("sample_metadata") or {}).keys())
+    overlap = set(metric_keys).intersection(metadata_keys)
+    if overlap:
+        raise ValueError(f"Metric keys overlap with metadata keys: {overlap}")
+
+    group_specs = _normalize_group_by(group_by)
+
+    all_group_by_cols = {col for group in group_specs for col in group}
+
+    derived_len_cols: dict[str, str] = {}
+    plain_group_by_cols: set[str] = set()
+
+    for col in all_group_by_cols:
+        len_source_col = _parse_len_group_col(col)
+
+        if len_source_col is None:
+            plain_group_by_cols.add(col)
+        else:
+            derived_len_cols[col] = len_source_col
+
+    missing_plain_keys = plain_group_by_cols.difference(metadata_keys)
+    if missing_plain_keys:
+        raise ValueError(f"Group by keys {missing_plain_keys} not found in metadata columns {metadata_keys}")
+
+    missing_len_source_keys = set(derived_len_cols.values()).difference(metadata_keys)
+    if missing_len_source_keys:
+        raise ValueError(
+            f"Group by __len__ source keys {missing_len_source_keys} not found in metadata columns {metadata_keys}"
+        )
+
+    for derived_col, source_col in derived_len_cols.items():
+        df[derived_col] = df[source_col].map(_group_len)
+
+    # Normalize list-valued / unhashable group columns.
+    for col in all_group_by_cols:
+        df[col] = df[col].map(_normalize_group_value)
+
+    for group_cols in group_specs:
+        for group_values, group_df in df.groupby(list(group_cols), dropna=False, sort=True):
+            key = _format_group_key(group_cols, group_values)
+            agg_metrics[key] = _agg_results_calc(group_df[metric_keys + ["pred_name"]])
+            agg_metrics[key]["__count__"] = len(group_df)
+            agg_metrics[key]["__grouped_by__"] = {
+                _json_safe(col): _json_safe(group_values[i]) for i, col in enumerate(group_cols)
+            }
+
+    return agg_metrics
+
+
+def _agg_results_calc(df: pd.DataFrame) -> dict:
     grouped = df.groupby("pred_name").agg(["mean", "std"])
     grouped.columns = [f"{metric}_{stat}" for metric, stat in grouped.columns]
-    agg_metrics = grouped.to_dict(orient="index")
-    return agg_metrics
+    res = grouped.to_dict(orient="index")
+    # apply _json_safe to all values in res
+    for pred_name in res:
+        for metric_stat in res[pred_name]:
+            res[pred_name][metric_stat] = _json_safe(res[pred_name][metric_stat])
+    return res
+
+
+def _normalize_group_by(
+    group_by: None | GroupSpec | Sequence[GroupSpec],
+) -> tuple[tuple[str, ...], ...]:
+    if group_by is None:
+        return ()
+
+    if isinstance(group_by, str):
+        return ((group_by,),)
+
+    # group_by=("fg_categories", "is_trigger")
+    # Ambiguous: is this one compound group or two single groups?
+    # I recommend requiring compound groups to be nested:
+    # group_by=[("fg_categories", "is_trigger")]
+    #
+    # But for backward compatibility, treat a flat sequence of strings
+    # as multiple single-column groupings.
+    if all(isinstance(x, str) for x in group_by):
+        return tuple((x,) for x in group_by)  # type: ignore[arg-type]
+
+    out: list[tuple[str, ...]] = []
+    for spec in group_by:  # type: ignore[union-attr]
+        if isinstance(spec, str):
+            out.append((spec,))
+        else:
+            out.append(tuple(spec))
+    return tuple(out)
+
+
+def _normalize_group_value(value: Any) -> Any:  # noqa: ANN401
+    """
+    Normalize group values so pandas can group by them.
+
+    Important:
+        ["a", "b"] is treated as the exact group ("a", "b"),
+        not as membership in "a" and membership in "b".
+    """
+    if isinstance(value, list):
+        return tuple(value)
+
+    if isinstance(value, set):
+        return tuple(sorted(value))
+
+    if isinstance(value, dict):
+        return tuple(sorted(value.items()))
+
+    return value
+
+
+def _format_group_value(value: Any) -> str:  # noqa: ANN401
+    if isinstance(value, tuple):
+        return ",".join(map(str, value))
+    return str(value)
+
+
+def _format_group_key(group_cols: tuple[str, ...], group_values: Any) -> str:  # noqa: ANN401
+    if len(group_cols) == 1:
+        group_values = (group_values,)
+    elif not isinstance(group_values, tuple):
+        group_values = (group_values,)
+
+    parts = [f"{col}={_format_group_value(value)}" for col, value in zip(group_cols, group_values)]
+
+    return "by:" + "&".join(parts)
+
+
+def _json_safe(value: Any) -> Any:  # noqa: ANN401
+    if value is pd.NA:
+        return None
+
+    if isinstance(value, np.generic):
+        return value.item()
+
+    if isinstance(value, float) and math.isnan(value):
+        return None
+
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, set):
+        return [_json_safe(v) for v in sorted(value)]
+
+    if isinstance(value, dict):
+        return {str(_json_safe(k)): _json_safe(v) for k, v in value.items()}
+
+    return value
 
 
 def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_iters: int) -> None:
@@ -816,21 +1145,18 @@ def _warm_up_model(model: torch.nn.Module, inputs: dict[str, torch.Tensor], num_
             _ = model(inputs)
 
 
-def _save_audio_stereo(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
+def _save_audio(audio: torch.Tensor | np.ndarray, path: Path, sample_rate: int = SAMPLE_RATE) -> None:
     """
     Save audio tensor of shape [C, T] as wav.
-    Assumes C is 2.
+    Assumes C is 1 or 2.
     """
     assert path.suffix == ".flac"
     if isinstance(audio, torch.Tensor):
         audio = audio.detach().cpu().float().numpy()
 
     assert isinstance(audio, np.ndarray)
-    assert audio.ndim == 2, f"Expected audio of shape [C, T], got {audio.shape}"
-
-    # soundfile expects [T] or [T, C]
-    if audio.ndim != 2:
-        raise ValueError(f"Expected audio of shape [C, T], got {audio.shape}")
+    assert len(audio.shape) == 2, f"Expected audio of shape [C, T], got {audio.shape}"
+    assert audio.ndim in (1, 2), f"Expected audio with 1 or 2 channels, got {audio.shape}"
 
     audio = audio.T  # [T, C]
     sf.write(
@@ -903,66 +1229,241 @@ def get_git_sha() -> str | None:
 ##############
 
 
-def compute_itd(s_left, s_right, sr, t_max=None) -> float:
-    corr = signal.correlate(s_left, s_right)
-    corr /= np.max(corr)
-
-    mid = len(corr) // 2 + 1
-
-    cc = np.concatenate((corr[-mid:], corr[:mid]))
-
-    if t_max is not None:
-        cc = np.concatenate([cc[-t_max + 1 :], cc[: t_max + 1]])
-    else:
-        t_max = mid
-
-    tau = np.argmax(np.abs(cc))
-    tau -= t_max
-
-    return tau / sr * 1e6
-
-
-def compute_ild(s_left, s_right) -> np.ndarray:
-    sum_sq_left = np.sum(s_left**2, axis=-1)
-    sum_sq_right = np.sum(s_right**2, axis=-1)
-    return 10 * np.log10(sum_sq_left / sum_sq_right)
-
-
-def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
+def compute_itd_torch(
+    s_left: torch.Tensor,
+    s_right: torch.Tensor,
+    sr: int,
+    t_max: int | None = None,
+) -> torch.Tensor:
     """
-    Computes the ITD error between model estimate and ground truth
-    input: (*, 2, T), (*, 2, T)
+    Estimate ITD in microseconds from two mono tensors.
+
+    Inputs:
+        s_left:  shape (T,)
+        s_right: shape (T,)
+        sr:      sampling rate
+        t_max:   maximum lag in samples, e.g. int(round(1e-3 * sr))
+
+    Returns:
+        ITD in microseconds as a scalar tensor.
+
+    Convention:
+        Positive ITD means the right channel lags the left channel.
     """
-    tmax = int(round(1e-3 * sr))
-    itd_est = compute_itd(s_est[..., 0, :], s_est[..., 1, :], sr, tmax)
-    itd_gt = compute_itd(s_gt[..., 0, :], s_gt[..., 1, :], sr, tmax)
-    return np.abs(itd_est - itd_gt)
+    if s_left.ndim != 1 or s_right.ndim != 1:
+        raise ValueError("compute_itd_torch expects 1D tensors with shape (T,).")
+
+    if s_left.shape != s_right.shape:
+        raise ValueError("Left and right signals must have the same shape.")
+
+    T = s_left.shape[-1]  # noqa: N806
+
+    if t_max is None:
+        t_max = T - 1
+
+    t_max = min(t_max, T - 1)
+
+    # Remove DC offset to make correlation more stable.
+    s_left = s_left - s_left.mean()
+    s_right = s_right - s_right.mean()
+
+    # Full linear cross-correlation via FFT.
+    # Length of full correlation is 2T - 1.
+    n_corr = 2 * T - 1
+    n_fft = 1 << (n_corr - 1).bit_length()
+
+    X_left = torch.fft.rfft(s_left, n=n_fft)  # noqa: N806
+    X_right = torch.fft.rfft(s_right, n=n_fft)  # noqa: N806
+
+    corr = torch.fft.irfft(X_left * torch.conj(X_right), n=n_fft)
+
+    # Reorder FFT correlation output to match lags [-(T-1), ..., 0, ..., T-1].
+    corr = torch.cat([corr[-(T - 1) :], corr[:T]])
+
+    lags = torch.arange(
+        -(T - 1),
+        T,
+        device=s_left.device,
+        dtype=torch.long,
+    )
+
+    keep = torch.abs(lags) <= t_max
+    corr = corr[keep]
+    lags = lags[keep]
+
+    lag = lags[torch.argmax(corr)]
+
+    return lag.to(s_left.dtype) / sr * 1e6
 
 
-def ild_diff(s_est: np.ndarray, s_gt: np.ndarray) -> np.ndarray:
+def compute_ild_torch(
+    s_left: torch.Tensor,
+    s_right: torch.Tensor,
+    eps: float = 1e-12,
+) -> torch.Tensor:
     """
-    Computes the ILD error between model estimate and ground truth
-    input: (*, 2, T), (*, 2, T)
+    Compute ILD in dB.
+
+    Inputs:
+        s_left:  shape (T,)
+        s_right: shape (T,)
+
+    Returns:
+        ILD in dB as a scalar tensor.
+
+    Convention:
+        Positive ILD means the left channel has higher energy than the right channel.
     """
-    ild_est = compute_ild(s_est[..., 0, :], s_est[..., 1, :])
-    ild_gt = compute_ild(s_gt[..., 0, :], s_gt[..., 1, :])
-    return np.abs(ild_est - ild_gt)
+    if s_left.ndim != 1 or s_right.ndim != 1:
+        raise ValueError("compute_ild_torch expects 1D tensors with shape (T,).")
+
+    if s_left.shape != s_right.shape:
+        raise ValueError("Left and right signals must have the same shape.")
+
+    e_left = torch.sum(s_left**2)
+    e_right = torch.sum(s_right**2)
+
+    return 10.0 * torch.log10((e_left + eps) / (e_right + eps))
+
+
+def itd_diff_torch(
+    s_est: torch.Tensor,
+    s_gt: torch.Tensor,
+    sr: int,
+) -> float | None:
+    """
+    Compute absolute ITD error between estimate and ground truth.
+
+    Inputs:
+        s_est: shape (2, T)
+        s_gt:  shape (2, T)
+
+    Returns:
+        Absolute ITD error in microseconds as a scalar tensor.
+    """
+    try:
+        if s_est.ndim != 2 or s_gt.ndim != 2:
+            raise ValueError("Expected inputs with shape (2, T).")
+
+        if s_est.shape[0] != 2 or s_gt.shape[0] != 2:
+            raise ValueError("Expected first dimension to contain left/right channels.")
+
+        if s_est.shape != s_gt.shape:
+            raise ValueError("Estimate and ground truth must have the same shape.")
+
+        t_max = int(round(1e-3 * sr))
+
+        itd_est = compute_itd_torch(s_est[0], s_est[1], sr, t_max)
+        itd_gt = compute_itd_torch(s_gt[0], s_gt[1], sr, t_max)
+
+        return torch.abs(itd_est - itd_gt).item()
+    except Exception as e:
+        eliot.log_message(f"Error computing ITD diff: {e}", level="error")
+        return None
+
+
+def ild_diff_torch(
+    s_est: torch.Tensor,
+    s_gt: torch.Tensor,
+) -> float | None:
+    """
+    Compute absolute ILD error between estimate and ground truth.
+
+    Inputs:
+        s_est: shape (2, T)
+        s_gt:  shape (2, T)
+
+    Returns:
+        Absolute ILD error in dB as a scalar tensor.
+    """
+    try:
+        if s_est.ndim != 2 or s_gt.ndim != 2:
+            raise ValueError("Expected inputs with shape (2, T).")
+
+        if s_est.shape[0] != 2 or s_gt.shape[0] != 2:
+            raise ValueError("Expected first dimension to contain left/right channels.")
+
+        if s_est.shape != s_gt.shape:
+            raise ValueError("Estimate and ground truth must have the same shape.")
+
+        ild_est = compute_ild_torch(s_est[0], s_est[1])
+        ild_gt = compute_ild_torch(s_gt[0], s_gt[1])
+
+        return torch.abs(ild_est - ild_gt).item()
+    except Exception as e:
+        eliot.log_message(f"Error computing ILD diff: {e}", level="error")
+        return None
+
+
+# from scipy import signal
+
+# def compute_itd(s_left, s_right, sr, t_max=None) -> float:
+#     corr = signal.correlate(s_left, s_right)
+#     corr /= np.max(corr)
+
+#     mid = len(corr) // 2 + 1
+
+#     cc = np.concatenate((corr[-mid:], corr[:mid]))
+
+#     if t_max is not None:
+#         cc = np.concatenate([cc[-t_max + 1 :], cc[: t_max + 1]])
+#     else:
+#         t_max = mid
+
+#     tau = np.argmax(np.abs(cc))
+#     tau -= t_max
+
+#     return tau / sr * 1e6
+
+
+# def compute_ild(s_left, s_right) -> np.ndarray:
+#     sum_sq_left = np.sum(s_left**2, axis=-1)
+#     sum_sq_right = np.sum(s_right**2, axis=-1)
+#     return 10 * np.log10(sum_sq_left / sum_sq_right)
+
+
+# def itd_diff(s_est: np.ndarray, s_gt: np.ndarray, sr: int) -> np.ndarray:
+#     """
+#     Computes the ITD error between model estimate and ground truth
+#     input: (*, 2, T), (*, 2, T)
+#     """
+#     tmax = int(round(1e-3 * sr))
+#     itd_est = compute_itd(s_est[..., 0, :], s_est[..., 1, :], sr, tmax)
+#     itd_gt = compute_itd(s_gt[..., 0, :], s_gt[..., 1, :], sr, tmax)
+#     return np.abs(itd_est - itd_gt)
+
+
+# def ild_diff(s_est: np.ndarray, s_gt: np.ndarray) -> np.ndarray:
+#     """
+#     Computes the ILD error between model estimate and ground truth
+#     input: (*, 2, T), (*, 2, T)
+#     """
+#     ild_est = compute_ild(s_est[..., 0, :], s_est[..., 1, :])
+#     ild_gt = compute_ild(s_gt[..., 0, :], s_gt[..., 1, :])
+#     return np.abs(ild_est - ild_gt)
 
 
 def prepare_dir_or_file(target: Path, *, is_dir: bool, overwrite: bool) -> None:
     """Prepare a directory or file for writing. If it already exists, either overwrite it or raise an error based on the `overwrite` flag."""
 
     if target.exists():
-        if overwrite:
-            if is_dir:
-                eliot.log_message(f"Deleting existing directory at {target}", level="warning")
-                for file in target.glob("*"):
-                    file.unlink()
-            else:
-                eliot.log_message(f"Overwriting existing file at {target}", level="warning")
-                target.unlink()
+        if is_dir and not target.is_dir():
+            raise FileExistsError(f"A file already exists at {target}, but a directory is expected.")
+        if not is_dir and not target.is_file():
+            raise FileExistsError(f"A directory already exists at {target}, but a file is expected.")
+        if is_dir and target.is_dir() and not any(target.iterdir()):
+            pass  # Do nothing if the directory already exists and is empty
         else:
-            raise FileExistsError(f"Directory already exists at {target}. Use --overwrite to overwrite.")
+            if overwrite:
+                if is_dir:
+                    eliot.log_message(f"Deleting existing directory at {target}", level="warning")
+                    for file in target.glob("*"):
+                        file.unlink()
+                else:
+                    eliot.log_message(f"Overwriting existing file at {target}", level="warning")
+                    target.unlink()
+            else:
+                raise FileExistsError(f"Directory already exists at {target}. Use --overwrite to overwrite.")
 
     if is_dir:
         target.mkdir(parents=True, exist_ok=True)

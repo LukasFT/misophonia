@@ -3,7 +3,6 @@ The main training script for training on synthetic data
 """
 
 import json
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -52,14 +51,12 @@ def _time_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) 
     """
     batch_size = pred.shape[0]
     batch_loss = []
-    for i in range(batch_size):
-        left_pred = pred[i, 0, : audio_lens[i]]
-        right_pred = pred[i, 1, : audio_lens[i]]
-        left_term = -snr(left_pred, tgt[i, 0, : audio_lens[i]])
-        right_term = -snr(right_pred, tgt[i, 1, : audio_lens[i]])
-
-        avg_term = 0.5 * left_term + 0.5 * right_term
-        batch_loss.append(avg_term)
+    for i in range(batch_size):  # Calculate per-item in batch
+        for channel in range(pred.shape[1]):  # Calculate loss per-channel of item (average over channels)
+            pred_channel = pred[i, channel, : audio_lens[i]]
+            tgt_channel = tgt[i, channel, : audio_lens[i]]
+            term = -snr(pred_channel, tgt_channel)
+            batch_loss.append(term)
     return sum(batch_loss) / len(batch_loss)
 
 
@@ -68,6 +65,7 @@ def _time_snr_and_si_snr_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens:
     Pure SNR, 50/50 from each channel
     """
     batch_size = pred.shape[0]
+    assert pred.shape[1] == 2, "Time with SI-SNR loss currently only supports stereo audio."
     batch_loss = []
     for i in range(batch_size):
         left_pred = pred[i, 0, : audio_lens[i]]
@@ -198,6 +196,7 @@ def train_model(
     loss_option: str,
     save_dir: Path,
     skip_subtraction: bool = True,
+    eval_mono_to_stereo: bool = False,
     lr: float = 0.0005,
     weight_decay: float = 0.0,
     global_step_train_start: int = 0,
@@ -218,6 +217,7 @@ def train_model(
         device (torch.device): cuda or cpu
         save_dir: Path to save model weights and metric plots
         skip_subtraction: Skip subtraction methods when calculating metrics during val evaluation.
+        eval_mono_to_stereo: If True, combine every other pair of predictions into a stereo signal.
         global_step_train (int): Metadata for MLflow to report total number of training batches already logged.
         global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
     """
@@ -226,16 +226,11 @@ def train_model(
     optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
     loss_fn = get_loss_fn_from_name(loss_option)
 
-    # Checkpoint trackers
-    best_epoch = -1
-    best_val_si_snr_improvement = -np.inf
-
-    # FIXME: Counting global steps is done using two different implementations for val and train
     global_step_train_counter = SimpleCounter(global_step_train_start)
     global_step_val_counter = SimpleCounter(global_step_val_start)
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
-        # Perform train epcoh
+        # Perform train epoch
         train_loss, train_loss_std = train_epoch(
             model,
             device=device,
@@ -267,6 +262,7 @@ def train_model(
             loss_fn=loss_fn,
             skip_subtraction=skip_subtraction,
             split_name="val",
+            mono_to_stereo=eval_mono_to_stereo,
         )
 
         val_si_snr = eval_results_agg["x"]["si_snr_mean"]
@@ -310,14 +306,3 @@ def train_model(
             val_loss=val_loss,
             train_loss=train_loss,
         )
-
-        if val_si_snr_improvement > best_val_si_snr_improvement:
-            best_epoch = epoch
-            best_val_si_snr_improvement = val_si_snr_improvement
-
-    # Rename best model weights
-    best_ckpt = ckpt_dir / f"weights_epoch_{best_epoch}.pt"
-    final_path = ckpt_dir / "best_weights.pt"
-
-    if best_epoch >= 0:
-        shutil.copy(best_ckpt, final_path)  # safer than rename

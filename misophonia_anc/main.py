@@ -2,6 +2,7 @@ import itertools
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -249,6 +250,7 @@ def train(
             if "train" in config.dataset_splits and config.dataset_splits["train"].generated_config is not None
             else None
         ),
+        stereo_to_mono=config.stereo_to_mono,
     )
     val_loader = make_dataloader(
         shards_val,
@@ -262,6 +264,7 @@ def train(
             if "val" in config.dataset_splits and config.dataset_splits["val"].generated_config is not None
             else None
         ),
+        stereo_to_mono=config.stereo_to_mono,
     )
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
@@ -319,16 +322,87 @@ def train(
             global_step_train_start=checkpoint_metadata.get("global_step_train", 0),
             global_step_val_start=checkpoint_metadata.get("global_step_val", 0),
             skip_subtraction=skip_subtraction,
+            eval_mono_to_stereo=config.stereo_to_mono,
             **config.model_hyperparams,
         )
+        cp_best_epoch(name, data_base_dir=data_base_dir)
     finally:
         if mlflow_uri is not None:
             mlflow.end_run()
 
 
 @app.command()
+def cp_best_epoch(
+    names: Annotated[list[str], typer.Argument(..., help="Name of model directory.")],
+    *,
+    data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
+    metric: Annotated[
+        str, typer.Option(..., help="Metric name to determine best checkpoint.")
+    ] = "val_si_snr_improvement",
+) -> None:
+    """Copy the best checkpoint based on the specified metric to a file named 'best_weights.pt' in the checkpoints directory."""
+    if isinstance(names, str):
+        names = [names]
+    for name in names:
+        eliot.log_message(f"Finding best checkpoint for model {name} based on metric {metric}...", level="info")
+        model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
+        checkpoints_dir = model_dir / "checkpoints"
+
+        if not checkpoints_dir.exists():
+            eliot.log_message(
+                f"Checkpoints directory {checkpoints_dir} does not exist for {name}. Skipping.", level="error"
+            )
+            continue
+
+        best_metric = None
+        best_checkpoint = None
+        for checkpoint_file in checkpoints_dir.glob("*.pt"):
+            if checkpoint_file.name == "best_weights.pt":
+                old_best_file = checkpoint_file.with_name(f"best_weights.old-{datetime.now().isoformat()}.pt")
+                try:
+                    shutil.move(checkpoint_file, old_best_file)
+                except Exception as e:
+                    eliot.log_message(
+                        f"Failed to rename existing best checkpoint {checkpoint_file} to {old_best_file}: {e}",
+                        level="error",
+                    )
+                    continue
+                eliot.log_message(
+                    f"Renamed existing best checkpoint {checkpoint_file} to {old_best_file}",
+                    level="warning",
+                )
+                continue  # Skip previously copied best checkpoint to avoid confusion
+
+            checkpoint_data = torch.load(checkpoint_file, map_location="cpu")
+            checkpoint_metric = checkpoint_data.get(metric, None)
+            if checkpoint_metric is None:
+                eliot.log_message(
+                    f"Checkpoint {checkpoint_file} does not contain metric {metric}. Skipping this checkpoint for best checkpoint selection.",
+                    level="warning",
+                )
+                continue
+            if best_metric is None or checkpoint_metric > best_metric:
+                best_metric = checkpoint_metric
+                best_checkpoint = checkpoint_file
+
+        if best_checkpoint is not None:
+            best_checkpoint_path = checkpoints_dir / "best_weights.pt"
+            try:
+                shutil.copy(best_checkpoint, best_checkpoint_path)
+            except Exception as e:
+                eliot.log_message(
+                    f"Failed to copy best checkpoint {best_checkpoint} to {best_checkpoint_path}: {e}",
+                    level="error",
+                )
+                continue
+            eliot.log_message(f"Copied best checkpoint {best_checkpoint} to {best_checkpoint_path}", level="info")
+        else:
+            eliot.log_message(f"No checkpoint found with metric {metric} for model {name}", level="warning")
+
+
+@app.command()
 def evaluate(
-    name: Annotated[str, typer.Argument(..., help="Name of model directory.")],
+    names: Annotated[list[str], typer.Argument(..., help="Name of model directory.")],
     *,
     splits: Annotated[
         list[str],  # list[SplitT] but that causes typer error
@@ -338,6 +412,13 @@ def evaluate(
             help="Dataset split to generate (e.g., 'train', 'val', 'test')",
         ),
     ] = ["train", "val", "test"],
+    collect_to: Annotated[
+        str | None,
+        typer.Option(
+            ...,
+            help="Extra name of dir the copy results files to (will also copy to the model dir).",
+        ),
+    ] = None,
     checkpoint: Annotated[
         str,
         typer.Option(..., help="Name of model checkpoint to load. If 'init', a random untrained model will be used."),
@@ -348,7 +429,10 @@ def evaluate(
         typer.Option(..., help="Number of samples to examine model output"),
     ] = None,
     save_samples: Annotated[int, typer.Option(..., help="Number of examples to save to disk.")] = 50,
-    batch_size: Annotated[int, typer.Option(..., help="Batch size for evaluation.")] = 4,
+    batch_size: Annotated[
+        int | None,
+        typer.Option(..., help="Batch size for evaluation. Defaults to the value specified in the model config."),
+    ] = None,
     num_workers: Annotated[
         int,
         typer.Option(
@@ -364,79 +448,133 @@ def evaluate(
     """
     Function to compare sample gts and mixes to model outputs.
     """
-    model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    errors = []
+    collect_to = (
+        get_data_dir(dataset_name=collect_to, base_dir=data_base_dir) / "collected_eval_results"
+        if collect_to is not None
+        else None
+    )
+    for name in names:
+        model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    for split in splits:
-        checkpoint_without_pt = checkpoint.replace(".pt", "")
+        for split in splits:
+            try:
+                eliot.log_message(
+                    f"Evaluating model {name} on split {split} using checkpoint {checkpoint} with limit_samples={limit_samples} and save_samples={save_samples}...",
+                    level="info",
+                )
+                checkpoint_without_pt = checkpoint.replace(".pt", "")
 
-        filename_prefix = (
-            f"{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+                filename_prefix = (
+                    f"{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+                )
+                results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
+                aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
+                prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
+                prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
+
+                if save_samples == 0:
+                    samples_dir = None
+                else:
+                    samples_dir = model_dir / "samples" / checkpoint_without_pt / split
+                    prepare_dir_or_file(samples_dir, overwrite=overwrite, is_dir=True)
+
+                checkpoint_file = model_dir / "checkpoints" / checkpoint
+                if checkpoint == "init":
+                    checkpoint_file = None
+                    eliot.log_message("Using random untrained model for inference.", level="info")
+
+                config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
+                model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+                model.eval()
+
+                dataset_split_dir = model_dir / "webdataset" / split
+                eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
+                shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
+                if len(shards_split) == 0:
+                    eliot.log_message(
+                        f"No data shards found for split {split} at {dataset_split_dir}. Skipping evaluation for this split.",
+                        level="error",
+                    )
+                    continue
+                log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
+                split_loader = make_dataloader(
+                    shards_split,
+                    batch_size=batch_size if batch_size is not None else config.batch_size,
+                    num_workers=num_workers,
+                    include_metadata=True,
+                    include_clean_mix=model.ground_truth_target == "clean_mix"
+                    or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
+                    include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+                    max_length=(
+                        config.dataset_splits[split].generated_config.get("max_length")
+                        if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+                        else None
+                    ),
+                    stereo_to_mono=config.stereo_to_mono,
+                )
+                if limit_samples is not None:
+                    split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
+
+                res, agg_res = perform_eval(
+                    model,
+                    split_loader,
+                    save_results_to=results_file,
+                    save_aggregated_results_to=aggregated_results_file,
+                    aggregated_results_kwargs={
+                        "group_by": (
+                            ("fg_categories", "is_trigger"),
+                            "__len__(fg_categories)",
+                            "__len__(bg_categories)",
+                            ("__len__(fg_categories)", "__len__(bg_categories)"),
+                            "is_trigger",
+                        )
+                    },
+                    calculate_metrics_kwargs={
+                        "calculate_ild_itd": True,
+                    },
+                    mono_to_stereo=config.stereo_to_mono,
+                    save_num_samples=save_samples,
+                    save_samples_to=samples_dir,
+                    device=device,
+                    warm_up_iters=warm_up,
+                    loss_fn=get_loss_fn_from_name(config.loss_option),
+                )
+
+                eliot.log_message(
+                    f"Aggregated results of 'x':\n{json.dumps(agg_res.get('x'), indent=4)}", level="debug"
+                )
+
+                eliot.log_message(f"{name}: Evaluated {len(res)} {split} samples", level="info")
+
+                if collect_to is not None:
+                    extra_results_file = collect_to / f"{name}_{results_file.name}"
+                    extra_aggregated_results_file = collect_to / f"{name}_{aggregated_results_file.name}"
+                    prepare_dir_or_file(extra_results_file, overwrite=overwrite, is_dir=False)
+                    prepare_dir_or_file(extra_aggregated_results_file, overwrite=True, is_dir=False)
+                    shutil.copy(results_file, extra_results_file)
+                    shutil.copy(aggregated_results_file, extra_aggregated_results_file)
+                    eliot.log_message(
+                        f"Copied results to {collect_to} at {extra_results_file} and {extra_aggregated_results_file}",
+                        level="info",
+                    )
+
+            except Exception as e:
+                errors.append({"model_name": name, "split": split, "checkpoint": checkpoint, "error_message": str(e)})
+                eliot.log_message(
+                    f"Error during evaluation of model {name} on split {split} with checkpoint {checkpoint}: {e}",
+                    level="error",
+                )
+                continue
+
+    if len(errors) > 0:
+        eliot.log_message(
+            f"Completed evaluation with {len(errors)} errors. Error details:\n{json.dumps(errors, indent=4)}",
+            level="error",
         )
-        results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
-        aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
-        prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
-        prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
-
-        if save_samples == 0:
-            samples_dir = None
-        else:
-            samples_dir = model_dir / "samples" / checkpoint_without_pt / split
-            prepare_dir_or_file(samples_dir, overwrite=overwrite, is_dir=True)
-
-        checkpoint_file = model_dir / "checkpoints" / checkpoint
-        if checkpoint == "init":
-            checkpoint_file = None
-            eliot.log_message("Using random untrained model for inference.", level="info")
-
-        config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
-        model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
-        model.eval()
-
-        dataset_split_dir = model_dir / "webdataset" / split
-        eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
-        shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
-        if len(shards_split) == 0:
-            eliot.log_message(
-                f"No data shards found for split {split} at {dataset_split_dir}. Skipping evaluation for this split.",
-                level="error",
-            )
-            continue
-        log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
-        split_loader = make_dataloader(
-            shards_split,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            include_metadata=True,
-            include_clean_mix=model.ground_truth_target == "clean_mix"
-            or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
-            include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
-            max_length=(
-                config.dataset_splits[split].generated_config.get("max_length")
-                if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
-                else None
-            ),
-        )
-        if limit_samples is not None:
-            split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
-
-        res, agg_res = perform_eval(
-            model,
-            split_loader,
-            save_results_to=results_file,
-            save_aggregated_results_to=aggregated_results_file,
-            save_num_samples=save_samples,
-            save_samples_to=samples_dir,
-            device=device,
-            warm_up_iters=warm_up,
-            loss_fn=get_loss_fn_from_name(config.loss_option),
-        )
-
-        eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
-
-        eliot.log_message(f"Evaluated {len(res)} {split} samples", level="info")
-
-    eliot.log_message(f"Completed evaluation for checkpoint {checkpoint} on splits: {splits}", level="info")
+    else:
+        eliot.log_message("Completed evaluation with no errors.", level="info")
 
 
 if __name__ == "__main__":
