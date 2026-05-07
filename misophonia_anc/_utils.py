@@ -669,7 +669,7 @@ def perform_eval(
     ground_truth_target = model.ground_truth_target
 
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
-    mlflow_logger = CustomMlFlowLogger()
+    mlflow_logger = CustomMlFlowLogger(allow_inactive=True)  # Allow it to do nothing if MLFlow is not active
 
     with mlflow_logger, torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
