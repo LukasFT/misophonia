@@ -198,6 +198,7 @@ def train_model(
     skip_subtraction: bool = True,
     eval_mono_to_stereo: bool = False,
     lr: float = 0.0005,
+    lr_schedule_config: dict | None = None,
     weight_decay: float = 0.0,
     global_step_train_start: int = 0,
     global_step_val_start: int = 0,
@@ -213,6 +214,7 @@ def train_model(
         n_epochs (int): number of epochs for training
         checkpoint_epoch (int): epoch to start checkpointing from. Set to 0 if the model is randomly initialized and set to the epoch number of the loaded checkpoint if resuming training from a checkpoint.
         lr (float): learning rate during trainer
+        lr_schedule_config: Configuration for learning rate scheduler. If None, no scheduler is used.
         weight_decay (float): weight decay to apply to optimizer
         device (torch.device): cuda or cpu
         save_dir: Path to save model weights and metric plots
@@ -225,6 +227,25 @@ def train_model(
     model = model.to(device)
     optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
     loss_fn = get_loss_fn_from_name(loss_option)
+
+    scheduler = None
+    activate_scheduler_after_epoch = 0  # First apply the scheduler from this epoch onwards
+    scheduler_metric = None
+    if lr_schedule_config is not None and len(lr_schedule_config) > 0:
+        if lr_schedule_config.get("type") == "ReduceLROnPlateau":
+            if checkpoint_epoch != 0:
+                raise NotImplementedError("LR scheduler currently not supported on resumed training.")
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode=lr_schedule_config.get("mode", "max"),
+                factor=lr_schedule_config.get("factor", 0.5),
+                patience=lr_schedule_config.get("patience", 5),
+                verbose=True,
+            )
+            activate_scheduler_after_epoch = lr_schedule_config.get("activate_after_epoch", 40)
+            scheduler_metric = lr_schedule_config.get("scheduler_metric", "val/epoch/snr")
+        else:
+            raise ValueError(f"Unsupported lr_schedule type {lr_schedule_config}")
 
     global_step_train_counter = SimpleCounter(global_step_train_start)
     global_step_val_counter = SimpleCounter(global_step_val_start)
@@ -291,6 +312,9 @@ def train_model(
         )
         if mlflow.active_run() is not None:
             mlflow.log_metrics(epoch_metrics, step=epoch)
+
+        if scheduler is not None and epoch >= activate_scheduler_after_epoch:
+            scheduler.step(epoch_metrics[scheduler_metric])
 
         # Checkpointing
         ckpt_dir = save_dir / "checkpoints"
