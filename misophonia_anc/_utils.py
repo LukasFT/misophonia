@@ -224,6 +224,16 @@ class MisophoniaANCConfig(BaseModel):
         None, description="MLflow experiment name to log training metrics to."
     )
 
+    # validate the if stereo_to_mono = True, then model_params.audio_channels must be 1
+    @pydantic.model_validator(mode="before")
+    @classmethod
+    def validate_stereo_to_mono(cls, values: dict[str, Any]) -> dict[str, Any]:
+        stereo_to_mono = values.get("stereo_to_mono", False)
+        audio_channels = (values.get("model_params") or {}).get("audio_channels", 2)
+        if stereo_to_mono and audio_channels != 1:
+            raise ValueError("If stereo_to_mono is True, model_params.audio_channels must be 1.")
+        return values
+
     @classmethod
     def from_yaml(cls, yaml_path: str | Path, *, defaults={}) -> "MisophoniaANCConfig":
         conf = dict(defaults)
