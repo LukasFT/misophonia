@@ -1673,7 +1673,7 @@ def plot_average_spectogram_background(
         if "clean_mix" not in batch:
             raise ValueError("Data loader was created without clean mix.")
 
-        background = batch["clean_mix"]
+        background = batch["clean_mix"].to(device)
 
         if background.ndim == 2:
             background = background.unsqueeze(1)
