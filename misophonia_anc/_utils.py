@@ -917,9 +917,18 @@ def aggregate_results(
 
     df = pd.DataFrame(rows)
 
-    metric_keys = list(results[0]["metrics"].keys())
-    metadata_keys = list(results[0].get("sample_metadata", {}).keys())
+    if "runtime_ms" in df.columns and "batch_length" in df.columns:
+        df["runtime_ms_pr_length"] = df["runtime_ms"] / df["batch_length"]
 
+    metric_keys = list(results[0]["metrics"].keys())
+
+    agg_metrics = _agg_results_calc(df[metric_keys + ["pred_name"]])
+
+    if group_by is None or len(group_by) == 0:
+        return agg_metrics  # Return overall metrics without grouping
+
+    # Group metrics by:
+    metadata_keys = list((results[0].get("sample_metadata") or {}).keys())
     overlap = set(metric_keys).intersection(metadata_keys)
     if overlap:
         raise ValueError(f"Metric keys overlap with metadata keys: {overlap}")
@@ -951,11 +960,6 @@ def aggregate_results(
 
     for derived_col, source_col in derived_len_cols.items():
         df[derived_col] = df[source_col].map(_group_len)
-
-    if "runtime_ms" in df.columns and "batch_length" in df.columns:
-        df["runtime_ms_pr_length"] = df["runtime_ms"] / df["batch_length"]
-
-    agg_metrics = _agg_results_calc(df[metric_keys + ["pred_name"]])
 
     # Normalize list-valued / unhashable group columns.
     for col in all_group_by_cols:
