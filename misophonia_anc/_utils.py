@@ -245,42 +245,37 @@ def make_custom_collate_fn(
 ) -> Callable[[dict], dict]:
     max_length = torch.inf if max_length is None else max_length
 
-    def stereo_to_mono_batch(batch: dict) -> dict:
+    def to_mono_batch(batch: dict) -> dict:
         """Make the batch twice the size by converting stereo audio to mono (two samples per sample)."""
-        # (B, T, C) -> (2B, T, 1)
-        for key in batch["inputs"].keys():
-            try:
-                eliot.log_message(f"{key} {batch['inputs'][key].shape=}", level="warning")
-            except Exception as e:
-                eliot.log_message(f"Error logging shape for key {key}: {e}", level="error")
-                eliot.log_message(f"{batch['inputs'][key]=}", level="error")
-        raise NotImplementedError(
-            "Implement stereo_to_mono_batch function to convert stereo audio to mono and double the batch size."
-        )
-        # original_mix_shape = batch["inputs"]["mix"].shape
-        # original_label_vector_shape = batch["inputs"]["label_vector"].shape
-        # original_is_control_shape = batch["inputs"]["is_control"].shape
-        # original_audio_lens_shape = batch["audio_lens"].shape
-        # # original_clean
-        # batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(-1, 1, batch["inputs"]["mix"].shape[-1])
-        # if "isolated_trigger" in batch:
-        #     batch["isolated_trigger"] = batch["isolated_trigger"].reshape(-1, 1, batch["isolated_trigger"].shape[-1])
-        # if "clean_mix" in batch:
-        #     batch["clean_mix"] = batch["clean_mix"].reshape(-1, 1, batch["clean_mix"].shape[-1])
-        # batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"].repeat_interleave(2, dim=0)
-        # batch["inputs"]["is_control"] = batch["inputs"]["is_control"].repeat_interleave(2, dim=0)
-        # batch["audio_lens"] = batch["audio_lens"].repeat_interleave(2, dim=0)
-        # assert len(batch["inputs"]["mix"].shape) == 3 and batch["inputs"]["mix"].shape[2] == 1, (
-        #     "Expected mix to have shape (2B, T, 1) after stereo to mono conversion"
-        # )
-        # assert (
-        #     batch["inputs"]["mix"].shape[0]
-        #     == batch["inputs"]["label_vector"].shape[0]
-        #     == batch["inputs"]["is_control"].shape[0]
-        #     == batch["audio_lens"].shape[0]
-        #     == 2 * original_batch_size
-        # )
-        # return batch
+        # (B, N, T) -> (N*B, 1, T)
+        original_batch_size, original_channels, length = batch["inputs"]["mix"].shape
+        new_batch_size = original_batch_size * original_channels
+        new_channels = 1
+
+        batch["inputs"]["mix"] = batch["inputs"]["mix"].reshape(new_batch_size, new_channels, length)
+
+        if include_isolated_trigger:
+            batch["isolated_trigger"] = batch["isolated_trigger"].reshape(new_batch_size, new_channels, length)
+
+        if include_clean_mix:
+            batch["clean_mix"] = batch["clean_mix"].reshape(new_batch_size, new_channels, length)
+
+        batch["inputs"]["label_vector"] = batch["inputs"]["label_vector"].repeat_interleave(original_channels, dim=0)
+        batch["inputs"]["is_control"] = batch["inputs"]["is_control"].repeat_interleave(original_channels, dim=0)
+        batch["audio_lens"] = batch["audio_lens"].repeat_interleave(original_channels, dim=0)
+
+        batch["idxs"] = [f"{idx}_{ch}" for idx in batch["idxs"] for ch in range(original_channels)]
+
+        if include_metadata:
+            batch["metadata"] = [batch["metadata"][i // original_channels] for i in range(new_batch_size)]
+            # remove pre-computed metrics
+            for metadata in batch["metadata"]:
+                if "mix_vs_isolated_trigger_metrics" in metadata:
+                    del metadata["mix_vs_isolated_trigger_metrics"]
+                if "mix_vs_clean_mix_metrics" in metadata:
+                    del metadata["mix_vs_clean_mix_metrics"]
+
+        return batch
 
     def custom_collate_fn(
         batch: dict,
@@ -384,7 +379,7 @@ def make_custom_collate_fn(
             res["clean_mix"] = torch.stack(clean_mixes)
 
         if stereo_to_mono:
-            res = stereo_to_mono_batch(res)
+            res = to_mono_batch(res)
 
         return res
 
