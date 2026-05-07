@@ -447,7 +447,7 @@ def evaluate(
     """
     Function to compare sample gts and mixes to model outputs.
     """
-    n_errors = 0
+    errors = []
     collect_to = (
         get_data_dir(dataset_name=collect_to, base_dir=data_base_dir) / "collected_eval_results"
         if collect_to is not None
@@ -537,7 +537,9 @@ def evaluate(
                     loss_fn=get_loss_fn_from_name(config.loss_option),
                 )
 
-                eliot.log_message(f"Aggregated results:\n{json.dumps(agg_res, indent=4)}", level="debug")
+                eliot.log_message(
+                    f"Aggregated results of 'x':\n{json.dumps(agg_res.get('x'), indent=4)}", level="debug"
+                )
 
                 eliot.log_message(f"{name}: Evaluated {len(res)} {split} samples", level="info")
 
@@ -554,18 +556,20 @@ def evaluate(
                     )
 
             except Exception as e:
-                n_errors += 1
+                errors.append({"model_name": name, "split": split, "checkpoint": checkpoint, "error_message": str(e)})
                 eliot.log_message(
                     f"Error during evaluation of model {name} on split {split} with checkpoint {checkpoint}: {e}",
                     level="error",
                 )
                 continue
 
-    eliot.log_message(
-        f"Completed evaluation for models {names} on splits {splits} with checkpoint {checkpoint}."
-        + (f" Encountered {n_errors} errors." if n_errors > 0 else ""),
-        level="info" if n_errors == 0 else "error",
-    )
+    if len(errors) > 0:
+        eliot.log_message(
+            f"Completed evaluation with {len(errors)} errors. Error details:\n{json.dumps(errors, indent=4)}",
+            level="error",
+        )
+    else:
+        eliot.log_message("Completed evaluation with no errors.", level="info")
 
 
 if __name__ == "__main__":
