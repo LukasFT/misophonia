@@ -1703,10 +1703,11 @@ def _plot_avg_specs(model_dir: str, split: str, avg_specs: dict[str, torch.Tenso
 
     os.makedirs(f"{model_dir}/spectrograms", exist_ok=True)
 
+    items = []
     for category, spec in sorted(avg_specs.items()):
-        if category == "chewing_gum":
-            category = "Chewing"
-        category = category.replace("_", " ").title()
+        display_category = "Chewing" if category == "chewing_gum" else category
+        display_category = display_category.replace("_", " ").title()
+
         spec_db = torchaudio.functional.amplitude_to_DB(
             spec.cpu(),
             multiplier=10.0,
@@ -1714,14 +1715,38 @@ def _plot_avg_specs(model_dir: str, split: str, avg_specs: dict[str, torch.Tenso
             db_multiplier=0.0,
         )
 
-        plt.figure(figsize=(8, 4))
-        plt.imshow(spec_db.numpy(), origin="lower", aspect="auto")
-        plt.title(f"Average spectrogram: {category}")
-        plt.xlabel("Time frames")
-        plt.ylabel("Frequency bins")
-        plt.colorbar(label="dB")
-        plt.tight_layout()
-        plt.savefig(f"{model_dir}/spectrograms/{split}_avg_spec_{category}.png")
+        items.append((display_category, spec_db.numpy()))
+
+    vmin = min(spec.min() for _, spec in items)
+    vmax = max(spec.max() for _, spec in items)
+
+    nrows, ncols = 2, 4
+    fig, axes = plt.subplots(nrows, ncols, figsize=(20, 8), sharex=True, sharey=True)
+    axes = axes.flatten()
+
+    for ax, (category, spec_db) in zip(axes, items):
+        im = ax.imshow(
+            spec_db,
+            origin="lower",
+            aspect="auto",
+            vmin=vmin,
+            vmax=vmax,
+        )
+
+        ax.set_title(category)
+        ax.set_xlabel("Time frames")
+        ax.set_ylabel("Frequency bins")
+
+    # Hide unused subplots, if fewer than 8 categories
+    for ax in axes[len(items) :]:
+        ax.axis("off")
+
+    fig.suptitle(f"Average spectrograms: {split}", fontsize=16)
+    fig.colorbar(im, ax=axes, label="dB", shrink=0.9)
+
+    plt.tight_layout()
+    plt.savefig(f"{model_dir}/spectrograms/{split}_avg_specs_grid.png", dpi=300)
+    plt.close(fig)
 
 
 # FIXME: Remove unused (commented out) function
