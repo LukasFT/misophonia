@@ -51,14 +51,12 @@ def _time_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) 
     """
     batch_size = pred.shape[0]
     batch_loss = []
-    for i in range(batch_size):
-        left_pred = pred[i, 0, : audio_lens[i]]
-        right_pred = pred[i, 1, : audio_lens[i]]
-        left_term = -snr(left_pred, tgt[i, 0, : audio_lens[i]])
-        right_term = -snr(right_pred, tgt[i, 1, : audio_lens[i]])
-
-        avg_term = 0.5 * left_term + 0.5 * right_term
-        batch_loss.append(avg_term)
+    for i in range(batch_size):  # Calculate per-item in batch
+        for channel in range(pred.shape[1]):  # Calculate loss per-channel of item (average over channels)
+            pred_channel = pred[i, channel, : audio_lens[i]]
+            tgt_channel = tgt[i, channel, : audio_lens[i]]
+            term = -snr(pred_channel, tgt_channel)
+            batch_loss.append(term)
     return sum(batch_loss) / len(batch_loss)
 
 
@@ -67,6 +65,7 @@ def _time_snr_and_si_snr_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens:
     Pure SNR, 50/50 from each channel
     """
     batch_size = pred.shape[0]
+    assert pred.shape[1] == 2, "Time with SI-SNR loss currently only supports stereo audio."
     batch_loss = []
     for i in range(batch_size):
         left_pred = pred[i, 0, : audio_lens[i]]
