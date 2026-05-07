@@ -1609,7 +1609,7 @@ def plot_average_spectrogram_by_trigger_category(
         power=power,
     ).to(device)
 
-    spec_sums = defaultdict(lambda: None)
+    spec_sums = defaultdict(lambda: torch.zeros((), device=device))
     spec_counts = defaultdict(int)
 
     for batch in loader:
@@ -1666,8 +1666,8 @@ def plot_average_spectogram_background(
         power=power,
     ).to(device)
 
-    spec_sums = defaultdict(lambda: None)
-    spec_counts = defaultdict(int)
+    spec_sums = None
+    spec_counts = 0
 
     for batch in loader:
         if "clean_mix" not in batch:
@@ -1682,7 +1682,11 @@ def plot_average_spectogram_background(
             x = x.mean(dim=0)
             spec = spec_transform(x)
 
-            spec_sums += spec.detach()
+            if spec_sums == None:
+                spec_sums = spec.detach().clone()
+            else:
+                spec_sums += spec.detach()
+
             spec_counts += 1
 
     if spec_counts == 0:
