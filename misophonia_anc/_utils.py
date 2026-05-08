@@ -1594,6 +1594,7 @@ def plot_average_spectrogram_by_trigger_category(
     device: str = "cpu",
     *,
     only_triggers: bool = True,
+    find_average: bool = False,
 ) -> None:
     """
     Iterate over a WebLoader, group isolated trigger audio by trigger category,
@@ -1603,6 +1604,7 @@ def plot_average_spectrogram_by_trigger_category(
         batch["isolated_trigger"]: Tensor shaped [B, C, T] or [B, T]
         batch["metadata"]: list[dict] or list[str] or dict of batched fields
     """
+    num_classes = 8  # TODO: In future, don't hardcode this. Logic breaks if find_average is True and only_triggers is False.
 
     spec_transform = torchaudio.transforms.Spectrogram(
         n_fft=n_fft,
@@ -1640,10 +1642,16 @@ def plot_average_spectrogram_by_trigger_category(
 
                 if spec_sums[category] is None:
                     spec_sums[category] = spec.detach().clone()
-                else:
-                    spec_sums[category] += spec.detach()
 
-                spec_counts[category] += 1
+                    spec_counts[category] = 1
+                    if (
+                        not find_average and len(spec_sums.keys()) == num_classes
+                    ):  # We have all categories, no need to find more examples
+                        break
+                else:
+                    if find_average:
+                        spec_sums[category] += spec.detach()
+                        spec_counts[category] += 1
 
     avg_specs = {
         category: spec_sums[category] / spec_counts[category] for category in spec_sums if spec_counts[category] > 0
