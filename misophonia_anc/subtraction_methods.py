@@ -2,7 +2,6 @@
 
 from typing import Callable, TypeAlias
 
-import numpy as np
 import torch
 
 SubtractionMethod: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
@@ -20,16 +19,17 @@ def simple_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
 
 def stft_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
     """
-    Remove trigger audio from the mix audio using STFT masking.
+    Remove trigger audio from mix using STFT masking.
 
     Args:
-        mix: Stereo mixture tensor, shape (2, T).
-        pred: Stereo trigger estimate tensor, shape (2, T).
+        mix: Tensor, shape (B, 2, T).
+        pred: Tensor, shape (B, 2, T).
 
     Returns:
-        Stereo output tensor, shape (2, T).
+        Tensor, shape (B, 2, T).
     """
-    assert mix.shape[0] == 2, "Audio mix must be stereo (2 channels)"
+    assert mix.ndim == 3, "mix must have shape (B, 2, T)"
+    assert mix.shape[1] == 2, "Audio mix must be stereo (2 channels)"
     assert mix.shape == pred.shape, "Audio signals must have the same shape"
 
     device = mix.device
@@ -41,14 +41,13 @@ def stft_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
     power = 2.0
     mask_sharpness = 1.0
 
-    # sqrt-Hann analysis/synthesis window
     win = torch.sqrt(torch.hann_window(n_fft, periodic=True, device=device, dtype=dtype))
 
     out_channels = []
 
     for ch in range(2):
-        x = mix[ch]
-        t = pred[ch]
+        x = mix[:, ch, :]  # (B, T)
+        t = pred[:, ch, :]  # (B, T)
         T = x.shape[-1]
 
         X = torch.stft(
@@ -74,7 +73,6 @@ def stft_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
         magX = torch.abs(X)
         magT = torch.abs(T_est)
 
-        # Background magnitude proxy
         magB = torch.clamp(magX - magT, min=0.0)
 
         Bp = magB.pow(power)
@@ -95,16 +93,16 @@ def stft_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
             window=win,
             center=True,
             length=T,
-        )
+        )  # (B, T)
 
-        # Peak-match output to input per channel
-        in_peak = torch.max(torch.abs(x)) + eps
-        out_peak = torch.max(torch.abs(y)) + eps
+        # Peak-match per example, per channel
+        in_peak = torch.amax(torch.abs(x), dim=-1, keepdim=True) + eps
+        out_peak = torch.amax(torch.abs(y), dim=-1, keepdim=True) + eps
         y = y * (in_peak / out_peak)
 
         out_channels.append(y)
 
-    return torch.stack(out_channels, dim=0).to(device=device, dtype=dtype)
+    return torch.stack(out_channels, dim=1).to(device=device, dtype=dtype)
 
 
 def ls_fir_subtraction(
@@ -114,71 +112,76 @@ def ls_fir_subtraction(
     ridge: float = 1e-4,
 ) -> torch.Tensor:
     """
-    Remove trigger via a least-squares FIR matching filter per channel.
-
-    Fits a short FIR h such that conv(pred, h) matches the trigger contribution
-    inside the mixture, then subtracts that reconstructed contribution.
+    Remove trigger via batched least-squares FIR matching per channel.
 
     Args:
-        mix: Stereo mixture tensor, shape (2, T).
-        pred: Stereo trigger estimate tensor, shape (2, T).
-        filter_len: FIR length. Typical values: 17--65.
+        mix: Tensor, shape (B, 2, T).
+        pred: Tensor, shape (B, 2, T).
+        filter_len: FIR length.
         ridge: L2 regularization strength.
 
     Returns:
-        Stereo output tensor, shape (2, T).
+        Tensor, shape (B, 2, T).
     """
-    assert mix.shape[0] == 2, "Audio mix must be stereo (2 channels)"
+    assert mix.ndim == 3, "mix must have shape (B, 2, T)"
+    assert mix.shape[1] == 2, "Audio mix must be stereo (2 channels)"
     assert mix.shape == pred.shape, "Audio signals must have the same shape"
 
     device = mix.device
     dtype = mix.dtype
 
-    x = mix.to(dtype=torch.float64)
-    t = pred.to(dtype=torch.float64)
+    x = mix.to(torch.float64)
+    t = pred.to(torch.float64)
 
+    B, C, T = x.shape
     eps = 1e-12
     out = torch.zeros_like(x)
 
     def _convmtx_valid(sig: torch.Tensor, L: int) -> torch.Tensor:
         """
-        Build X so that X @ h equals valid convolution conv(sig, h).
+        Build batched convolution matrix.
 
-        Output shape: (T - L + 1, L).
+        Args:
+            sig: Tensor, shape (B, T).
+            L: FIR length.
+
+        Returns:
+            Tensor, shape (B, T - L + 1, L).
         """
-        T = sig.shape[0]
-
-        if L > T:
+        if L > sig.shape[-1]:
             raise ValueError("filter_len must be <= number of samples")
 
-        X = sig.unfold(dimension=0, size=L, step=1)
-        return torch.flip(X, dims=[1]).contiguous()
+        X = sig.unfold(dimension=-1, size=L, step=1)
+        return torch.flip(X, dims=[-1]).contiguous()
+
+    L = int(min(filter_len, T))
+
+    if L < 1:
+        return mix.clone()
+
+    eye = torch.eye(L, device=device, dtype=torch.float64)
 
     for ch in range(2):
-        x1 = x[ch]
-        t1 = t[ch]
+        x1 = x[:, ch, :]  # (B, T)
+        t1 = t[:, ch, :]  # (B, T)
 
-        T = x1.shape[0]
-        L = int(min(filter_len, T))
+        X = _convmtx_valid(t1, L)  # (B, T - L + 1, L)
+        y = x1[:, L - 1 :]  # (B, T - L + 1)
 
-        if L < 1:
-            out[ch] = x1
-            continue
+        Xt = X.transpose(-1, -2)  # (B, L, T - L + 1)
 
-        X = _convmtx_valid(t1, L)
-        y = x1[L - 1 :]
+        XtX = Xt @ X  # (B, L, L)
+        XtX = XtX + (ridge + eps) * eye.unsqueeze(0)
 
-        XtX = X.T @ X
-        XtX = XtX + (ridge + eps) * torch.eye(L, device=device, dtype=torch.float64)
+        Xty = Xt @ y.unsqueeze(-1)  # (B, L, 1)
 
-        Xty = X.T @ y
-        h = torch.linalg.solve(XtX, Xty)
+        h = torch.linalg.solve(XtX, Xty)  # (B, L, 1)
 
-        trigger_fit_valid = X @ h
+        trigger_fit_valid = (X @ h).squeeze(-1)  # (B, T - L + 1)
 
         bg = x1.clone()
-        bg[L - 1 :] = y - trigger_fit_valid
+        bg[:, L - 1 :] = y - trigger_fit_valid
 
-        out[ch] = bg
+        out[:, ch, :] = bg
 
     return out.to(device=device, dtype=dtype)
