@@ -1610,7 +1610,7 @@ def plot_average_spectrogram_by_trigger_category(
         power=power,
     ).to(device)
 
-    spec_sums = defaultdict(lambda: torch.zeros((), device=device))
+    spec_sums = defaultdict(lambda: None)
     spec_counts = defaultdict(int)
 
     for batch in loader:
@@ -1768,7 +1768,7 @@ def _plot_avg_specs(
     for ax in axes[len(items) :]:
         ax.axis("off")
 
-    fig.suptitle(f"Average spectrograms: {split}", fontsize=16)
+    fig.suptitle(f"Average spectrograms: {split.title()}", fontsize=16)
 
     fig.colorbar(im, ax=axes, label="dB", shrink=0.9)
 
