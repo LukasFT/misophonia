@@ -597,6 +597,13 @@ def visualize_data(
     save_background: Annotated[
         bool, typer.Option(..., help="Whether to save background spectrograms (i.e., non-trigger samples) separately.")
     ] = False,
+    find_average: Annotated[
+        bool,
+        typer.Option(
+            ...,
+            help="Whether to find average spectrograms across all examples of each category, instead of just one example.",
+        ),
+    ] = False,
     data_base_dir: Annotated[Path | None, typer.Option(..., help="Base directory to load preprocessed audio.")] = None,
 ) -> None:
     model_dir = get_data_dir(dataset_name=name, base_dir=data_base_dir)
@@ -621,7 +628,9 @@ def visualize_data(
     )
 
     eliot.log_message(f"Calculating average spectrograms of trigger categories of split {split}", level="info")
-    plot_average_spectrogram_by_trigger_category(model_dir=model_dir, split=split, loader=split_loader, device=device)
+    plot_average_spectrogram_by_trigger_category(
+        model_dir=model_dir, split=split, loader=split_loader, device=device, find_average=find_average
+    )
     eliot.log_message(
         f"Saved average spectrograms of trigger categories to {model_dir}/spectrograms/{split}", level="info"
     )
