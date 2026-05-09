@@ -384,10 +384,16 @@ def make_custom_collate_fn(
             label = sample["label.npy"]
             mix = sample["mix.flac"]
 
+            is_truncated = False
             if mix.shape[-1] > max_length:
                 mix = mix[:, :max_length]
+                is_truncated = True
 
             if include_metadata:
+                if is_truncated:  # If truncated, delete mix metrics since they are calculated on the full
+                    sample["metadata.json"]["mix_vs_isolated_trigger_metrics"] = None
+                    sample["metadata.json"]["mix_vs_clean_mix_metrics"] = None
+
                 metadatas.append(sample["metadata.json"])
 
             is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
@@ -738,11 +744,9 @@ def perform_eval(
                     pred_i = pred[i, :, :valid_len]
 
                     if pred_name == "x" and ground_truth_target == "isolated_trigger":  # is not subtracted
-                        # precomputed_mix_metrics = (
-                        #     sample_metdata.get("mix_vs_isolated_trigger_metrics", None) if sample_metdata else None
-                        # )
-                        # FIXME: Since we truncate in the dataloader now, we cannot use precomputed metrics
-                        precomputed_mix_metrics = None
+                        precomputed_mix_metrics = (
+                            sample_metdata.get("mix_vs_isolated_trigger_metrics", None) if sample_metdata else None
+                        )
                         metrics = calculate_default_metrics(
                             pred_i.to(device),
                             isolated_trigger_i.to(device),
@@ -753,11 +757,9 @@ def perform_eval(
                             **(calculate_metrics_kwargs or {}),
                         )
                     else:  # Is subtracted
-                        # precomputed_mix_metrics = (
-                        #     sample_metdata.get("mix_vs_clean_mix_metrics", None) if sample_metdata else None
-                        # )
-                        # FIXME: Since we truncate in the dataloader now, we cannot use precomputed metrics
-                        precomputed_mix_metrics = None
+                        precomputed_mix_metrics = (
+                            sample_metdata.get("mix_vs_clean_mix_metrics", None) if sample_metdata else None
+                        )
                         metrics = calculate_default_metrics(
                             pred_i.to(device),
                             clean_mix_i.to(device),
