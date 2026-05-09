@@ -242,6 +242,8 @@ def train_model(
                 mode=lr_schedule_config.get("mode", "max"),
                 factor=lr_schedule_config.get("factor", 0.5),
                 patience=lr_schedule_config.get("patience", 5),
+                min_lr=lr_schedule_config.get("min_lr", 0),
+                cooldown=lr_schedule_config.get("cooldown", 0),
             )
             activate_scheduler_after_epoch = lr_schedule_config.get("activate_after_epoch", 40)
             scheduler_metric = lr_schedule_config.get("scheduler_metric", "val/epoch/snr")
