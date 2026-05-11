@@ -95,10 +95,10 @@ def stft_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
             length=T,
         )  # (B, T)
 
-        # Peak-match per example, per channel
-        in_peak = torch.amax(torch.abs(x), dim=-1, keepdim=True) + eps
-        out_peak = torch.amax(torch.abs(y), dim=-1, keepdim=True) + eps
-        y = y * (in_peak / out_peak)
+        # Peak-match per example, per channel. Uncomment to enable.
+        # in_peak = torch.amax(torch.abs(x), dim=-1, keepdim=True) + eps
+        # out_peak = torch.amax(torch.abs(y), dim=-1, keepdim=True) + eps
+        # y = y * (in_peak / out_peak)
 
         out_channels.append(y)
 
