@@ -15,15 +15,15 @@ def simple_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
     # assert audio_mix.shape[0] == 2, "Audio mix must be stereo (2 channels)"
     # assert audio_mix.shape == audio_trigger.shape, "Audio signals must have the same shape"
     # mix, pred: (B, 2, T)
-    eps = torch.finfo(mix.dtype).tiny
-    max_gain = 1.5
+    # eps = torch.finfo(mix.dtype).tiny
+    # max_gain = 1.5
 
-    alpha = (mix * pred).sum(dim=-1, keepdim=True) / (
-        pred.pow(2).sum(dim=-1, keepdim=True) + eps
-    )
-    alpha = alpha.clamp(0.0, max_gain)
+    # alpha = (mix * pred).sum(dim=-1, keepdim=True) / (
+    #     pred.pow(2).sum(dim=-1, keepdim=True) + eps
+    # )
+    # alpha = alpha.clamp(0.0, max_gain)
 
-    return mix - pred * alpha
+    return mix - pred # * alpha
 
 
 def stft_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
