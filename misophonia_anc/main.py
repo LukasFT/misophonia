@@ -629,7 +629,7 @@ def visualize_data(
 
     eliot.log_message(f"Calculating average spectrograms of trigger categories of split {split}", level="info")
     plot_average_spectrogram_by_trigger_category(
-        model_dir=model_dir, split=split, loader=split_loader, device=device, find_average=find_average
+        model_dir=model_dir, split=split, loader=split_loader, device=device, find_average=find_average, max_length=config.max_length
     )
     eliot.log_message(
         f"Saved average spectrograms of trigger categories to {model_dir}/spectrograms/{split}", level="info"
@@ -637,7 +637,7 @@ def visualize_data(
 
     if save_background:
         eliot.log_message(f"Calculating average spectorgram of background sounds of split {split}", level="info")
-        plot_average_spectogram_background(model_dir, split, loader=split_loader, device=device)
+        plot_average_spectogram_background(model_dir, split, loader=split_loader, device=device, max_length=config.max_length)
         eliot.log_message(f"Saved average spectogram of background sounds to {model_dir}/spectrograms/{split}")
 
 
