@@ -1848,7 +1848,7 @@ def _plot_avg_specs(
 
     plt.tight_layout()
 
-    filename = f"{model_dir}/spectrograms/{split}fg_specs_grid.png" if not is background else f"{model_dir}/spectrograms/{split}_background_spec.png"
+    filename = f"{model_dir}/spectrograms/{split}_avg_specs_grid.png" if not is_background else f"{model_dir}/spectrograms/{split}_background_spec.png"
     plt.savefig(
         filename,
         dpi=300,
