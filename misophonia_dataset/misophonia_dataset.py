@@ -186,13 +186,17 @@ class GeneratedMisophoniaDataset(MisophoniaDataset):
             foreground_tracks, _ = tuple(zip(*foreground_specs))
             background_tracks, _ = tuple(zip(*background_specs))
 
+            target_snr_db = rng.uniform(target_snr_range[0], target_snr_range[1])
+
             # Perform the mixing (heavy work happens here):
             mix, isolated_trigger, clean_mix = binaural_mix(
                 fg_specs=foreground_specs,
                 bg_specs=background_specs,
                 global_params=global_params,
                 target_snr_range=target_snr_range,
+                target_snr_db=target_snr_db,
                 is_trig=is_trig,
+                max_length=max_length,
             )
 
             return MisophoniaItem(
@@ -407,6 +411,8 @@ def add_experimental_pairs_to_dataset(
     #             It could be refactored into a GenerateExperimentalPairsDataset class that does not rely on sampling from PremadeMisophoniaDataset.
     #             But sampling directly from the source data.
     from .mixing import binaural_mix
+
+    raise NotImplementedError("This function is not made compatible with the latest version of binaural_mix.")
 
     split = "test"  # Must be test split for experimental pairs
 

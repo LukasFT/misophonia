@@ -115,9 +115,11 @@ def binaural_mix(
     fg_specs: tuple[TrackAudioSpec, ...],
     bg_specs: tuple[TrackAudioSpec, ...],
     global_params: GlobalMixingParams,
+    target_snr_db: float,
     target_snr_range: tuple[float, float] = (5.0, 10.0),
     *,
     is_trig: bool,
+    max_length: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
     """
     Max a binaural mix of a foreground (trigger) and background sound.
@@ -131,7 +133,7 @@ def binaural_mix(
     fg_specs = tuple(fg_specs)
     bg_specs = tuple(bg_specs)
 
-    fg_specs, bg_specs = _normalize_and_pad(fg_specs, bg_specs, target_snr_range=target_snr_range)
+    fg_specs, bg_specs = _normalize_and_pad(fg_specs, bg_specs)
 
     def _make_binamix_track(spec: TrackAudioSpec) -> TrackObject:
         track, padded_audio = spec
@@ -147,18 +149,19 @@ def binaural_mix(
     fg_binamix_tracks = list(map(_make_binamix_track, fg_specs))
     bg_binamix_tracks = list(map(_make_binamix_track, bg_specs))
 
-    mix = custom_mix_tracks_binaural(
-        tracks=[*fg_binamix_tracks, *bg_binamix_tracks],
-        subject_id=global_params.subject_id,
-        sample_rate=global_params.sample_rate,
-        ir_type=global_params.ir_type,
-        speaker_layout=global_params.speaker_layout,
-        mode=global_params.mode,
-        reverb_type=global_params.reverb_type,
-    )
-
     if not is_trig:
         # For control sounds, we want isolated_trigger and clean_mix to be None, since they are the same as the mix
+        mix = custom_mix_tracks_binaural(
+            tracks=[*fg_binamix_tracks, *bg_binamix_tracks],
+            subject_id=global_params.subject_id,
+            sample_rate=global_params.sample_rate,
+            ir_type=global_params.ir_type,
+            speaker_layout=global_params.speaker_layout,
+            mode=global_params.mode,
+            reverb_type=global_params.reverb_type,
+        )
+        mix = _ensure_max_length(mix, max_length)
+
         return mix, None, None
 
     # For triggers, we need to mix the isolated trigger and clean mix separately:
@@ -171,6 +174,8 @@ def binaural_mix(
         mode=global_params.mode,
         reverb_type=global_params.reverb_type,
     )
+    isolated_trigger = _ensure_max_length(isolated_trigger, max_length)
+
     clean_background = custom_mix_tracks_binaural(
         tracks=bg_binamix_tracks,
         subject_id=global_params.subject_id,
@@ -180,11 +185,9 @@ def binaural_mix(
         mode=global_params.mode,
         reverb_type=global_params.reverb_type,
     )
-    assert isolated_trigger.shape == mix.shape, "Isolated trigger and mix shapes do not match."
-    assert clean_background.shape == mix.shape, "Clean background and mix shapes do not match."
+    clean_background = _ensure_max_length(clean_background, max_length)
 
-    # SNR control!
-    target_snr_db = np.random.uniform(target_snr_range[0], target_snr_range[1])
+    assert isolated_trigger.shape == isolated_trigger.shape
 
     trigger_power = np.mean(isolated_trigger**2)
     clean_background_power = np.mean(clean_background**2)
@@ -202,41 +205,24 @@ def binaural_mix(
 
     # Added small tolerance since their may be numerical imprecision for tiny background power.
     mix = isolated_trigger + scaled_clean_background
+    mix = _ensure_max_length(mix, max_length)
 
     return mix, isolated_trigger, scaled_clean_background
+
+
+def _ensure_max_length(audio: np.ndarray, max_length: int | None) -> np.ndarray:
+    # Assumes (C, T) audio
+    assert audio.ndim == 2
+    assert audio.shape[0] == 2
+    if max_length is None or audio.shape[1] <= max_length:
+        return audio
+    return audio[:, :max_length]
 
 
 def _normalize_and_pad(
     fg_tracks: tuple[TrackAudioSpec, ...],
     bg_tracks: tuple[TrackAudioSpec, ...],
-    target_snr_range: tuple[float, float] = (5.0, 10.0),
 ) -> tuple[tuple[TrackAudioSpec, ...], tuple[TrackAudioSpec, ...]]:
-    """
-    RMS-normalize all source clips, pad them to full clip length, then enforce
-    a full-clip SNR between the summed foreground and summed background.
-
-    The target SNR is sampled uniformly from [5, 10] dB.
-
-    Note:
-    - SNR is enforced on the pre-binauralized waveforms.
-    - track.level is included in the SNR computation, since binamix applies it later.
-    - All background tracks are scaled jointly by one factor, preserving their
-      relative balance.
-    """
-    eps = 1e-8
-
-    # RMS normalization:
-    # rms_fg = [np.sqrt(np.mean(audio**2)) for _, audio in fg_tracks]
-    # rms_bg = [np.sqrt(np.mean(audio**2)) for _, audio in bg_tracks]
-    # rms_target = np.mean(rms_fg + rms_bg)
-    # fg_norm = tuple(
-    #     (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
-    #     for (item, audio), rms in zip(fg_tracks, rms_fg)
-    # )
-    # bg_norm = tuple(
-    #     (item, audio * (rms_target / rms)) if rms > 1e-6 else (item, audio)
-    #     for (item, audio), rms in zip(bg_tracks, rms_bg)
-    # )
 
     fg_max_end = max(track.end for track, _ in fg_tracks)
     # Pad in case that the audio is shorter than max fg audio
@@ -244,27 +230,6 @@ def _normalize_and_pad(
     bg_padded = tuple((track, np.pad(audio, (track.start, fg_max_end - track.end))) for track, audio in bg_tracks)
 
     assert all(len(audio) == fg_max_end for _, audio in fg_padded + bg_padded)
-
-    # Old pre-mixing SNR control. We suspect that binaural mixing is changing SNR.
-    # target_snr_db = np.random.uniform(target_snr_range[0], target_snr_range[1])
-
-    # # Calculate power of foreground and backgrounds and then scale backgrounds to achieve target SNR
-    # fg_sum = np.zeros(fg_max_end, dtype=np.float32)
-    # for track, audio in fg_padded:
-    #     fg_sum += track.level * audio
-
-    # bg_sum = np.zeros(fg_max_end, dtype=np.float32)
-    # for track, audio in bg_padded:
-    #     bg_sum += track.level * audio
-
-    # fg_sum = fg_sum - np.mean(fg_sum)
-    # bg_sum = bg_sum - np.mean(bg_sum)
-
-    # fg_power = np.mean(fg_sum**2) + eps
-    # bg_power = np.mean(bg_sum**2) + eps
-
-    # alpha = snr_control_scaling_factor(fg_power, bg_power, target_snr_db=target_snr_db)
-    # bg_scaled = tuple((track, audio * alpha) for track, audio in bg_padded)
 
     return fg_padded, bg_padded
 

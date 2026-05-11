@@ -384,10 +384,16 @@ def make_custom_collate_fn(
             label = sample["label.npy"]
             mix = sample["mix.flac"]
 
+            is_truncated = False
             if mix.shape[-1] > max_length:
                 mix = mix[:, :max_length]
+                is_truncated = True
 
             if include_metadata:
+                if is_truncated:  # If truncated, delete mix metrics since they are calculated on the full
+                    sample["metadata.json"]["mix_vs_isolated_trigger_metrics"] = None
+                    sample["metadata.json"]["mix_vs_clean_mix_metrics"] = None
+
                 metadatas.append(sample["metadata.json"])
 
             is_control = label.sum() == 0  # Check if the label vector is all zeros (indicating a control sound)
@@ -451,6 +457,10 @@ def make_dataloader(
     include_metadata: bool = False,
     max_length: int | None = None,
     stereo_to_mono: bool = False,
+    limit: int | None = None,
+    shuffle_buffer: int = 512,
+    shardshuffle: int | bool | None = None,
+    drop_last: bool = True,
 ) -> wds.WebLoader:
     """
     Make a WebLoader from the given .tar files.
@@ -459,16 +469,43 @@ def make_dataloader(
         files: An iterable of paths to .tar shard files.
         batch_size: Batch size for the dataloader.
         num_workers: Number of worker threads for loading data.
+        include_isolated_trigger: Whether to include isolated trigger audio.
+        include_clean_mix: Whether to include clean mixture audio.
+        include_metadata: Whether to include metadata in the batch.
+        max_length: Optional maximum audio length.
+        stereo_to_mono: Whether to convert stereo audio to mono.
+        limit: Optional number of unbatched samples to expose per epoch.
+            If given, each new iteration over the returned loader stops after
+            approximately this many samples before batching.
+        shuffle_buffer: Number of samples kept in the sample-level shuffle buffer.
+            This is memory-sensitive.
+        shardshuffle: Number of shard references kept in the shard shuffle buffer.
+            This is cheap because it stores shard paths/URLs, not shard contents.
+            If None, all provided shards are used as the shard shuffle buffer.
+        drop_last: Whether to drop the final incomplete batch.
 
     Returns:
         An iterable WebLoader that yields batches of data from the given .tar files.
-
     """
     files = tuple(str(file) for file in files)
     assert len(files) > 0, "No files provided to make_dataloader."
+
+    if shardshuffle is None:
+        shardshuffle = len(files)
+
+    if limit is not None and drop_last:
+        limit = (limit // batch_size) * batch_size
+        assert limit > 0, "`limit` must be at least one full batch when drop_last=True."
+
     eliot.log_message(f"Loading data from `{files[0]}` etc...", level="debug")
     eliot.log_message(
-        f"Using {num_workers} workers loading WebDataset (total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
+        f"Using {num_workers} workers loading WebDataset "
+        f"(total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
+        level="debug",
+    )
+    eliot.log_message(
+        f"WebDataset randomness: shardshuffle={shardshuffle}, "
+        f"shuffle_buffer={shuffle_buffer}, limit={limit}, drop_last={drop_last}.",
         level="debug",
     )
 
@@ -485,7 +522,6 @@ def make_dataloader(
         Example:
             _include_file("000000991.mix.flac") -> True
             _include_file("000000991.isolated_trigger.flac") -> True if include_isolated_trigger is True, False otherwise
-
         """
         return any(fname.endswith(included_fname) for included_fname in included_filenames)
 
@@ -493,16 +529,20 @@ def make_dataloader(
         wds.WebDataset(
             files,
             empty_check=False,
-            shardshuffle=1,  # Number of shards to keep in memory at the time (as I understand it)
+            resampled=False,  # important: no within-epoch replacement
+            shardshuffle=shardshuffle,
             select_files=_include_file,
         )
-        .shuffle(batch_size)  # Number of samples to shuffle in memory at the time (as I understand it)
-        .decode("torch")  # converts the saved numpy arrays to tensors
+        .shuffle(shuffle_buffer)  # sample-level approximate shuffle
+        .decode("torch")
     )
+
+    if limit is not None:
+        # Applied before batching, so this counts unbatched samples.
+        data = data.with_epoch(limit)
 
     data = data.batched(
         batch_size,
-        # Make batches of the same size, and randomly assign control sounds a class
         collation_fn=make_custom_collate_fn(
             include_metadata=include_metadata,
             include_isolated_trigger=include_isolated_trigger,
@@ -510,11 +550,12 @@ def make_dataloader(
             max_length=max_length,
             stereo_to_mono=stereo_to_mono,
         ),
+        partial=not drop_last,
     )
 
     return wds.WebLoader(
         data,
-        batch_size=None,  # We set batch size in the WebDataset pipeline, so we set it to None here
+        batch_size=None,  # We set batch size in the WebDataset pipeline.
         num_workers=num_workers,
     )
 
@@ -738,11 +779,9 @@ def perform_eval(
                     pred_i = pred[i, :, :valid_len]
 
                     if pred_name == "x" and ground_truth_target == "isolated_trigger":  # is not subtracted
-                        # precomputed_mix_metrics = (
-                        #     sample_metdata.get("mix_vs_isolated_trigger_metrics", None) if sample_metdata else None
-                        # )
-                        # FIXME: Since we truncate in the dataloader now, we cannot use precomputed metrics
-                        precomputed_mix_metrics = None
+                        precomputed_mix_metrics = (
+                            sample_metdata.get("mix_vs_isolated_trigger_metrics", None) if sample_metdata else None
+                        )
                         metrics = calculate_default_metrics(
                             pred_i.to(device),
                             isolated_trigger_i.to(device),
@@ -753,11 +792,9 @@ def perform_eval(
                             **(calculate_metrics_kwargs or {}),
                         )
                     else:  # Is subtracted
-                        # precomputed_mix_metrics = (
-                        #     sample_metdata.get("mix_vs_clean_mix_metrics", None) if sample_metdata else None
-                        # )
-                        # FIXME: Since we truncate in the dataloader now, we cannot use precomputed metrics
-                        precomputed_mix_metrics = None
+                        precomputed_mix_metrics = (
+                            sample_metdata.get("mix_vs_clean_mix_metrics", None) if sample_metdata else None
+                        )
                         metrics = calculate_default_metrics(
                             pred_i.to(device),
                             clean_mix_i.to(device),
