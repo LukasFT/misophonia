@@ -613,6 +613,11 @@ def visualize_data(
     dataset_split_dir = model_dir / "webdataset" / split
     eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
     shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
+
+    max_length = (config.dataset_splits[split].generated_config.get("max_length")
+            if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+            else None
+    )
     split_loader = make_dataloader(
         shards_split,
         batch_size=config.batch_size,
@@ -620,16 +625,14 @@ def visualize_data(
         include_metadata=True,
         include_clean_mix=True,
         include_isolated_trigger=True,
-        max_length=(
-            config.dataset_splits[split].generated_config.get("max_length")
-            if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
-            else None
-        ),
+        max_length=max_length,
     )
 
+    if max_length is None:
+        max_length = 7 * 44100
     eliot.log_message(f"Calculating average spectrograms of trigger categories of split {split}", level="info")
     plot_average_spectrogram_by_trigger_category(
-        model_dir=model_dir, split=split, loader=split_loader, device=device, find_average=find_average, max_length=config.max_length
+        model_dir=model_dir, split=split, loader=split_loader, device=device, find_average=find_average, max_length=max_length
     )
     eliot.log_message(
         f"Saved average spectrograms of trigger categories to {model_dir}/spectrograms/{split}", level="info"
@@ -637,7 +640,7 @@ def visualize_data(
 
     if save_background:
         eliot.log_message(f"Calculating average spectorgram of background sounds of split {split}", level="info")
-        plot_average_spectogram_background(model_dir, split, loader=split_loader, device=device, max_length=config.max_length)
+        plot_average_spectogram_background(model_dir, split, loader=split_loader, device=device, max_length=max_length)
         eliot.log_message(f"Saved average spectogram of background sounds to {model_dir}/spectrograms/{split}")
 
 
