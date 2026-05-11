@@ -1835,14 +1835,17 @@ def _plot_avg_specs(
         fig.suptitle(f"Example spectrograms: {split.title()}", fontsize=16)
 
     if not is_background:
-        fig.subplots_adjust(right=0.88)
-        fig.colorbar(
-        im,
-        ax=axes,
-        label="dB",
-        shrink=0.9,
-        pad=0.04
+        fig.subplots_adjust(
+            left=0.05,
+            right=0.86,   # leave empty space on the right
+            bottom=0.08,
+            top=0.90,
+            wspace=0.25,
+            hspace=0.35,
         )
+
+        cax = fig.add_axes([0.89, 0.18, 0.015, 0.65])
+        fig.colorbar(im, cax=cax, label="dB")
     else:
         fig.colorbar(im, ax=axes, label="dB", shrink=0.9)
 
