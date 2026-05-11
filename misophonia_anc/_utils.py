@@ -1812,8 +1812,6 @@ def _plot_avg_specs(
     else:
         fig.colorbar(im, ax=axes, label="dB", shrink=0.9)
 
-    plt.tight_layout()
-
     filename = f"{model_dir}/spectrograms/{split}_avg_specs_grid.png" if not is_background else f"{model_dir}/spectrograms/{split}_background_spec.png"
     plt.savefig(
         filename,
