@@ -1716,7 +1716,7 @@ def plot_average_spectogram_background(
         raise ValueError("No background audio found in the dataset.")
 
     background_specs = {"background": spec_sums / spec_counts}
-    _plot_avg_specs(model_dir, split, background_specs, sample_rate=sample_rate, hop_length=hop_length, n_fft=n_fft)
+    _plot_avg_specs(model_dir, split, background_specs, sample_rate=sample_rate, hop_length=hop_length, n_fft=n_fft, is_background=True)
 
 
 def _plot_avg_specs(
@@ -1728,6 +1728,7 @@ def _plot_avg_specs(
     n_fft: int,
     *,
     is_average: bool = False,
+    is_background: bool = False,
 ) -> None:
     """
     Plots and saves average spectrograms with real frequency/time axes.
@@ -1796,19 +1797,23 @@ def _plot_avg_specs(
     else:
         fig.suptitle(f"Example spectrograms: {split.title()}", fontsize=16)
 
-    fig.subplots_adjust(right=0.88)
-    fig.colorbar(
-    im,
-    ax=axes,
-    label="dB",
-    shrink=0.9,
-    pad=0.04
-    )
+    if not is_background:
+        fig.subplots_adjust(right=0.88)
+        fig.colorbar(
+        im,
+        ax=axes,
+        label="dB",
+        shrink=0.9,
+        pad=0.04
+        )
+    else:
+        fig.colorbar(im, ax=axes, label="dB", shrink=0.9)
 
     plt.tight_layout()
 
+    filename = f"{model_dir}/spectrograms/{split}fg_specs_grid.png" if not is background else f"{model_dir}/spectrograms/{split}_background_spec.png"
     plt.savefig(
-        f"{model_dir}/spectrograms/{split}_avg_specs_grid.png",
+        filename,
         dpi=300,
     )
 
