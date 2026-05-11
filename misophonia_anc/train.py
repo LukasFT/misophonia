@@ -135,6 +135,7 @@ def train_epoch(
     step_counter: SimpleCounter,
     epoch: int = 0,
     loss_fn: Callable = _time_loss,
+    gradient_clip_max_norm: float | None = None,
 ) -> tuple[float, float]:
     model = model.train()
 
@@ -167,6 +168,10 @@ def train_epoch(
 
             loss = loss_fn(output["x"], gt, audio_lens)
             loss.backward()
+
+            if gradient_clip_max_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip_max_norm)
+
             optimizer.step()
 
             loss_value = loss.item()
@@ -200,6 +205,7 @@ def train_model(
     lr: float = 0.0005,
     lr_schedule_config: dict | None = None,
     weight_decay: float = 0.0,
+    gradient_clip_max_norm: float | None = None,
     global_step_train_start: int = 0,
     global_step_val_start: int = 0,
 ) -> None:
@@ -216,6 +222,7 @@ def train_model(
         lr (float): learning rate during trainer
         lr_schedule_config: Configuration for learning rate scheduler. If None, no scheduler is used.
         weight_decay (float): weight decay to apply to optimizer
+        gradient_clip_max_norm (float | None): Maximum norm for gradient clipping. If None, no gradient clipping is applied.
         device (torch.device): cuda or cpu
         save_dir: Path to save model weights and metric plots
         skip_subtraction: Skip subtraction methods when calculating metrics during val evaluation.
@@ -263,6 +270,7 @@ def train_model(
             loss_fn=loss_fn,
             step_counter=global_step_train_counter,
             epoch=epoch,
+            gradient_clip_max_norm=gradient_clip_max_norm,
         )
 
         # Perform val epoch
