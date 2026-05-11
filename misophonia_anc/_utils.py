@@ -1628,6 +1628,7 @@ def plot_average_spectrogram_by_trigger_category(
     n_fft: int = 1024,
     hop_length: int = 256,
     power: float = 2.0,
+    max_length: int = 308700,
     device: str = "cpu",
     *,
     only_triggers: bool = True,
@@ -1672,6 +1673,11 @@ def plot_average_spectrogram_by_trigger_category(
             # Convert binaural audio to mono for one averaged spectrogram.
             x = x.mean(dim=0)
 
+            if x.shape[0] < max_length:
+                x = F.pad(x, (0, max_length - x.shape[0]))
+            else:  # This should never happen but just as safeguard.
+                x = x[:max_length]
+
             spec = spec_transform(x)  # [freq, time]
 
             for category in categories:
@@ -1694,7 +1700,7 @@ def plot_average_spectrogram_by_trigger_category(
         category: spec_sums[category] / spec_counts[category] for category in spec_sums if spec_counts[category] > 0
     }
 
-    _plot_avg_specs(model_dir, split, avg_specs, sample_rate=sample_rate, hop_length=hop_length, n_fft=n_fft)
+    _plot_avg_specs(model_dir, split, avg_specs, sample_rate=sample_rate, hop_length=hop_length, n_fft=n_fft, is_average=find_average)
 
 
 def plot_average_spectogram_background(
@@ -1705,6 +1711,7 @@ def plot_average_spectogram_background(
     n_fft: int = 1024,
     hop_length: int = 256,
     power: float = 2.0,
+    max_length: int = 308700,
     device: str = "cpu",
 ) -> None:
     spec_transform = torchaudio.transforms.Spectrogram(
@@ -1727,9 +1734,15 @@ def plot_average_spectogram_background(
 
         for x in background:
             x = x.mean(dim=0)
+
+            if x.shape[0] < max_length:
+                x = F.pad(x, (0, max_length - x.shape[0]))
+            else: # This should never happen but just as safeguard.
+                x = x[:max_length]
+
             spec = spec_transform(x)
 
-            if spec_sums == None:
+            if spec_sums is None:
                 spec_sums = spec.detach().clone()
             else:
                 spec_sums += spec.detach()
@@ -1750,6 +1763,8 @@ def _plot_avg_specs(
     sample_rate: int,
     hop_length: int,
     n_fft: int,
+    *,
+    is_average: bool = False,
 ) -> None:
     """
     Plots and saves average spectrograms with real frequency/time axes.
@@ -1813,9 +1828,19 @@ def _plot_avg_specs(
     for ax in axes[len(items) :]:
         ax.axis("off")
 
-    fig.suptitle(f"Average spectrograms: {split.title()}", fontsize=16)
+    if is_average:
+        fig.suptitle(f"Average spectrograms {split.title()}", fontsize=16)
+    else:
+        fig.suptitle(f"Example spectrograms: {split.title()}", fontsize=16)
 
-    fig.colorbar(im, ax=axes, label="dB", shrink=0.9)
+    fig.subplots_adjust(right=0.88)
+    fig.colorbar(
+    im,
+    ax=axes,
+    label="dB",
+    shrink=0.9,
+    pad=0.04
+    )
 
     plt.tight_layout()
 
