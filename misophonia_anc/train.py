@@ -285,7 +285,7 @@ def train_model(
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
         _, ema_eval_results_agg = perform_eval(
-            ema,
+            ema.to(device),
             val_loader,
             device=device,
             save_results_to=results_file,
