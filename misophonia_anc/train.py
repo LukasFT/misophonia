@@ -239,14 +239,24 @@ def train_model(
         global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
     """
 
+    ##############################
     # TODO: delete debug
-    it1 = tuple(train_loader)[0]
-    it2 = tuple(train_loader)[0]
+    it1 = tuple(x["idxs"] for x in train_loader)
+    it2 = tuple(x["idxs"] for x in train_loader)
+    it3 = tuple(x["idxs"] for x in train_loader)
     print(it1)
     print(it2)
-    print("Debug assert that train_loader is deterministic:", torch.equal(it1["inputs"]["mix"], it2["inputs"]["mix"]))
+    print(it3)
 
     assert ema is not None, "Debug assert"  # TODO: Delete
+    results_file = save_dir / "tmpdebg" / "res.json"
+    aggregated_results_file = save_dir / "eval_results" / "aggregated_results.json"
+    samples_dir = save_dir / "samples" / "tmpdebg" / "samples"
+
+    prepare_dir_or_file(results_file, overwrite=True, is_dir=False)
+    prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
+    prepare_dir_or_file(samples_dir, overwrite=True, is_dir=True)
+    #####################################
 
     model = model.to(device)
     optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
@@ -278,6 +288,23 @@ def train_model(
     global_step_val_counter = SimpleCounter(global_step_val_start)
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
+        _, ema_eval_results_agg = perform_eval(
+            model,
+            val_loader,
+            device=device,
+            save_results_to=results_file,
+            save_aggregated_results_to=aggregated_results_file,
+            save_samples_to=samples_dir,
+            save_num_samples=20,
+            mlflow_global_step=SimpleCounter(42),
+            # loss_fn=loss_fn,
+            skip_subtraction=skip_subtraction,
+            split_name="val",
+            mono_to_stereo=eval_mono_to_stereo,
+        )
+
+        raise NotImplementedError("Debug exception to stop execution after debug eval")
+
         # Perform train epoch
         train_loss, train_loss_std = train_epoch(
             model,
