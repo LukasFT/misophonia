@@ -239,25 +239,12 @@ def train_model(
         global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
     """
 
-    ##############################
-    # TODO: delete debug
-    for i in range(10):
-        batches = tuple(x["idxs"] for x in train_loader)
-        print(f"Iteration {i}: {batches[-3:-1]=}")
-
-    assert ema is not None, "Debug assert"  # TODO: Delete
-    results_file = save_dir / "tmpdebg" / "res.json"
-    aggregated_results_file = save_dir / "eval_results" / "aggregated_results.json"
-    samples_dir = save_dir / "samples" / "tmpdebg" / "samples"
-
-    prepare_dir_or_file(results_file, overwrite=True, is_dir=False)
-    prepare_dir_or_file(aggregated_results_file, overwrite=True, is_dir=False)
-    prepare_dir_or_file(samples_dir, overwrite=True, is_dir=True)
-    #####################################
-
     model = model.to(device)
     optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
     loss_fn = get_loss_fn_from_name(loss_option)
+
+    if ema is not None:
+        ema.to(device)
 
     scheduler = None
     scheduler_metric = None
@@ -285,23 +272,6 @@ def train_model(
     global_step_val_counter = SimpleCounter(global_step_val_start)
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
-        _, ema_eval_results_agg = perform_eval(
-            ema.to(device),
-            train_loader,
-            device=device,
-            save_results_to=results_file,
-            save_aggregated_results_to=aggregated_results_file,
-            save_samples_to=samples_dir,
-            save_num_samples=20,
-            mlflow_global_step=None,
-            # loss_fn=loss_fn,
-            skip_subtraction=skip_subtraction,
-            split_name="train",
-            mono_to_stereo=eval_mono_to_stereo,
-        )
-
-        raise NotImplementedError("Debug exception to stop execution after debug eval")
-
         # Perform train epoch
         train_loss, train_loss_std = train_epoch(
             model,
@@ -371,7 +341,7 @@ def train_model(
             prepare_dir_or_file(ema_samples_dir, overwrite=True, is_dir=True)
 
             _, ema_eval_results_agg = perform_eval(
-                model,
+                ema,
                 val_loader,
                 device=device,
                 save_results_to=ema_results_file,
