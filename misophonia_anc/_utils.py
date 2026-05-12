@@ -506,9 +506,17 @@ def make_dataloader(
     if shardshuffle is None:
         shardshuffle = len(files)
 
-    if limit is not None and drop_last:
-        limit = (limit // batch_size) * batch_size
-        assert limit > 0, "`limit` must be at least one full batch when drop_last=True."
+    if limit is not None:
+        if drop_last:
+            num_batches = limit // batch_size
+            assert num_batches > 0, "`limit` must be at least one full batch when drop_last=True."
+            effective_limit = num_batches * batch_size
+        else:
+            num_batches = math.ceil(limit / batch_size)
+            effective_limit = limit
+    else:
+        num_batches = None
+        effective_limit = None
 
     eliot.log_message(f"Loading data from `{files[0]}` etc...", level="debug")
     eliot.log_message(
@@ -518,7 +526,8 @@ def make_dataloader(
     )
     eliot.log_message(
         f"WebDataset randomness: shardshuffle={shardshuffle}, "
-        f"shuffle_buffer={shuffle_buffer}, limit={limit}, drop_last={drop_last}.",
+        f"shuffle_buffer={shuffle_buffer}, limit={effective_limit}, "
+        f"num_batches={num_batches}, drop_last={drop_last}.",
         level="debug",
     )
 
@@ -542,35 +551,35 @@ def make_dataloader(
         wds.WebDataset(
             files,
             empty_check=False,
-            resampled=False,  # important: no within-epoch replacement
+            resampled=False,
             shardshuffle=shardshuffle,
             select_files=_include_file,
         )
-        .shuffle(shuffle_buffer)  # sample-level approximate shuffle
+        .shuffle(shuffle_buffer)
         .decode("torch")
+        .batched(
+            batch_size,
+            collation_fn=make_custom_collate_fn(
+                include_metadata=include_metadata,
+                include_isolated_trigger=include_isolated_trigger,
+                include_clean_mix=include_clean_mix,
+                max_length=max_length,
+                stereo_to_mono=stereo_to_mono,
+            ),
+            partial=not drop_last,
+        )
     )
 
-    if limit is not None:
-        # Applied before batching, so this counts unbatched samples.
-        data = data.with_epoch(limit)
-
-    data = data.batched(
-        batch_size,
-        collation_fn=make_custom_collate_fn(
-            include_metadata=include_metadata,
-            include_isolated_trigger=include_isolated_trigger,
-            include_clean_mix=include_clean_mix,
-            max_length=max_length,
-            stereo_to_mono=stereo_to_mono,
-        ),
-        partial=not drop_last,
-    )
-
-    return wds.WebLoader(
+    loader = wds.WebLoader(
         data,
-        batch_size=None,  # We set batch size in the WebDataset pipeline.
+        batch_size=None,  # batching is already done in the WDS pipeline
         num_workers=num_workers,
     )
+
+    if num_batches is not None:
+        loader = loader.with_epoch(num_batches)
+
+    return loader
 
 
 def calculate_default_metrics(
