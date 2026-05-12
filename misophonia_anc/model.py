@@ -461,8 +461,10 @@ class ModelEMA:
             p.requires_grad_(False)  # noqa: FBT003
 
     def __call__(self, *args, **kwargs):  # noqa: ANN204
-        with torch.no_grad():
-            return self.model(*args, **kwargs)
+        return self.model(*args, **kwargs)
+
+    def __getattr__(self, name):  # noqa: ANN204
+        return getattr(self.model, name)
 
     @torch.no_grad()
     def update(self, model: nn.Module) -> None:

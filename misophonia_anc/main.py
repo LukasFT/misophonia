@@ -1,6 +1,4 @@
-import itertools
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -268,6 +266,7 @@ def train(
             else None
         ),
         stereo_to_mono=config.stereo_to_mono,
+        drop_last=False,
     )
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
@@ -326,7 +325,7 @@ def train(
             global_step_val_start=checkpoint_metadata.get("global_step_val", 0),
             skip_subtraction=skip_subtraction,
             eval_mono_to_stereo=config.stereo_to_mono,
-            ema=checkpoint_metadata.get("ema", None),
+            ema=checkpoint_metadata.get("ema_model", None),
             **config.model_hyperparams,
         )
         cp_best_epoch(name, data_base_dir=data_base_dir)
@@ -525,9 +524,9 @@ def evaluate(
                         else None
                     ),
                     stereo_to_mono=config.stereo_to_mono,
+                    limit=limit_samples,
+                    drop_last=False,
                 )
-                if limit_samples is not None:
-                    split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
 
                 res, agg_res = perform_eval(
                     model,
