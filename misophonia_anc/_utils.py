@@ -876,7 +876,7 @@ class CustomMlFlowLogger:
         self,
         *,
         flush_queue_size: int = 512,
-        flush_seconds: int = 30,
+        flush_seconds: int = 300,
         allow_inactive: bool = True,
     ) -> None:
         # get current mlflow run
@@ -916,6 +916,10 @@ class CustomMlFlowLogger:
         ]
         self._queue.extend(metrics_arr)
 
+        self.flush_if_needed(synchronous=synchronous, timestamp=timestamp)
+
+    def flush_if_needed(self, *, synchronous: bool = False, timestamp: int | None = None) -> None:
+        timestamp = timestamp or mlflow.utils.time.get_current_time_millis()
         if (
             len(self._queue) >= self._flush_queue_size
             or (timestamp - self._last_flush_time) >= self._flush_seconds * 1000
@@ -1642,7 +1646,9 @@ def plot_average_spectrogram_by_trigger_category(
         batch["isolated_trigger"]: Tensor shaped [B, C, T] or [B, T]
         batch["metadata"]: list[dict] or list[str] or dict of batched fields
     """
-    num_classes = 8  # TODO: In future, don't hardcode this. Logic breaks if find_average is True and only_triggers is False.
+    num_classes = (
+        8  # TODO: In future, don't hardcode this. Logic breaks if find_average is True and only_triggers is False.
+    )
 
     spec_transform = torchaudio.transforms.Spectrogram(
         n_fft=n_fft,
@@ -1700,7 +1706,15 @@ def plot_average_spectrogram_by_trigger_category(
         category: spec_sums[category] / spec_counts[category] for category in spec_sums if spec_counts[category] > 0
     }
 
-    _plot_avg_specs(model_dir, split, avg_specs, sample_rate=sample_rate, hop_length=hop_length, n_fft=n_fft, is_average=find_average)
+    _plot_avg_specs(
+        model_dir,
+        split,
+        avg_specs,
+        sample_rate=sample_rate,
+        hop_length=hop_length,
+        n_fft=n_fft,
+        is_average=find_average,
+    )
 
 
 def plot_average_spectogram_background(
@@ -1737,7 +1751,7 @@ def plot_average_spectogram_background(
 
             if x.shape[0] < max_length:
                 x = F.pad(x, (0, max_length - x.shape[0]))
-            else: # This should never happen but just as safeguard.
+            else:  # This should never happen but just as safeguard.
                 x = x[:max_length]
 
             spec = spec_transform(x)
@@ -1753,7 +1767,15 @@ def plot_average_spectogram_background(
         raise ValueError("No background audio found in the dataset.")
 
     background_specs = {"background": spec_sums / spec_counts}
-    _plot_avg_specs(model_dir, split, background_specs, sample_rate=sample_rate, hop_length=hop_length, n_fft=n_fft, is_background=True)
+    _plot_avg_specs(
+        model_dir,
+        split,
+        background_specs,
+        sample_rate=sample_rate,
+        hop_length=hop_length,
+        n_fft=n_fft,
+        is_background=True,
+    )
 
 
 def _plot_avg_specs(
@@ -1837,7 +1859,7 @@ def _plot_avg_specs(
     if not is_background:
         fig.subplots_adjust(
             left=0.05,
-            right=0.86,   # leave empty space on the right
+            right=0.86,  # leave empty space on the right
             bottom=0.08,
             top=0.90,
             wspace=0.25,
@@ -1849,7 +1871,11 @@ def _plot_avg_specs(
     else:
         fig.colorbar(im, ax=axes, label="dB", shrink=0.9)
 
-    filename = f"{model_dir}/spectrograms/{split}_avg_specs_grid.png" if not is_background else f"{model_dir}/spectrograms/{split}_background_spec.png"
+    filename = (
+        f"{model_dir}/spectrograms/{split}_avg_specs_grid.png"
+        if not is_background
+        else f"{model_dir}/spectrograms/{split}_background_spec.png"
+    )
     plt.savefig(
         filename,
         dpi=300,

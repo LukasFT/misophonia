@@ -140,12 +140,13 @@ def train_epoch(
     model = model.train()
 
     batch_train_losses = []
-    log_to_mlflow = mlflow.active_run() is not None
+    log_to_mlflow_every = 100 if mlflow.active_run() is not None else None  # Only log batch metrics for every x batches
     mlflow_logger = CustomMlFlowLogger()
 
     with mlflow_logger:
         for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
-            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
+            # Debug even less often than log_to_mlflow_every:
+            if log_to_mlflow_every and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
                 _debug_to_mlflow(mlflow_logger, step_counter, device, prefix="train_")
 
             inputs = batch["inputs"]
@@ -177,12 +178,14 @@ def train_epoch(
             loss_value = loss.item()
             batch_train_losses.append(loss_value)
             step_counter.increment()
-            if log_to_mlflow:
-                mlflow_logger.log_metrics(
-                    {"train/batch/loss": loss_value},
-                    step=step_counter.current,
-                    synchronous=False,
-                )
+            if log_to_mlflow_every is not None:
+                if batch_idx % log_to_mlflow_every == 0:
+                    mlflow_logger.log_metrics(
+                        {"train/batch/loss": loss_value},
+                        step=step_counter.current,
+                        synchronous=False,
+                    )
+                mlflow_logger.flush_if_needed(synchronous=False)
 
     batch_train_losses = np.array(batch_train_losses)
     epoch_train_loss = float(np.mean(batch_train_losses))
