@@ -26,18 +26,7 @@ class CausalTransformerDecoder(nn.Module):
     """
 
     def __init__(
-        self,
-        *,
-        model_dim,
-        ctx_len,
-        chunk_size,
-        num_layers,
-        nhead,
-        use_pos_enc,
-        ff_dim,
-        dropout_decoder: float,
-        dropout_pos: float,
-        conditioning="conv",
+        self, model_dim, ctx_len, chunk_size, num_layers, nhead, use_pos_enc, ff_dim, conditioning="conv"
     ) -> None:
         super(CausalTransformerDecoder, self).__init__()
         self.num_layers = num_layers
@@ -47,17 +36,11 @@ class CausalTransformerDecoder(nn.Module):
         self.nhead = nhead
         self.use_pos_enc = use_pos_enc
         self.unfold = nn.Unfold(kernel_size=(ctx_len + chunk_size, 1), stride=chunk_size)
-        self.pos_enc_tgt = PositionalEncoding(model_dim, dropout=dropout_pos, max_len=1000)
-        self.pos_enc_mem = PositionalEncoding(model_dim, dropout=dropout_pos, max_len=100)
+        self.pos_enc_tgt = PositionalEncoding(model_dim, dropout=0.0, max_len=1000)
+        self.pos_enc_mem = PositionalEncoding(model_dim, dropout=0.0, max_len=100)
         self.tf_dec_layers = nn.ModuleList(
             [
-                _CausalTransformerDecoderLayer(
-                    d_model=model_dim,
-                    nhead=nhead,
-                    dim_feedforward=ff_dim,
-                    dropout=dropout_decoder,
-                    batch_first=True,
-                )
+                _CausalTransformerDecoderLayer(d_model=model_dim, nhead=nhead, dim_feedforward=ff_dim, batch_first=True)
                 for _ in range(num_layers)
             ]
         )

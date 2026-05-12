@@ -19,19 +19,11 @@ class DilatedCausalConvEncoder(nn.Module):
     time domain audio input into latent space.
     """
 
-    def __init__(
-        self,
-        *,
-        channels,
-        num_layers,
-        dropout: float,
-        kernel_size=3,
-    ) -> None:
+    def __init__(self, *, channels, num_layers, kernel_size=3) -> None:
         super(DilatedCausalConvEncoder, self).__init__()
         self.channels = channels
         self.num_layers = num_layers
         self.kernel_size = kernel_size
-        self.dropout = nn.Dropout(p=dropout)
 
         # Compute buffer lengths for each layer
         # buf_length[i] = (kernel_size - 1) * dilation[i]
@@ -87,7 +79,7 @@ class DilatedCausalConvEncoder(nn.Module):
             ctx_buf[..., buf_start_idx:buf_end_idx] = dcc_in[..., -self.buf_lengths[i] :]
 
             # Residual connection
-            x = x + self.dropout(self.dcc_layers[i](dcc_in))
+            x = x + self.dcc_layers[i](dcc_in)
 
         return x, ctx_buf
 
