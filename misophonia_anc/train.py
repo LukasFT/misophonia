@@ -239,6 +239,15 @@ def train_model(
         global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
     """
 
+    # TODO: delete debug
+    it1 = tuple(train_loader)[0]
+    it2 = tuple(train_loader)[0]
+    print(it1)
+    print(it2)
+    print("Debug assert that train_loader is deterministic:", torch.equal(it1["inputs"]["mix"], it2["inputs"]["mix"]))
+
+    assert ema is not None, "Debug assert"  # TODO: Delete
+
     model = model.to(device)
     optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
     loss_fn = get_loss_fn_from_name(loss_option)
