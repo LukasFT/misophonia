@@ -296,7 +296,7 @@ def train_model(
             save_aggregated_results_to=aggregated_results_file,
             save_samples_to=samples_dir,
             save_num_samples=20,
-            mlflow_global_step=SimpleCounter(42),
+            mlflow_global_step=None,
             # loss_fn=loss_fn,
             skip_subtraction=skip_subtraction,
             split_name="val",
