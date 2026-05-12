@@ -79,20 +79,22 @@ def stft_subtraction(mix: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
             return_complex=True,
         )
 
-        magX = torch.abs(X)
-        magT = torch.abs(T_est)
+        # magX = torch.abs(X)
+        # magT = torch.abs(T_est)
 
-        magB = torch.clamp(magX - magT, min=0.0)
+        # magB = torch.clamp(magX - magT, min=0.0)
 
-        Bp = magB.pow(power)
-        Tp = magT.pow(power)
+        # Bp = magB.pow(power)
+        # Tp = magT.pow(power)
 
-        M = Bp / (Bp + Tp + eps)
+        # M = Bp / (Bp + Tp + eps)
 
-        if mask_sharpness != 1.0:
-            M = M.pow(mask_sharpness)
+        # if mask_sharpness != 1.0:
+        #     M = M.pow(mask_sharpness)
 
-        Y = X * M
+        # Y = X * M
+
+        Y = X - T_est
 
         y = torch.istft(
             Y,
