@@ -287,7 +287,7 @@ def train_model(
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
         _, ema_eval_results_agg = perform_eval(
             ema.to(device),
-            val_loader,
+            train_loader,
             device=device,
             save_results_to=results_file,
             save_aggregated_results_to=aggregated_results_file,
@@ -296,7 +296,7 @@ def train_model(
             mlflow_global_step=None,
             # loss_fn=loss_fn,
             skip_subtraction=skip_subtraction,
-            split_name="val",
+            split_name="train",
             mono_to_stereo=eval_mono_to_stereo,
         )
 
