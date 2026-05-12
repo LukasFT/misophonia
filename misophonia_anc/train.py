@@ -242,7 +242,8 @@ def train_model(
     ##############################
     # TODO: delete debug
     for i in range(10):
-        print(f"Iteration {i}: {tuple(x['idxs'] for x in train_loader)=}")
+        batches = tuple(x["idxs"] for x in train_loader)
+        print(f"Iteration {i}: {batches[-3:-1]=}")
 
     assert ema is not None, "Debug assert"  # TODO: Delete
     results_file = save_dir / "tmpdebg" / "res.json"
