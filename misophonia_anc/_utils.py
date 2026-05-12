@@ -197,6 +197,11 @@ class MisophoniaANCConfig(BaseModel):
         ..., description="For each split, the config for the preprocessed dataset to use for training/eval."
     )
 
+    limit_train_samples: int | None = pydantic.Field(
+        None,
+        description="Optional limit on the number of training samples to use per epoch. Sampled at random each epoch.",
+    )
+
     num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
     batch_size: int = pydantic.Field(1, description="Batch size for training.")
     loss_option: str = pydantic.Field(
@@ -220,6 +225,11 @@ class MisophoniaANCConfig(BaseModel):
     stereo_to_mono: bool = pydantic.Field(
         False,  # noqa: FBT003
         description="Wheater to split each sample into two mono samples, effectively doubling the batch size, i.e. (B, T, 2) -> (2B, T, 1).",
+    )
+
+    ema_decay: float | None = pydantic.Field(
+        None,
+        description="Whether to use an exponential moving average of the model weights during training. See train.train_model for details.",
     )
 
     mlflow_experiment: str | None = pydantic.Field(

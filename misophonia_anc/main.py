@@ -253,6 +253,7 @@ def train(
             else None
         ),
         stereo_to_mono=config.stereo_to_mono,
+        limit=config.limit_train_samples,
     )
     val_loader = make_dataloader(
         shards_val,
@@ -325,6 +326,7 @@ def train(
             global_step_val_start=checkpoint_metadata.get("global_step_val", 0),
             skip_subtraction=skip_subtraction,
             eval_mono_to_stereo=config.stereo_to_mono,
+            ema=checkpoint_metadata.get("ema", None),
             **config.model_hyperparams,
         )
         cp_best_epoch(name, data_base_dir=data_base_dir)
@@ -446,6 +448,9 @@ def evaluate(
     warm_up: Annotated[
         int, typer.Option(..., help="Number of iterations to run for warming up the model before measuring latency.")
     ] = 10,
+    ema: Annotated[
+        bool, typer.Option(..., help="Whether to evaluate the EMA version of the model if it exists in the checkpoint.")
+    ] = False,
 ) -> None:
     """
     Function to compare sample gts and mixes to model outputs.
@@ -468,9 +473,7 @@ def evaluate(
                 )
                 checkpoint_without_pt = checkpoint.replace(".pt", "")
 
-                filename_prefix = (
-                    f"{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
-                )
+                filename_prefix = f"{'ema_' if ema else ''}{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
                 results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
                 aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
                 prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
@@ -488,7 +491,14 @@ def evaluate(
                     eliot.log_message("Using random untrained model for inference.", level="info")
 
                 config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
-                model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+                model, model_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+                if ema:
+                    if model_metadata.get("ema_model") is None:
+                        raise ValueError(
+                            f"EMA model not found in checkpoint {checkpoint_file} for model {name}. Cannot evaluate EMA version of the model."
+                        )
+                    model = model_metadata["ema_model"]
+
                 model.eval()
 
                 dataset_split_dir = model_dir / "webdataset" / split
@@ -614,9 +624,10 @@ def visualize_data(
     eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
     shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
 
-    max_length = (config.dataset_splits[split].generated_config.get("max_length")
-            if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
-            else None
+    max_length = (
+        config.dataset_splits[split].generated_config.get("max_length")
+        if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+        else None
     )
     split_loader = make_dataloader(
         shards_split,
@@ -632,7 +643,12 @@ def visualize_data(
         max_length = 7 * 44100
     eliot.log_message(f"Calculating average spectrograms of trigger categories of split {split}", level="info")
     plot_average_spectrogram_by_trigger_category(
-        model_dir=model_dir, split=split, loader=split_loader, device=device, find_average=find_average, max_length=max_length
+        model_dir=model_dir,
+        split=split,
+        loader=split_loader,
+        device=device,
+        find_average=find_average,
+        max_length=max_length,
     )
     eliot.log_message(
         f"Saved average spectrograms of trigger categories to {model_dir}/spectrograms/{split}", level="info"

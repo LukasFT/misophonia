@@ -17,7 +17,7 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-from ._utils import CustomMlFlowLogger, SimpleCounter, _debug_to_mlflow, perform_eval, prepare_dir_or_file
+from ._utils import CustomMlFlowLogger, ModelEMA, SimpleCounter, _debug_to_mlflow, perform_eval, prepare_dir_or_file
 
 try:
     from .confidential_losses import mrccmse_loss  # noqa: F401
@@ -136,6 +136,7 @@ def train_epoch(
     epoch: int = 0,
     loss_fn: Callable = _time_loss,
     gradient_clip_max_norm: float | None = None,
+    ema: ModelEMA | None = None,
 ) -> tuple[float, float]:
     model = model.train()
 
@@ -175,6 +176,9 @@ def train_epoch(
 
             optimizer.step()
 
+            if ema is not None:
+                ema.update(model)
+
             loss_value = loss.item()
             batch_train_losses.append(loss_value)
             step_counter.increment()
@@ -211,6 +215,7 @@ def train_model(
     gradient_clip_max_norm: float | None = None,
     global_step_train_start: int = 0,
     global_step_val_start: int = 0,
+    ema: ModelEMA | None = None,
 ) -> None:
     """
     Main function to run training loop on Misophonia ANC model. Checkpoints model weights after each epoch. Logs batch and epoch losses for both
@@ -274,6 +279,7 @@ def train_model(
             step_counter=global_step_train_counter,
             epoch=epoch,
             gradient_clip_max_norm=gradient_clip_max_norm,
+            ema=ema,
         )
 
         # Perform val epoch
@@ -320,6 +326,46 @@ def train_model(
             "train/epoch/global_step": global_step_train_counter.current,
             "val/epoch/global_step": global_step_val_counter.current,
         }
+
+        if ema is not None:
+            # Same as results_file etc. but with ema_ prefix
+            ema_results_file = results_file.with_name(f"ema_{results_file.name}")
+            ema_aggregated_results_file = aggregated_results_file.with_name(f"ema_{aggregated_results_file.name}")
+            ema_samples_dir = samples_dir.with_name(f"ema_{samples_dir.name}")
+
+            prepare_dir_or_file(ema_results_file, overwrite=True, is_dir=False)
+            prepare_dir_or_file(ema_aggregated_results_file, overwrite=True, is_dir=False)
+            prepare_dir_or_file(ema_samples_dir, overwrite=True, is_dir=True)
+
+            _, ema_eval_results_agg = perform_eval(
+                model,
+                val_loader,
+                device=device,
+                save_results_to=ema_results_file,
+                save_aggregated_results_to=ema_aggregated_results_file,
+                save_samples_to=ema_samples_dir,
+                save_num_samples=20,
+                mlflow_global_step=global_step_val_counter,
+                loss_fn=loss_fn,
+                skip_subtraction=skip_subtraction,
+                split_name="val",
+                mono_to_stereo=eval_mono_to_stereo,
+            )
+            epoch_metrics.update(
+                {
+                    "ema/val/epoch/loss": ema_eval_results_agg["x"]["loss_mean"],
+                    "ema/val/epoch/loss_std": ema_eval_results_agg["x"]["loss_std"],
+                    "ema/val/epoch/si_snr_improvement": ema_eval_results_agg["x"]["si_snr_improvement_mean"],
+                    "ema/val/epoch/si_snr_improvement_std": ema_eval_results_agg["x"]["si_snr_improvement_std"],
+                    "ema/val/epoch/si_snr": ema_eval_results_agg["x"]["si_snr_mean"],
+                    "ema/val/epoch/si_snr_std": ema_eval_results_agg["x"]["si_snr_std"],
+                    "ema/val/epoch/snr_improvement": ema_eval_results_agg["x"]["snr_improvement_mean"],
+                    "ema/val/epoch/snr_improvement_std": ema_eval_results_agg["x"]["snr_improvement_std"],
+                    "ema/val/epoch/snr": ema_eval_results_agg["x"]["snr_mean"],
+                    "ema/val/epoch/snr_std": ema_eval_results_agg["x"]["snr_std"],
+                }
+            )
+
         eliot.log_message(
             f"Epoch {epoch}:\n{json.dumps(epoch_metrics, indent=4)}",
             level="debug",

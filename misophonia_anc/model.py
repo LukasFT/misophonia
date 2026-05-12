@@ -5,10 +5,12 @@ Heavily based on https://github.com/vb000/SemanticHearing
 """
 # ruff: noqa: ANN001, ANN002, ANN003 # TODO: Improve quality
 
+import copy
 from pathlib import Path
 
 import eliot
 import mlflow
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -254,7 +256,14 @@ class MisophoniaANCNet(nn.Module):
         return self._hyperparameters["ground_truth_target"]
 
     def save_checkpoint(
-        self, ckpt_path: Path, *, epoch: int, global_step_train: int, global_step_val: int, **other_info: dict
+        self,
+        ckpt_path: Path,
+        *,
+        epoch: int,
+        global_step_train: int,
+        global_step_val: int,
+        ema_model: "ModelEMA | None" = None,
+        **other_info: dict,
     ) -> None:
         """
         Save model checkpoint.
@@ -264,6 +273,7 @@ class MisophoniaANCNet(nn.Module):
             epoch: Current epoch number.
             global_step_train: Total number of training batches logged.
             global_step_val: Total number of validation batches logged.
+            ema_model: Optional EMA model to include in the checkpoint.
             other_info: Additional key-value pairs to include in the checkpoint metadata (e.g. metrics like val_loss, val_si_snr_improvement).
         """
         torch.save(
@@ -275,6 +285,8 @@ class MisophoniaANCNet(nn.Module):
                 "mlflow_run_id": mlflow.active_run().info.run_id if mlflow.active_run() is not None else None,
                 "global_step_train": global_step_train,
                 "global_step_val": global_step_val,
+                "ema_model_state": ema_model.model.state_dict() if ema_model is not None else None,
+                "ema_decay": ema_model.decay if ema_model is not None else None,
                 **other_info,
             },
             ckpt_path,
@@ -282,7 +294,11 @@ class MisophoniaANCNet(nn.Module):
 
     @classmethod
     def from_config(
-        cls, config: MisophoniaANCConfig, *, checkpoint: Path | None = None, device: torch.device | None = None
+        cls,
+        config: MisophoniaANCConfig,
+        *,
+        checkpoint: Path | None = None,
+        device: torch.device | None = None,
     ) -> tuple["MisophoniaANCNet", dict]:
         """
         Load model from config and checkpoint.
@@ -304,6 +320,10 @@ class MisophoniaANCNet(nn.Module):
         if checkpoint is None:
             model = MisophoniaANCNet(**model_params)
             metadata["epoch"] = 0
+
+            if config.ema_decay is not None:
+                metadata["ema_model"] = ModelEMA(model, decay=config.ema_decay)
+
         else:
             checkpoint = Path(checkpoint)
             assert checkpoint.is_file(), f"Checkpoint path {checkpoint} does not exist or is not a file."
@@ -332,6 +352,21 @@ class MisophoniaANCNet(nn.Module):
             state_dict = metadata["model_state"]
             metadata.pop("model_state")  # Remove model state from metadata to avoid confusion
             model.load_state_dict(state_dict)
+
+            # Load EMA:
+            ema_state = metadata.pop("ema_model_state")  # Remove EMA state from metadata to avoid confusion
+            ema_decay = metadata.pop("ema_decay")  # Remove EMA decay from metadata to avoid confusion
+            assert (ema_state is None) == (ema_decay is None), (
+                "EMA state and decay must both be present or both be None in the checkpoint."
+            )
+            if ema_state is not None and ema_decay is not None:
+                if not np.isclose(ema_decay, config.ema_decay):
+                    eliot.log_message(
+                        f"EMA decay in checkpoint ({ema_decay}) does not match EMA decay in config ({config.ema_decay}). Using EMA decay from config.",
+                        level="warning",
+                    )
+                    ema_decay = config.ema_decay
+                metadata["ema_model"] = ModelEMA(model, decay=ema_decay, model_state=ema_state)
 
         if config.subtraction_methods is not None:
             for method_name in config.subtraction_methods:
@@ -413,3 +448,35 @@ class MaskNet(nn.Module):
         )
 
         return m, enc_buf, dec_buf
+
+
+class ModelEMA:
+    def __init__(self, model: nn.Module, decay: float = 0.999, model_state: dict | None = None) -> None:
+        self.model = copy.deepcopy(model).eval()
+        if model_state is not None:
+            self.model.load_state_dict(model_state)
+        self.decay = decay
+
+        for p in self.model.parameters():
+            p.requires_grad_(False)  # noqa: FBT003
+
+    def __call__(self, *args, **kwargs):  # noqa: ANN204
+        with torch.no_grad():
+            return self.model(*args, **kwargs)
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        ema_state = self.model.state_dict()
+        model_state = model.state_dict()
+
+        for key, model_value in model_state.items():
+            ema_value = ema_state[key]
+
+            if torch.is_floating_point(model_value):
+                ema_value.mul_(self.decay).add_(model_value, alpha=1.0 - self.decay)
+            else:
+                ema_value.copy_(model_value)
+
+    def to(self, device: torch.device) -> "ModelEMA":
+        self.model.to(device)
+        return self
