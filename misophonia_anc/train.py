@@ -17,7 +17,7 @@ from torchmetrics.functional.audio import scale_invariant_signal_noise_ratio as 
 from torchmetrics.functional.audio import signal_noise_ratio as snr
 from tqdm import tqdm
 
-from ._utils import CustomMlFlowLogger, ModelEMA, SimpleCounter, _debug_to_mlflow, perform_eval, prepare_dir_or_file
+from ._utils import CustomMlFlowLogger, SimpleCounter, _debug_to_mlflow, perform_eval, prepare_dir_or_file
 
 try:
     from .confidential_losses import mrccmse_loss  # noqa: F401
@@ -29,7 +29,7 @@ except ImportError:
 
 
 if TYPE_CHECKING:
-    from .model import MisophoniaANCNet
+    from .model import MisophoniaANCNet, ModelEMA
 
 
 def get_loss_fn_from_name(loss_option: str) -> Callable:
@@ -136,7 +136,7 @@ def train_epoch(
     epoch: int = 0,
     loss_fn: Callable = _time_loss,
     gradient_clip_max_norm: float | None = None,
-    ema: ModelEMA | None = None,
+    ema: "ModelEMA | None" = None,
 ) -> tuple[float, float]:
     model = model.train()
 
@@ -215,7 +215,7 @@ def train_model(
     gradient_clip_max_norm: float | None = None,
     global_step_train_start: int = 0,
     global_step_val_start: int = 0,
-    ema: ModelEMA | None = None,
+    ema: "ModelEMA | None" = None,
 ) -> None:
     """
     Main function to run training loop on Misophonia ANC model. Checkpoints model weights after each epoch. Logs batch and epoch losses for both
