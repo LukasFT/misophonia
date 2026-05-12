@@ -241,12 +241,8 @@ def train_model(
 
     ##############################
     # TODO: delete debug
-    it1 = tuple(x["idxs"] for x in train_loader)
-    it2 = tuple(x["idxs"] for x in train_loader)
-    it3 = tuple(x["idxs"] for x in train_loader)
-    print(it1)
-    print(it2)
-    print(it3)
+    for i in range(10):
+        print(f"Iteration {i}: {tuple(x['idxs'] for x in train_loader)=}")
 
     assert ema is not None, "Debug assert"  # TODO: Delete
     results_file = save_dir / "tmpdebg" / "res.json"
