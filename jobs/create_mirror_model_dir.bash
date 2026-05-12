@@ -54,7 +54,7 @@ read -p "Do you want to start a new training job for this model? (y/n): " REPLY
 if [[ "$REPLY" =~ ^[Yy]$ ]]; then
     echo "Starting new training job for $NEW_MODEL_NAME..."
     git pull
-    sbatch --job-name="$NEW_MODEL_NAME" --cpus-per-task=8 --partition=acltr --gres=gpu:1 --time=72:00:00 jobs/anc_cli.job train $NEW_MODEL_NAME
+    sbatch --job-name="$NEW_MODEL_NAME" --nodelist=cn[3-6,11-13,19] --nodes=1 --cpus-per-task=3 --partition=acltr --gres=gpu:1 --time=72:00:00 jobs/anc_cli.job train $NEW_MODEL_NAME --num-workers=2
 else
     echo "Not starting job."
 fi
