@@ -199,7 +199,10 @@ class MisophoniaANCConfig(BaseModel):
 
     limit_train_samples: int | None = pydantic.Field(
         None,
-        description="Optional limit on the number of training samples to use per epoch. Sampled at random each epoch.",
+        description="""Optional limit on the number of training samples to use per epoch."""
+        """If None, all samples are used."""
+        """If given, each epoch uses only a subset of the total training samples. Each subset is randomized each epoch, but the subsets themselves are cycled through."""
+        """If given, should be a positive integer. If given with drop_last=True in the dataloader, should be a multiple of the batch size.""",
     )
 
     num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
@@ -566,6 +569,65 @@ def make_dataloader(
         batch_size=None,  # We set batch size in the WebDataset pipeline.
         num_workers=num_workers,
     )
+
+
+def make_train_data_loader_factory(
+    all_shards: Iterable[str | Path],
+    *,
+    samples_per_epoch: int | None = None,
+    total_samples: int | None = None,
+    **make_dataloader_kwargs: dict,
+) -> Callable[[int], wds.WebLoader]:
+    """
+    We observed that iterating over many different samples spread out over many epochs was better than re-using the same sample each epoch.
+    At the same time, we want to checkpoint and validate often.
+    Therefore, we make a different dataloader for each epoch. It gets a subset of the total shards, so we still iterate over all shards over the course of many epochs.
+
+    Args:
+        all_shards: An iterable of paths to all available .tar shard files.
+        samples_per_epoch: If None is given, all the samples are used and total_samples is ignored. Otherwise, each dataloader will expose this amount of samples per epoch.
+        total_samples: Required if samples_per_epoch is given. The total number of samples available in all_shards (=samples_per_shard * number of shards, given all shards are filled).
+        make_dataloader_kwargs: Additional kwargs to pass to make_dataloader().
+
+    Returns:
+        A function that takes an epoch index (1-N) and returns a WebLoader for that epoch.
+
+    """
+    all_shards = tuple(str(file) for file in all_shards)
+
+    if total_samples is None:
+        static_loader = make_dataloader(all_shards, **make_dataloader_kwargs)
+        return lambda epoch_idx: static_loader
+
+    # Make a list of size num_epochs, where the first element contains the first 1/num_epochs of all_shards, then the second element contains the second 1/num_epochs of all_shards, etc.
+    # No shuffling is done, since we generate using cycles during generation to ensure all source sounds appear in approx order
+    assert samples_per_epoch is not None, "If total_samples is given, samples_per_epoch must also be given."
+    assert samples_per_epoch > 0, "samples_per_epoch must be positive."
+    assert total_samples > 0, "total_samples must be positive."
+    assert total_samples % samples_per_epoch == 0, (
+        "total_samples must be divisible by samples_per_epoch."
+    )  # This could be relaxed, but keep it for now to simplify implementation
+
+    num_uniq_epochs = total_samples // samples_per_epoch
+    total_shards = len(all_shards)
+    assert total_shards % num_uniq_epochs == 0, (
+        f"total number of shards ({total_shards}) must be divisible by number of unique epochs ({num_uniq_epochs})."
+    )
+    shards_per_epoch = total_shards // num_uniq_epochs
+
+    shards_by_epoch = tuple(
+        all_shards[i * shards_per_epoch : (i + 1) * shards_per_epoch] for i in range(num_uniq_epochs)
+    )
+    assert len(shards_by_epoch) == num_uniq_epochs
+    assert all(len(shards) == shards_per_epoch for shards in shards_by_epoch)
+
+    def loader_factory(epoch_idx: int) -> wds.WebLoader:
+        assert epoch_idx > 0, "epoch_idx must be positive."
+        wrapped_idx = (epoch_idx - 1) % num_uniq_epochs  # Wrap around if epoch_idx > num_uniq_epochs
+        epoch_shards = shards_by_epoch[wrapped_idx]
+        return make_dataloader(epoch_shards, **make_dataloader_kwargs)
+
+    return loader_factory
 
 
 def calculate_default_metrics(
