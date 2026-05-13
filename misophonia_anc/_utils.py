@@ -508,15 +508,10 @@ def make_dataloader(
         limit = (limit // batch_size) * batch_size
         assert limit > 0, "`limit` must be at least one full batch when drop_last=True."
 
-    eliot.log_message(f"Loading data from `{files[0]}` etc...", level="debug")
     eliot.log_message(
-        f"Using {num_workers} workers loading WebDataset "
-        f"(total CPU count = {os.cpu_count()}, allocated = {get_allocated_cpus()}).",
-        level="debug",
-    )
-    eliot.log_message(
-        f"WebDataset randomness: shardshuffle={shardshuffle}, "
-        f"shuffle_buffer={shuffle_buffer}, limit={limit}, drop_last={drop_last}.",
+        f"Loading data from `{files[0]}` to `{Path(files[-1]).name}` with:"
+        f" {batch_size=}, {num_workers=} (count = {os.cpu_count()=}, allocated = {get_allocated_cpus()}),"
+        f" {limit=}, {drop_last=}, {drop_last=}, {shardshuffle=}, {shuffle_buffer=}",
         level="debug",
     )
 
