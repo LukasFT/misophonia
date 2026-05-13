@@ -247,9 +247,9 @@ def train(
         assert (
             "train" in config.dataset_splits
             and config.dataset_splits["train"].generated_config is not None
-            and config.dataset_splits["train"].generated_config.get("total_samples") is not None
-        ), "total_samples must be provided in the dataset config for the train split if limit_train_samples is given."
-        total_samples = config.dataset_splits["train"].generated_config["total_samples"]
+            and config.dataset_splits["train"].generated_config.get("num_samples") is not None
+        ), "num_samples must be provided in the dataset config for the train split if limit_train_samples is given."
+        total_samples = config.dataset_splits["train"].generated_config["num_samples"]
 
     train_loader_factory = make_train_data_loader_factory(
         shards_train,
