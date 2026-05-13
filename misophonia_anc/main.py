@@ -256,6 +256,7 @@ def train(
         samples_per_epoch=config.limit_train_samples,
         total_samples=total_samples,
         # Arguments to make_dataloader:
+        batch_size=config.batch_size,
         num_workers=num_workers,
         include_clean_mix=model.ground_truth_target == "clean_mix",
         include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
