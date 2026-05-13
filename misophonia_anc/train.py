@@ -263,36 +263,6 @@ def train_model(
     global_step_train_counter = SimpleCounter(global_step_train_start)
     global_step_val_counter = SimpleCounter(global_step_val_start)
 
-    #### DEBUG
-
-    epoch1_idx_1 = set()
-    for batch in train_loader_factory(1):
-        idxs = batch["idxs"]
-        for idx in idxs:
-            epoch1_idx_1.add(int(idx))
-
-    epoch1_idx_2 = set()
-    for batch in train_loader_factory(1):
-        idxs = batch["idxs"]
-        for idx in idxs:
-            epoch1_idx_2.add(int(idx))
-
-    assert epoch1_idx_1 == epoch1_idx_2, (
-        "Train loader factory is not deterministic! Got different idxs for the same epoch."
-    )
-
-    epoch2_idx_1 = set()
-    for batch in train_loader_factory(2):
-        idxs = batch["idxs"]
-        for idx in idxs:
-            epoch2_idx_1.add(int(idx))
-
-    assert not epoch1_idx_1.intersection(epoch2_idx_1), (
-        "Train loader factory is not shuffling between epochs! Got overlapping idxs for epoch 1 and epoch 2."
-    )
-
-    # END DEBUG
-
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
         # Perform train epoch
         train_loader = train_loader_factory(epoch)
