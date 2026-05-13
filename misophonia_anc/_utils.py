@@ -510,7 +510,7 @@ def make_dataloader(
 
     eliot.log_message(
         f"Loading data from `{files[0]}` to `{Path(files[-1]).name}` with:"
-        f" {batch_size=}, {num_workers=} (count = {os.cpu_count()=}, allocated = {get_allocated_cpus()}),"
+        f" {batch_size=}, {num_workers=} (count = {os.cpu_count()}, allocated = {get_allocated_cpus()}),"
         f" {limit=}, {drop_last=}, {drop_last=}, {shardshuffle=}, {shuffle_buffer=}",
         level="debug",
     )
