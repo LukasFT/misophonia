@@ -34,10 +34,10 @@ class MisophoniaANCNet(nn.Module):
         use_pos_enc=True,
         conditioning="mult",
         lookahead=True,
-        dropout_label: float = 0.0,
-        dropout_encoder: float = 0.0,
+        dropout_label: float | None = None,  # None for backwards compatibility (equivalent to 0.0)
+        dropout_encoder: float | None = None,  # None for backwards compatibility (equivalent to 0.0)
         dropout_decoder: float = 0.1,  # 0.1 is used by torch.nn.TransformerDecoderLayer, which Semantic Hearing directly used
-        dropout_pos: float = 0.0,
+        dropout_pos: float = 0.0,  # There was always a droput layer, but it was deafault set to 0.0
         ground_truth_target: GtTargets = "isolated_trigger",
         decoder_batches_parallel_k: int = 4000,
         gt_is_isolated_trigger=None,  # For backwards compatibility, use ground_truth_target instead
@@ -98,15 +98,21 @@ class MisophoniaANCNet(nn.Module):
         )
 
         # Label embedding layer
-        self.label_embedding = nn.Sequential(
+        label_embedding_layers = [
             nn.Linear(label_len, 512),
             nn.LayerNorm(512),
             nn.ReLU(),
-            nn.Dropout(p=dropout_label),
-            nn.Linear(512, model_dim),
-            nn.LayerNorm(model_dim),
-            nn.ReLU(),
+        ]
+        if dropout_label is not None:
+            label_embedding_layers.append(nn.Dropout(p=dropout_label))
+        label_embedding_layers.extend(
+            [
+                nn.Linear(512, model_dim),
+                nn.LayerNorm(model_dim),
+                nn.ReLU(),
+            ]
         )
+        self.label_embedding = nn.Sequential(**label_embedding_layers)
 
         # Mask generator
         self.mask_gen = MaskNet(
