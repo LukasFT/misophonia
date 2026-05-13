@@ -327,7 +327,7 @@ def train(
         train_model(
             model,
             device=device,
-            train_loader=train_loader_factory,
+            train_loader_factory=train_loader_factory,
             val_loader=val_loader,
             n_epochs=config.num_epochs,
             checkpoint_epoch=checkpoint_metadata.get("epoch", 0) if not reset_epoch else 0,
