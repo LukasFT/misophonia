@@ -197,6 +197,11 @@ class MisophoniaANCConfig(BaseModel):
         ..., description="For each split, the config for the preprocessed dataset to use for training/eval."
     )
 
+    limit_train_samples: int | None = pydantic.Field(
+        None,
+        description="Optional limit on the number of training samples to use per epoch. Sampled at random each epoch.",
+    )
+
     num_epochs: int = pydantic.Field(10, description="Number of epochs to train for.")
     batch_size: int = pydantic.Field(1, description="Batch size for training.")
     loss_option: str = pydantic.Field(
