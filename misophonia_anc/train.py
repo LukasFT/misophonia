@@ -196,7 +196,7 @@ def train_epoch(
 def train_model(
     model: "MisophoniaANCNet",
     *,
-    train_loader_factory: wds.WebLoader,
+    train_loader_factory: Callable[[int], wds.WebLoader],
     val_loader: wds.WebLoader,
     n_epochs: int,
     checkpoint_epoch: int = 0,
