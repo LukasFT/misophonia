@@ -27,6 +27,7 @@ from ._utils import (
     get_git_sha,
     log_dataset_config_diffs,
     make_dataloader,
+    make_train_data_loader_factory,
     perform_eval,
     plot_average_spectogram_background,
     plot_average_spectrogram_by_trigger_category,
@@ -241,8 +242,20 @@ def train(
     log_dataset_config_diffs(config, val_dir / "metadata.json", "val")
     log_dataset_config_diffs(config, train_dir / "metadata.json", "train")
 
-    train_loader = make_dataloader(
+    total_samples = None
+    if config.limit_train_samples is not None:
+        assert (
+            "train" in config.dataset_splits
+            and config.dataset_splits["train"].generated_config is not None
+            and config.dataset_splits["train"].generated_config.get("num_samples") is not None
+        ), "num_samples must be provided in the dataset config for the train split if limit_train_samples is given."
+        total_samples = config.dataset_splits["train"].generated_config["num_samples"]
+
+    train_loader_factory = make_train_data_loader_factory(
         shards_train,
+        samples_per_epoch=config.limit_train_samples,
+        total_samples=total_samples,
+        # Arguments to make_dataloader:
         batch_size=config.batch_size,
         num_workers=num_workers,
         include_clean_mix=model.ground_truth_target == "clean_mix",
@@ -315,7 +328,7 @@ def train(
         train_model(
             model,
             device=device,
-            train_loader=train_loader,
+            train_loader_factory=train_loader_factory,
             val_loader=val_loader,
             n_epochs=config.num_epochs,
             checkpoint_epoch=checkpoint_metadata.get("epoch", 0) if not reset_epoch else 0,
@@ -614,9 +627,10 @@ def visualize_data(
     eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
     shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
 
-    max_length = (config.dataset_splits[split].generated_config.get("max_length")
-            if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
-            else None
+    max_length = (
+        config.dataset_splits[split].generated_config.get("max_length")
+        if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+        else None
     )
     split_loader = make_dataloader(
         shards_split,
@@ -632,7 +646,12 @@ def visualize_data(
         max_length = 7 * 44100
     eliot.log_message(f"Calculating average spectrograms of trigger categories of split {split}", level="info")
     plot_average_spectrogram_by_trigger_category(
-        model_dir=model_dir, split=split, loader=split_loader, device=device, find_average=find_average, max_length=max_length
+        model_dir=model_dir,
+        split=split,
+        loader=split_loader,
+        device=device,
+        find_average=find_average,
+        max_length=max_length,
     )
     eliot.log_message(
         f"Saved average spectrograms of trigger categories to {model_dir}/spectrograms/{split}", level="info"
