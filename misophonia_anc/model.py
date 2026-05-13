@@ -112,7 +112,7 @@ class MisophoniaANCNet(nn.Module):
                 nn.ReLU(),
             ]
         )
-        self.label_embedding = nn.Sequential(**label_embedding_layers)
+        self.label_embedding = nn.Sequential(*label_embedding_layers)
 
         # Mask generator
         self.mask_gen = MaskNet(
