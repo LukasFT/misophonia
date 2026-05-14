@@ -196,7 +196,7 @@ def train_epoch(
 def train_model(
     model: "MisophoniaANCNet",
     *,
-    train_loader: wds.WebLoader,
+    train_loader_factory: Callable[[int], wds.WebLoader],
     val_loader: wds.WebLoader,
     n_epochs: int,
     checkpoint_epoch: int = 0,
@@ -265,6 +265,7 @@ def train_model(
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
         # Perform train epoch
+        train_loader = train_loader_factory(epoch)
         train_loss, train_loss_std = train_epoch(
             model,
             device=device,

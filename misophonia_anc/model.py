@@ -34,6 +34,10 @@ class MisophoniaANCNet(nn.Module):
         use_pos_enc=True,
         conditioning="mult",
         lookahead=True,
+        dropout_label: float | None = None,  # None for backwards compatibility (equivalent to 0.0)
+        dropout_encoder: float | None = None,  # None for backwards compatibility (equivalent to 0.0)
+        dropout_decoder: float = 0.1,  # 0.1 is used by torch.nn.TransformerDecoderLayer, which Semantic Hearing directly used
+        dropout_pos: float = 0.0,  # There was always a droput layer, but it was deafault set to 0.0
         ground_truth_target: GtTargets = "isolated_trigger",
         decoder_batches_parallel_k: int = 4000,
         gt_is_isolated_trigger=None,  # For backwards compatibility, use ground_truth_target instead
@@ -65,6 +69,10 @@ class MisophoniaANCNet(nn.Module):
             "use_pos_enc": use_pos_enc,
             "conditioning": conditioning,
             "lookahead": lookahead,
+            "dropout_label": dropout_label,
+            "dropout_encoder": dropout_encoder,
+            "dropout_decoder": dropout_decoder,
+            "dropout_pos": dropout_pos,
             "ground_truth_target": ground_truth_target,
             #  # Only affects speed, not the result, so do not store decoder_batches_parallel_k as hyperparameter
             # "decoder_batches_parallel_k": decoder_batches_parallel_k,
@@ -90,14 +98,21 @@ class MisophoniaANCNet(nn.Module):
         )
 
         # Label embedding layer
-        self.label_embedding = nn.Sequential(
+        label_embedding_layers = [
             nn.Linear(label_len, 512),
             nn.LayerNorm(512),
             nn.ReLU(),
-            nn.Linear(512, model_dim),
-            nn.LayerNorm(model_dim),
-            nn.ReLU(),
+        ]
+        if dropout_label is not None:
+            label_embedding_layers.append(nn.Dropout(p=dropout_label))
+        label_embedding_layers.extend(
+            [
+                nn.Linear(512, model_dim),
+                nn.LayerNorm(model_dim),
+                nn.ReLU(),
+            ]
         )
+        self.label_embedding = nn.Sequential(*label_embedding_layers)
 
         # Mask generator
         self.mask_gen = MaskNet(
@@ -109,6 +124,9 @@ class MisophoniaANCNet(nn.Module):
             use_pos_enc=use_pos_enc,
             conditioning=conditioning,
             decoder_batches_parallel_k=decoder_batches_parallel_k,
+            dropout_encoder=dropout_encoder,
+            dropout_decoder=dropout_decoder,
+            dropout_pos=dropout_pos,
         )
 
         # Output conv layer
@@ -337,6 +355,7 @@ class MisophoniaANCNet(nn.Module):
 class MaskNet(nn.Module):
     def __init__(
         self,
+        *,
         model_dim,
         num_enc_layers,
         dec_buf_len,
@@ -344,6 +363,9 @@ class MaskNet(nn.Module):
         num_dec_layers,
         use_pos_enc,
         conditioning,
+        dropout_encoder: float,
+        dropout_decoder: float,
+        dropout_pos: float,
         decoder_batches_parallel_k: int = 4000,
     ) -> None:
         super(MaskNet, self).__init__()
@@ -351,7 +373,11 @@ class MaskNet(nn.Module):
         self._decoder_batches_parallel_k = decoder_batches_parallel_k
 
         # Encoder based on dilated causal convolutions.
-        self.encoder = DilatedCausalConvEncoder(channels=model_dim, num_layers=num_enc_layers)
+        self.encoder = DilatedCausalConvEncoder(
+            channels=model_dim,
+            num_layers=num_enc_layers,
+            dropout=dropout_encoder,
+        )
 
         # Transformer decoder that operates on chunks of size
         # buffer size.
@@ -364,6 +390,8 @@ class MaskNet(nn.Module):
             use_pos_enc=use_pos_enc,
             ff_dim=2 * model_dim,
             conditioning=conditioning,
+            dropout_decoder=dropout_decoder,
+            dropout_pos=dropout_pos,
         )
 
     def forward(self, x, l, enc_buf, dec_buf):  # noqa: ANN201
