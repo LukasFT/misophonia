@@ -342,7 +342,7 @@ def train_model(
             prepare_dir_or_file(ema_samples_dir, overwrite=True, is_dir=True)
 
             _, ema_eval_results_agg = perform_eval(
-                ema,
+                ema.model,
                 val_loader,
                 device=device,
                 save_results_to=ema_results_file,
