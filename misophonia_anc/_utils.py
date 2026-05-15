@@ -509,22 +509,18 @@ def make_dataloader(
     if shardshuffle is None:
         shardshuffle = len(files)
 
+    num_batches = None
     if limit is not None:
         if drop_last:
             num_batches = limit // batch_size
             assert num_batches > 0, "`limit` must be at least one full batch when drop_last=True."
-            effective_limit = num_batches * batch_size
         else:
             num_batches = math.ceil(limit / batch_size)
-            effective_limit = limit
-    else:
-        num_batches = None
-        effective_limit = None
 
     eliot.log_message(
         f"Loading data from `{files[0]}` to `{Path(files[-1]).name}` with:"
         f" {batch_size=}, {num_workers=} (count = {os.cpu_count()}, allocated = {get_allocated_cpus()}),"
-        f" {effective_limit=}, {drop_last=}, {drop_last=}, {shardshuffle=}, {shuffle_buffer=}",
+        f" {drop_last=}, {drop_last=}, {shardshuffle=}, {shuffle_buffer=}",
         level="debug",
     )
 
