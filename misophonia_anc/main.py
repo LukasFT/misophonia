@@ -25,6 +25,7 @@ from ._utils import (
     get_git_sha,
     log_dataset_config_diffs,
     make_dataloader,
+    make_train_data_loader_factory,
     perform_eval,
     plot_average_spectogram_background,
     plot_average_spectrogram_by_trigger_category,
@@ -239,8 +240,20 @@ def train(
     log_dataset_config_diffs(config, val_dir / "metadata.json", "val")
     log_dataset_config_diffs(config, train_dir / "metadata.json", "train")
 
-    train_loader = make_dataloader(
+    total_samples = None
+    if config.limit_train_samples is not None:
+        assert (
+            "train" in config.dataset_splits
+            and config.dataset_splits["train"].generated_config is not None
+            and config.dataset_splits["train"].generated_config.get("num_samples") is not None
+        ), "num_samples must be provided in the dataset config for the train split if limit_train_samples is given."
+        total_samples = config.dataset_splits["train"].generated_config["num_samples"]
+
+    train_loader_factory = make_train_data_loader_factory(
         shards_train,
+        samples_per_epoch=config.limit_train_samples,
+        total_samples=total_samples,
+        # Arguments to make_dataloader:
         batch_size=config.batch_size,
         num_workers=num_workers,
         include_clean_mix=model.ground_truth_target == "clean_mix",
@@ -251,7 +264,6 @@ def train(
             else None
         ),
         stereo_to_mono=config.stereo_to_mono,
-        limit=config.limit_train_samples,
     )
     val_loader = make_dataloader(
         shards_val,
@@ -315,7 +327,7 @@ def train(
         train_model(
             model,
             device=device,
-            train_loader=train_loader,
+            train_loader_factory=train_loader_factory,
             val_loader=val_loader,
             n_epochs=config.num_epochs,
             checkpoint_epoch=checkpoint_metadata.get("epoch", 0) if not reset_epoch else 0,
