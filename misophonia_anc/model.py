@@ -373,6 +373,7 @@ class MisophoniaANCNet(nn.Module):
                     )
                     ema_decay = config.ema_decay
                 metadata["ema_model"] = ModelEMA(model, decay=ema_decay, model_state=ema_state)
+                metadata["ema_model"].to(device) if device is not None else None
 
         if config.subtraction_methods is not None:
             for method_name in config.subtraction_methods:
