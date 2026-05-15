@@ -5,12 +5,16 @@ Heavily based on https://github.com/vb000/SemanticHearing
 """
 # ruff: noqa: ANN001, ANN002, ANN003 # TODO: Improve quality
 
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import eliot
 import mlflow
+import numpy as np
 import torch
 import torch.nn as nn
+from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 
 from ._utils import GtTargets, MisophoniaANCConfig, get_git_sha, mod_pad
 from .decoder import CausalTransformerDecoder
@@ -260,7 +264,14 @@ class MisophoniaANCNet(nn.Module):
         return self._hyperparameters["ground_truth_target"]
 
     def save_checkpoint(
-        self, ckpt_path: Path, *, epoch: int, global_step_train: int, global_step_val: int, **other_info: dict
+        self,
+        ckpt_path: Path,
+        *,
+        epoch: int,
+        global_step_train: int,
+        global_step_val: int,
+        ema_model: "ModelEMA | None" = None,
+        **other_info: dict,
     ) -> None:
         """
         Save model checkpoint.
@@ -270,6 +281,7 @@ class MisophoniaANCNet(nn.Module):
             epoch: Current epoch number.
             global_step_train: Total number of training batches logged.
             global_step_val: Total number of validation batches logged.
+            ema_model: Optional EMA model to include in the checkpoint.
             other_info: Additional key-value pairs to include in the checkpoint metadata (e.g. metrics like val_loss, val_si_snr_improvement).
         """
         torch.save(
@@ -281,6 +293,8 @@ class MisophoniaANCNet(nn.Module):
                 "mlflow_run_id": mlflow.active_run().info.run_id if mlflow.active_run() is not None else None,
                 "global_step_train": global_step_train,
                 "global_step_val": global_step_val,
+                "ema_model_state": ema_model.model.state_dict() if ema_model is not None else None,
+                "ema_decay": ema_model.decay if ema_model is not None else None,
                 **other_info,
             },
             ckpt_path,
@@ -288,7 +302,11 @@ class MisophoniaANCNet(nn.Module):
 
     @classmethod
     def from_config(
-        cls, config: MisophoniaANCConfig, *, checkpoint: Path | None = None, device: torch.device | None = None
+        cls,
+        config: MisophoniaANCConfig,
+        *,
+        checkpoint: Path | None = None,
+        device: torch.device | None = None,
     ) -> tuple["MisophoniaANCNet", dict]:
         """
         Load model from config and checkpoint.
@@ -310,6 +328,10 @@ class MisophoniaANCNet(nn.Module):
         if checkpoint is None:
             model = MisophoniaANCNet(**model_params)
             metadata["epoch"] = 0
+
+            if config.ema_decay is not None:
+                metadata["ema_model"] = ModelEMA(model, decay=config.ema_decay)
+
         else:
             checkpoint = Path(checkpoint)
             assert checkpoint.is_file(), f"Checkpoint path {checkpoint} does not exist or is not a file."
@@ -338,6 +360,22 @@ class MisophoniaANCNet(nn.Module):
             state_dict = metadata["model_state"]
             metadata.pop("model_state")  # Remove model state from metadata to avoid confusion
             model.load_state_dict(state_dict)
+
+            # Load EMA:
+            ema_state = metadata.pop("ema_model_state")  # Remove EMA state from metadata to avoid confusion
+            ema_decay = metadata.pop("ema_decay")  # Remove EMA decay from metadata to avoid confusion
+            assert (ema_state is None) == (ema_decay is None), (
+                "EMA state and decay must both be present or both be None in the checkpoint."
+            )
+            if ema_state is not None and ema_decay is not None:
+                if not np.isclose(ema_decay, config.ema_decay):
+                    eliot.log_message(
+                        f"EMA decay in checkpoint ({ema_decay}) does not match EMA decay in config ({config.ema_decay}). Using EMA decay from config.",
+                        level="warning",
+                    )
+                    ema_decay = config.ema_decay
+                metadata["ema_model"] = ModelEMA(model, decay=ema_decay, model_state=ema_state)
+                metadata["ema_model"].to(device) if device is not None else None
 
         if config.subtraction_methods is not None:
             for method_name in config.subtraction_methods:
@@ -419,3 +457,92 @@ class MaskNet(nn.Module):
         )
 
         return m, enc_buf, dec_buf
+
+
+class ModelEMA:
+    def __init__(
+        self,
+        model: nn.Module,
+        decay: float = 0.999,
+        model_state: dict[str, Any] | None = None,
+        device: torch.device | str | None = None,
+    ) -> None:
+        self.decay = decay
+
+        ema_multi_avg_fn = get_ema_multi_avg_fn(decay)
+
+        def multi_avg_fn(
+            ema_tensors: Sequence[torch.Tensor],
+            model_tensors: Sequence[torch.Tensor],
+            n_averaged: torch.Tensor | int,
+        ) -> None:
+            # AveragedModel calls this on parameter/buffer groups.
+            # Floats/complex tensors get EMA.
+            # Non-floating buffers, e.g. BatchNorm num_batches_tracked, are copied.
+            ema_float_tensors: list[torch.Tensor] = []
+            model_float_tensors: list[torch.Tensor] = []
+
+            for ema_value, model_value in zip(ema_tensors, model_tensors, strict=True):
+                if torch.is_floating_point(ema_value) or torch.is_complex(ema_value):
+                    ema_float_tensors.append(ema_value)
+                    model_float_tensors.append(model_value)
+                else:
+                    ema_value.copy_(model_value)
+
+            if ema_float_tensors:
+                ema_multi_avg_fn(
+                    ema_float_tensors,
+                    model_float_tensors,
+                    n_averaged,
+                )
+
+        self._averaged_model = AveragedModel(
+            model,
+            device=device,
+            multi_avg_fn=multi_avg_fn,
+            use_buffers=True,
+        )
+
+        if model_state is not None:
+            self.model.load_state_dict(model_state)
+
+        self.model.eval()
+
+        for p in self.model.parameters():
+            p.requires_grad_(False)  # noqa: FBT003
+
+        # Important:
+        # AveragedModel normally copies source params on the first update when
+        # n_averaged == 0. The original implementation applied EMA immediately,
+        # so force update_parameters() to use multi_avg_fn from the first call.
+        self._averaged_model.n_averaged.fill_(1)
+
+    @property
+    def model(self) -> nn.Module:
+        """
+        The EMA model: same architecture as the original model, but with EMA
+        parameters/buffers.
+
+        This is a separate model copy managed internally by AveragedModel.
+        """
+        return self._averaged_model.module
+
+    def __call__(self, *args, **kwargs):  # noqa: ANN204
+        return self.model(*args, **kwargs)
+
+    def __getattr__(self, name):  # noqa: ANN204
+        # Preserve convenience access, e.g. ema.some_model_method(...)
+        # without exposing AveragedModel itself.
+        averaged_model = self.__dict__.get("_averaged_model")
+        if averaged_model is not None:
+            return getattr(averaged_model.module, name)
+
+        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        self._averaged_model.update_parameters(model)
+
+    def to(self, device: torch.device | str) -> "ModelEMA":
+        self._averaged_model.to(device)
+        return self
