@@ -1,6 +1,4 @@
-import itertools
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -280,6 +278,7 @@ def train(
             else None
         ),
         stereo_to_mono=config.stereo_to_mono,
+        drop_last=False,
     )
 
     if mlflow_uri is not None and config.mlflow_experiment is not None:
@@ -338,6 +337,7 @@ def train(
             global_step_val_start=checkpoint_metadata.get("global_step_val", 0),
             skip_subtraction=skip_subtraction,
             eval_mono_to_stereo=config.stereo_to_mono,
+            ema=checkpoint_metadata.get("ema_model", None),
             **config.model_hyperparams,
         )
         cp_best_epoch(name, data_base_dir=data_base_dir)
@@ -459,6 +459,9 @@ def evaluate(
     warm_up: Annotated[
         int, typer.Option(..., help="Number of iterations to run for warming up the model before measuring latency.")
     ] = 10,
+    ema: Annotated[
+        bool, typer.Option(..., help="Whether to evaluate the EMA version of the model if it exists in the checkpoint.")
+    ] = False,
 ) -> None:
     """
     Function to compare sample gts and mixes to model outputs.
@@ -481,9 +484,7 @@ def evaluate(
                 )
                 checkpoint_without_pt = checkpoint.replace(".pt", "")
 
-                filename_prefix = (
-                    f"{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
-                )
+                filename_prefix = f"{'ema_' if ema else ''}{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
                 results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
                 aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
                 prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
@@ -501,7 +502,14 @@ def evaluate(
                     eliot.log_message("Using random untrained model for inference.", level="info")
 
                 config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
-                model, _ = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+                model, model_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+                if ema:
+                    if model_metadata.get("ema_model") is None:
+                        raise ValueError(
+                            f"EMA model not found in checkpoint {checkpoint_file} for model {name}. Cannot evaluate EMA version of the model."
+                        )
+                    model = model_metadata["ema_model"].model  # Get MisophoniaANCModel from EMA wrapper
+
                 model.eval()
 
                 dataset_split_dir = model_dir / "webdataset" / split
@@ -528,9 +536,9 @@ def evaluate(
                         else None
                     ),
                     stereo_to_mono=config.stereo_to_mono,
+                    limit=limit_samples,
+                    drop_last=False,
                 )
-                if limit_samples is not None:
-                    split_loader = itertools.islice(split_loader, math.ceil(limit_samples / batch_size))
 
                 res, agg_res = perform_eval(
                     model,

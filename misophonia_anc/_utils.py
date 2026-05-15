@@ -230,6 +230,11 @@ class MisophoniaANCConfig(BaseModel):
         description="Wheater to split each sample into two mono samples, effectively doubling the batch size, i.e. (B, T, 2) -> (2B, T, 1).",
     )
 
+    ema_decay: float | None = pydantic.Field(
+        None,
+        description="Whether to use an exponential moving average of the model weights during training. See train.train_model for details.",
+    )
+
     mlflow_experiment: str | None = pydantic.Field(
         None, description="MLflow experiment name to log training metrics to."
     )
@@ -504,14 +509,18 @@ def make_dataloader(
     if shardshuffle is None:
         shardshuffle = len(files)
 
-    if limit is not None and drop_last:
-        limit = (limit // batch_size) * batch_size
-        assert limit > 0, "`limit` must be at least one full batch when drop_last=True."
+    num_batches = None
+    if limit is not None:
+        if drop_last:
+            num_batches = limit // batch_size
+            assert num_batches > 0, "`limit` must be at least one full batch when drop_last=True."
+        else:
+            num_batches = math.ceil(limit / batch_size)
 
     eliot.log_message(
         f"Loading data from `{files[0]}` to `{Path(files[-1]).name}` with:"
         f" {batch_size=}, {num_workers=} (count = {os.cpu_count()}, allocated = {get_allocated_cpus()}),"
-        f" {limit=}, {drop_last=}, {drop_last=}, {shardshuffle=}, {shuffle_buffer=}",
+        f" {drop_last=}, {drop_last=}, {shardshuffle=}, {shuffle_buffer=}",
         level="debug",
     )
 
@@ -535,35 +544,35 @@ def make_dataloader(
         wds.WebDataset(
             files,
             empty_check=False,
-            resampled=False,  # important: no within-epoch replacement
+            resampled=False,
             shardshuffle=shardshuffle,
             select_files=_include_file,
         )
-        .shuffle(shuffle_buffer)  # sample-level approximate shuffle
+        .shuffle(shuffle_buffer)
         .decode("torch")
+        .batched(
+            batch_size,
+            collation_fn=make_custom_collate_fn(
+                include_metadata=include_metadata,
+                include_isolated_trigger=include_isolated_trigger,
+                include_clean_mix=include_clean_mix,
+                max_length=max_length,
+                stereo_to_mono=stereo_to_mono,
+            ),
+            partial=not drop_last,
+        )
     )
 
-    if limit is not None:
-        # Applied before batching, so this counts unbatched samples.
-        data = data.with_epoch(limit)
-
-    data = data.batched(
-        batch_size,
-        collation_fn=make_custom_collate_fn(
-            include_metadata=include_metadata,
-            include_isolated_trigger=include_isolated_trigger,
-            include_clean_mix=include_clean_mix,
-            max_length=max_length,
-            stereo_to_mono=stereo_to_mono,
-        ),
-        partial=not drop_last,
-    )
-
-    return wds.WebLoader(
+    loader = wds.WebLoader(
         data,
-        batch_size=None,  # We set batch size in the WebDataset pipeline.
+        batch_size=None,  # batching is already done in the WDS pipeline
         num_workers=num_workers,
     )
+
+    if num_batches is not None:
+        loader = loader.with_epoch(num_batches)
+
+    return loader
 
 
 def make_train_data_loader_factory(
@@ -610,7 +619,7 @@ def make_train_data_loader_factory(
         # Rremove some shards to make it go up
         new_total_shards = total_shards - (total_shards % num_uniq_epochs)
         eliot.log_message(
-            f"Warning: total number of shards ({total_shards}) is not divisible by number of unique epochs ({num_uniq_epochs}). "
+            f"Total number of shards ({total_shards}) is not divisible by number of unique epochs ({num_uniq_epochs}). "
             f"To ensure each epoch has the same number of samples, we will only use the first {new_total_shards} shards, and ignore the rest. "
             f"Consider adjusting samples_per_epoch or total_samples to better fit the number of available shards.",
             level="warning",
