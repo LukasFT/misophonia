@@ -5,14 +5,16 @@ Heavily based on https://github.com/vb000/SemanticHearing
 """
 # ruff: noqa: ANN001, ANN002, ANN003 # TODO: Improve quality
 
-import copy
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import eliot
 import mlflow
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 
 from ._utils import GtTargets, MisophoniaANCConfig, get_git_sha, mod_pad
 from .decoder import CausalTransformerDecoder
@@ -458,34 +460,89 @@ class MaskNet(nn.Module):
 
 
 class ModelEMA:
-    def __init__(self, model: nn.Module, decay: float = 0.999, model_state: dict | None = None) -> None:
-        self.model = copy.deepcopy(model).eval()
+    def __init__(
+        self,
+        model: nn.Module,
+        decay: float = 0.999,
+        model_state: dict[str, Any] | None = None,
+        device: torch.device | str | None = None,
+    ) -> None:
+        self.decay = decay
+
+        ema_multi_avg_fn = get_ema_multi_avg_fn(decay)
+
+        def multi_avg_fn(
+            ema_tensors: Sequence[torch.Tensor],
+            model_tensors: Sequence[torch.Tensor],
+            n_averaged: torch.Tensor | int,
+        ) -> None:
+            # AveragedModel calls this on parameter/buffer groups.
+            # Floats/complex tensors get EMA.
+            # Non-floating buffers, e.g. BatchNorm num_batches_tracked, are copied.
+            ema_float_tensors: list[torch.Tensor] = []
+            model_float_tensors: list[torch.Tensor] = []
+
+            for ema_value, model_value in zip(ema_tensors, model_tensors, strict=True):
+                if torch.is_floating_point(ema_value) or torch.is_complex(ema_value):
+                    ema_float_tensors.append(ema_value)
+                    model_float_tensors.append(model_value)
+                else:
+                    ema_value.copy_(model_value)
+
+            if ema_float_tensors:
+                ema_multi_avg_fn(
+                    ema_float_tensors,
+                    model_float_tensors,
+                    n_averaged,
+                )
+
+        self._averaged_model = AveragedModel(
+            model,
+            device=device,
+            multi_avg_fn=multi_avg_fn,
+            use_buffers=True,
+        )
+
         if model_state is not None:
             self.model.load_state_dict(model_state)
-        self.decay = decay
+
+        self.model.eval()
 
         for p in self.model.parameters():
             p.requires_grad_(False)  # noqa: FBT003
+
+        # Important:
+        # AveragedModel normally copies source params on the first update when
+        # n_averaged == 0. The original implementation applied EMA immediately,
+        # so force update_parameters() to use multi_avg_fn from the first call.
+        self._averaged_model.n_averaged.fill_(1)
+
+    @property
+    def model(self) -> nn.Module:
+        """
+        The EMA model: same architecture as the original model, but with EMA
+        parameters/buffers.
+
+        This is a separate model copy managed internally by AveragedModel.
+        """
+        return self._averaged_model.module
 
     def __call__(self, *args, **kwargs):  # noqa: ANN204
         return self.model(*args, **kwargs)
 
     def __getattr__(self, name):  # noqa: ANN204
-        return getattr(self.model, name)
+        # Preserve convenience access, e.g. ema.some_model_method(...)
+        # without exposing AveragedModel itself.
+        averaged_model = self.__dict__.get("_averaged_model")
+        if averaged_model is not None:
+            return getattr(averaged_model.module, name)
+
+        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
 
     @torch.no_grad()
     def update(self, model: nn.Module) -> None:
-        ema_state = self.model.state_dict()
-        model_state = model.state_dict()
+        self._averaged_model.update_parameters(model)
 
-        for key, model_value in model_state.items():
-            ema_value = ema_state[key]
-
-            if torch.is_floating_point(model_value):
-                ema_value.mul_(self.decay).add_(model_value, alpha=1.0 - self.decay)
-            else:
-                ema_value.copy_(model_value)
-
-    def to(self, device: torch.device) -> "ModelEMA":
-        self.model.to(device)
+    def to(self, device: torch.device | str) -> "ModelEMA":
+        self._averaged_model.to(device)
         return self
