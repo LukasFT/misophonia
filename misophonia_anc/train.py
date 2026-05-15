@@ -349,7 +349,7 @@ def train_model(
                 save_aggregated_results_to=ema_aggregated_results_file,
                 save_samples_to=ema_samples_dir,
                 save_num_samples=20,
-                mlflow_global_step=global_step_val_counter,
+                mlflow_global_step=None,  # No not log EMA results on batch level
                 loss_fn=loss_fn,
                 skip_subtraction=skip_subtraction,
                 split_name="val",

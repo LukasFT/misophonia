@@ -508,7 +508,7 @@ def evaluate(
                         raise ValueError(
                             f"EMA model not found in checkpoint {checkpoint_file} for model {name}. Cannot evaluate EMA version of the model."
                         )
-                    model = model_metadata["ema_model"]
+                    model = model_metadata["ema_model"].model  # Get MisophoniaANCModel from EMA wrapper
 
                 model.eval()
 
