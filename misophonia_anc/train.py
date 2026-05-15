@@ -389,10 +389,6 @@ def train_model(
         ckpt_dir = save_dir / "checkpoints"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         ckpt_path = ckpt_dir / f"weights_epoch_{epoch}.pt"
-        ### Debug
-        print(f"Saving checkpoint to {ckpt_path}")
-        print(f"EMA: {ema}")
-        ###
         model.save_checkpoint(
             ckpt_path,
             epoch=epoch,
