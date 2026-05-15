@@ -398,4 +398,5 @@ def train_model(
             val_si_snr=val_si_snr,
             val_loss=val_loss,
             train_loss=train_loss,
+            ema_model=ema,
         )
