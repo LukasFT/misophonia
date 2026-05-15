@@ -619,7 +619,7 @@ def make_train_data_loader_factory(
         # Rremove some shards to make it go up
         new_total_shards = total_shards - (total_shards % num_uniq_epochs)
         eliot.log_message(
-            f"Warning: total number of shards ({total_shards}) is not divisible by number of unique epochs ({num_uniq_epochs}). "
+            f"Total number of shards ({total_shards}) is not divisible by number of unique epochs ({num_uniq_epochs}). "
             f"To ensure each epoch has the same number of samples, we will only use the first {new_total_shards} shards, and ignore the rest. "
             f"Consider adjusting samples_per_epoch or total_samples to better fit the number of available shards.",
             level="warning",
