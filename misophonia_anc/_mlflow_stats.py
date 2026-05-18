@@ -236,15 +236,31 @@ def get_parameters_from_mlflow(run_name: str) -> dict:
 
 
 def get_mlflow_metric_history(
-    run_name: str | Iterable[str], key: str, *, exclude: tuple[str] | None = ("run_id",)
+    run_name: str | Iterable[str], key: str | Iterable[str], *, exclude: tuple[str] | None = ("run_id",)
 ) -> pd.DataFrame:
     if not isinstance(run_name, str):
         run_name = tuple(run_name)
         df = pd.concat([get_mlflow_metric_history(rn, key, exclude=exclude) for rn in run_name], ignore_index=True)
         # Order by run_name as given by the user
         df["run_name"] = pd.Categorical(df["run_name"], categories=run_name, ordered=True)
-        df = df.sort_values("run_name")
+        df = df.sort_values(["run_name", "step", "timestamp"])
         return df
+
+    if not isinstance(key, str):
+        key = tuple(key)
+        # merge on step
+        keys_dfs = {k: get_mlflow_metric_history(run_name, k, exclude=exclude) for k in key}
+        merged = pd.merge(  # noqa: PD015
+            *[keys_dfs[k][["run_name", "step", "timestamp", k]] for k in key],
+            on=["run_name", "step", "timestamp"],
+            how="outer",
+        )
+        # Add cols from first keys_dfs
+        base_key = key[0]
+        for col in keys_dfs[base_key].columns:
+            if col not in merged.columns:
+                merged[col] = keys_dfs[base_key][col]
+        return merged
 
     def _get_data_from_mlflow(run_id: str, key: str) -> pd.DataFrame:
         client = MlflowClient()
@@ -279,7 +295,7 @@ def get_mlflow_metric_history(
         df.to_csv(file, index=False)
 
     if exclude:
-        df = df.drop(columns=list(exclude))
+        df = df.drop(columns=[c for c in exclude if c in df.columns])
 
     col_order = ["run_name", "step", "timestamp"]
     df = df[col_order + [c for c in df.columns if c not in col_order]]
@@ -287,13 +303,7 @@ def get_mlflow_metric_history(
     return df
 
 
-def auto_combine_mean_with_std(
-    run_name: str | Iterable[str], mean_key: str, std_key: str | None = None, *, merge_key: str = "step"
-) -> pd.DataFrame:
-    mean_df = get_mlflow_metric_history(run_name, mean_key)
-    std_key = std_key or f"{mean_key.replace('mean', '')}_std"
-    std_df = get_mlflow_metric_history(run_name, std_key)
-
-    # Merge so all key comes from mean_df except the std_key from std_df
-    df = pd.merge(mean_df, std_df[[merge_key, std_key]], on=merge_key, how="left")  # noqa: PD015
-    return df
+def auto_combine_mean_with_std(run_name: str | Iterable[str], mean_keys: str | Iterable[str]) -> pd.DataFrame:
+    mean_keys = (mean_keys,) if isinstance(mean_keys, str) else tuple(mean_keys)
+    std_keys = tuple(f"{k.replace('mean', '')}_std" for k in mean_keys)
+    return get_mlflow_metric_history(run_name, mean_keys + std_keys)
