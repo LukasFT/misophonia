@@ -378,7 +378,8 @@ def train_model(
             level="debug",
         )
         if mlflow.active_run() is not None:
-            mlflow.log_metrics(epoch_metrics, step=epoch)
+            mlflow_logger.log_metrics(epoch_metrics, step=epoch, synchronous=True)
+            mlflow_logger.flush(synchronous=True)
 
         if scheduler is not None and epoch >= activate_scheduler_after_epoch:
             scheduler.step(epoch_metrics[scheduler_metric])
