@@ -740,6 +740,7 @@ def perform_eval(
     *,
     device: torch.device,
     save_results_to: Path,
+    mlflow_logger: "CustomMlFlowLogger",
     save_aggregated_results_to: Path | None = None,
     aggregated_results_kwargs: dict | None = None,
     calculate_metrics_kwargs: dict | None = None,
@@ -791,11 +792,11 @@ def perform_eval(
     ground_truth_target = model.ground_truth_target
 
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
-    mlflow_logger = CustomMlFlowLogger(allow_inactive=True)  # Allow it to do nothing if MLFlow is not active
+    log_to_mlflow_every = 50 if log_to_mlflow else None # Only log every x batch to MLflow to avoid overloading it
 
     with mlflow_logger, torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
-            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
+            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1): # Log debug even less often
                 _debug_to_mlflow(mlflow_logger, mlflow_global_step, device, prefix="val_")
 
             inputs = batch["inputs"]
@@ -920,17 +921,18 @@ def perform_eval(
 
             if log_to_mlflow:
                 mlflow_global_step.increment()
-                mlflow_logger.log_metrics(
-                    {
-                        "val/batch/si_snr_improvement": np.mean([m["si_snr_improvement"] for m in batch_metrics]),
-                        "val/batch/si_snr": np.mean([m["si_snr"] for m in batch_metrics]),
-                        "val/batch/snr_improvement": np.mean([m["snr_improvement"] for m in batch_metrics]),
-                        "val/batch/snr": np.mean([m["snr"] for m in batch_metrics]),
-                        "val/batch/loss": np.mean([m["loss"] for m in batch_metrics]),
-                    },
-                    step=mlflow_global_step.current,  # Batch step
-                    synchronous=False,
-                )
+                if batch_idx % log_to_mlflow_every == 0:
+                    mlflow_logger.log_metrics(
+                        {
+                            "val/batch/si_snr_improvement": np.mean([m["si_snr_improvement"] for m in batch_metrics]),
+                            "val/batch/si_snr": np.mean([m["si_snr"] for m in batch_metrics]),
+                            "val/batch/snr_improvement": np.mean([m["snr_improvement"] for m in batch_metrics]),
+                            "val/batch/snr": np.mean([m["snr"] for m in batch_metrics]),
+                            "val/batch/loss": np.mean([m["loss"] for m in batch_metrics]),
+                        },
+                        step=mlflow_global_step.current,  # Batch step
+                        synchronous=False,
+                    )
 
     eliot.log_message(f"Saving results to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
@@ -957,8 +959,9 @@ class CustomMlFlowLogger:
         self,
         *,
         flush_queue_size: int = 512,
-        flush_seconds: int = 300,
+        flush_seconds: int = 600,
         allow_inactive: bool = True,
+        error_base_dir: Path | None = None,
     ) -> None:
         # get current mlflow run
         active_run = mlflow.active_run()
@@ -972,10 +975,11 @@ class CustomMlFlowLogger:
 
         self._run_id = active_run.info.run_id
         self._client = mlflow.MlflowClient()
-        self._queue = []
+        self._queue: list[mlflow.entities.Metric] = []
         self._flush_queue_size = flush_queue_size
         self._flush_seconds = flush_seconds
         self._last_flush_time = mlflow.utils.time.get_current_time_millis()
+        self._error_dir = error_base_dir / self._run_id if error_base_dir is not None else None
 
     def log_metrics(self, metrics: dict[str, float], step: int, *, synchronous: bool = False) -> None:
         if self._run_id is None:
@@ -1015,14 +1019,24 @@ class CustomMlFlowLogger:
         if len(self._queue) == 0:
             return
 
-        self._client.log_batch(
-            run_id=self._run_id,
-            metrics=self._queue,
-            params=[],
-            tags=[],
-            synchronous=synchronous,
-        )
+        queue = self._queue
         self._queue = []
+        try:
+            self._client.log_batch(
+                run_id=self._run_id,
+                metrics=queue,
+                params=[],
+                tags=[],
+                synchronous=synchronous,
+            )
+        except Exception as e:
+            eliot.log_message(f"Error logging metrics to MLflow: {e}", level="error")
+            if self._error_dir is not None:
+                self._error_dir.mkdir(exist_ok=True, parents=True)
+                error_file = self._error_dir / f"mlflow_log_error_{mlflow.utils.time.get_current_time_millis()}.json"
+                with error_file.open("w") as f:
+                    json.dump([metric.to_dictionary() for metric in queue], f)
+                eliot.log_message(f"Saved failed metrics to {error_file}", level="info")
 
     def __enter__(self) -> "CustomMlFlowLogger":
         return self

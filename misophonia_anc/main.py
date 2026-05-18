@@ -20,6 +20,7 @@ from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
 from ._utils import (
+    CustomMlFlowLogger,
     MisophoniaANCConfig,
     get_allocated_cpus,
     get_git_sha,
@@ -482,9 +483,9 @@ def evaluate(
                     f"Evaluating model {name} on split {split} using checkpoint {checkpoint} with limit_samples={limit_samples} and save_samples={save_samples}...",
                     level="info",
                 )
-                checkpoint_without_pt = checkpoint.replace(".pt", "")
+                checkpoint_name = f"{'ema_' if ema else ''}{checkpoint.replace('.pt', '')}"
 
-                filename_prefix = f"{'ema_' if ema else ''}{checkpoint_without_pt}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+                filename_prefix = f"{checkpoint_name}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
                 results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
                 aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
                 prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
@@ -493,7 +494,7 @@ def evaluate(
                 if save_samples == 0:
                     samples_dir = None
                 else:
-                    samples_dir = model_dir / "samples" / checkpoint_without_pt / split
+                    samples_dir = model_dir / "samples" / checkpoint_name / split
                     prepare_dir_or_file(samples_dir, overwrite=overwrite, is_dir=True)
 
                 checkpoint_file = model_dir / "checkpoints" / checkpoint
@@ -563,6 +564,7 @@ def evaluate(
                     device=device,
                     warm_up_iters=warm_up,
                     loss_fn=get_loss_fn_from_name(config.loss_option),
+                    mlflow_logger=CustomMlFlowLogger(), # Inactive
                 )
 
                 eliot.log_message(
