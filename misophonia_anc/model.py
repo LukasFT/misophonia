@@ -362,8 +362,8 @@ class MisophoniaANCNet(nn.Module):
             model.load_state_dict(state_dict)
 
             # Load EMA:
-            ema_state = metadata.pop("ema_model_state")  # Remove EMA state from metadata to avoid confusion
-            ema_decay = metadata.pop("ema_decay")  # Remove EMA decay from metadata to avoid confusion
+            ema_state = metadata.pop("ema_model_state", None)  # Remove EMA state from metadata to avoid confusion
+            ema_decay = metadata.pop("ema_decay", None)  # Remove EMA decay from metadata to avoid confusion
             assert (ema_state is None) == (ema_decay is None), (
                 "EMA state and decay must both be present or both be None in the checkpoint."
             )
