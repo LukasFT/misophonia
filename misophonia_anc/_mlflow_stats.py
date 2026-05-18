@@ -1,3 +1,4 @@
+import json
 import os
 from collections.abc import Iterable
 
@@ -18,14 +19,20 @@ RUN_INDEX = {
     "model-super-base": {
         "pretty": "Super (base)",
         "mlflow": "a969b8ffed29474da91cea6436ca317a",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
     },
     "model-super-mono-channel": {
         "pretty": "Super (mono)",
         "mlflow": "431f7f510633433bb1ec66d2ecc8c3ee",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
     },
     "model-super-gt-clean-mix": {
         "pretty": "Super (clean mix)",
         "mlflow": "b0677e3b9af247af85808a6d4a708171",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
     },
     # Baselines:
     "model-baseline-rep1": {
@@ -71,19 +78,30 @@ RUN_INDEX = {
     "model-size-2k": {
         "pretty": "2k training mixtures",
         "mlflow": "57bd74b49fcf4168ac252920e914afa3",
+        "train_size": 2_000,
     },
     "model-size-50k": {
         "pretty": "50k training mixtures",
         "mlflow": "f3543ddd6ec14b8a849c1c83e6eb5b72",
+        "train_size": 50_000,
     },
     "model-size-200k": {  # NOTE: This should be limited to the first 4 epochs, even though it ran for longer
         "pretty": "200k training mixtures",
         "mlflow": "07c8ba67420a4e3388bba31e5179a677",
+        "train_size": 200_000,
+    },
+    "model-size-10k-of-200k": {
+        "pretty": "200k training mixtures (10k per sub-epoch)",
+        "mlflow": "a1ddcd5182d244069014040c171f7f97",
+        "train_size": 200_000,
+        "train_size_per_epoch": 10_000,
+        "better_shuffle": True,
     },
     # Length
     "model-length-1sec": {
         "pretty": "1s training mixtures",
         "mlflow": "9dc0f915ec034e108dcd912efd26566e",
+        "better_shuffle": True,
     },
     "model-7sec6batch": {
         "pretty": "7s training mixtures",
@@ -104,6 +122,11 @@ RUN_INDEX = {
         "mlflow": "b54ca05bf66349538cbd1a5adb755563",
     },
     # Optimization
+    "model-bettershuffle": {
+        "pretty": "Improved shuffling",
+        "mlflow": "b265e06cce5343789e4a4e599aedda3d",
+        "better_shuffle": True,
+    },
     "model-lr-0.0001-wd-0.00": {
         "pretty": "lr 0.0001",
         "mlflow": "712d808508c549c080b75471d0fb03fa",
@@ -127,30 +150,37 @@ RUN_INDEX = {
     "model-gradclip-1": {
         "pretty": "Gradient clipping to 1",
         "mlflow": "8befa61b277e4b6a918dc67beb4d4385",
+        "better_shuffle": True,
     },
     "model-gradclip-5": {
         "pretty": "Gradient clipping to 5",
         "mlflow": "176b7070fbc84e76ba0fab39eed5f7df",
+        "better_shuffle": True,
     },
     "model-dropout-dec-0.05": {
         "pretty": "Dropout (dec. 0.05)",
         "mlflow": "13f54216d5664cb79b14896335aa45a7",
+        "better_shuffle": True,
     },
     "model-dropout-enc-0.05": {
         "pretty": "Dropout (enc. 0.05)",
         "mlflow": "318ab952282940028e0a116396e7fcb7",
+        "better_shuffle": True,
     },
     "model-dropout-dec-0.2": {
         "pretty": "Dropout (dec. 0.2)",
         "mlflow": "f363a3b52cde4d85ace50d48dfad3b2f",
+        "better_shuffle": True,
     },
     "model-dropout-dec-0.5": {
         "pretty": "Dropout (dec. 0.5)",
         "mlflow": "bd6a7905116e49aa880e638dbc1b521a",
+        "better_shuffle": True,
     },
     "model-ema-0.999": {
         "pretty": "EMA (decay of 0.999)",
         "mlflow": "ae6b215ad8a64fa38372a5f178b0a298",
+        "better_shuffle": True,
     },
     # Control items
     "model-control-0.05": {
@@ -165,26 +195,47 @@ RUN_INDEX = {
 }
 
 
-def get_data_from_mlflow(run_id: str, key: str) -> pd.DataFrame:
-    client = MlflowClient()
-    history = client.get_metric_history(run_id, key)
+def get_pretty_name(run_name: str) -> str:
+    pretty = RUN_INDEX.get(run_name, {}).get("pretty")
+    if pretty is None:
+        raise ValueError(f"Run name {run_name} not found in index")
+    return pretty
 
-    df = pd.DataFrame(
-        [
-            {
-                "run_id": run_id,
-                "step": m.step,
-                m.key: m.value,
-                "timestamp": m.timestamp,
-            }
-            for m in history
-        ]
-    )
 
-    if not df.empty:
-        df = df.sort_values(["step", "timestamp"])
+def get_parameters_from_mlflow(run_name: str) -> dict:
 
-    return df
+    def _download_all_params(run_id: str) -> dict:
+        client = MlflowClient()
+
+        download_dir = MLFLOW_CACHE_DIR / f"{run_id}_params"
+        download_dir.mkdir(exist_ok=True)
+
+        # Get all artifacts that is parameters_xyz.json (for each key)
+        artifacts = client.list_artifacts(run_id)
+        param_files = [a for a in artifacts if a.path.startswith("parameters_") and a.path.endswith(".json")]
+        params = {}
+        for param_file in param_files:
+            key = param_file.path[len("parameters_") : -len(".json")]
+            local_path = download_dir / param_file.path
+            client.download_artifacts(run_id, param_file.path, local_path.parent)
+            with open(local_path) as f:
+                params[key] = json.load(f)
+
+        return params
+
+    run_id = RUN_INDEX.get(run_name, {}).get("mlflow")
+    if run_id is None:
+        raise ValueError(f"Run name {run_name} not found in index")
+
+    all_params_file = MLFLOW_CACHE_DIR / f"{run_id}_all_params.json"
+    if all_params_file.exists():
+        with open(all_params_file) as f:
+            return json.load(f)
+    else:
+        params = _download_all_params(run_id)
+        with open(all_params_file, "w") as f:
+            json.dump(params, f)
+        return params
 
 
 def get_mlflow_metric_history(
@@ -193,6 +244,27 @@ def get_mlflow_metric_history(
     if not isinstance(run_name, str):
         return pd.concat([get_mlflow_metric_history(rn, key, exclude=exclude) for rn in run_name], ignore_index=True)
 
+    def _get_data_from_mlflow(run_id: str, key: str) -> pd.DataFrame:
+        client = MlflowClient()
+        history = client.get_metric_history(run_id, key)
+
+        df = pd.DataFrame(
+            [
+                {
+                    "run_id": run_id,
+                    "step": m.step,
+                    m.key: m.value,
+                    "timestamp": m.timestamp,
+                }
+                for m in history
+            ]
+        )
+
+        if not df.empty:
+            df = df.sort_values(["step", "timestamp"])
+
+        return df
+
     run_id = RUN_INDEX.get(run_name, {}).get("mlflow")
     if run_id is None:
         raise ValueError(f"Run name {run_name} not found in index")
@@ -200,7 +272,7 @@ def get_mlflow_metric_history(
     if file.exists():
         df = pd.read_csv(file)
     else:
-        df = get_data_from_mlflow(run_id, key)
+        df = _get_data_from_mlflow(run_id, key)
         df["run_name"] = run_name
         df.to_csv(file, index=False)
 
