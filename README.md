@@ -109,23 +109,91 @@ python -m misophonia_dataset.main generate canonical-v1-reproduced train -n 2000
 
 
 ## Misophonia ANC model
+Training and evaluation of the selective ANC model are handled through the model CLI.
 
-TODO: Improve description for ANC model here.
-
-### Using the model CLI
-
-See the commands to train and evaluate the model in the `misophonia_anc` package. For more details on options, run:
+For detailed options and arguments, run:
 
 ```bash
 python -m misophonia_anc.main preprocess --help
-python -m misophonia_anc.main train --help  # For more details on options
+python -m misophonia_anc.main train --help
 python -m misophonia_anc.main evaluate --help
+python -m misophonia_anc.main cp_best_epoch --help
+python -m misophonia_anc.main visualize_data --help
 ```
 
-#### Preprocess Misophonia Dataset
+### Preprocessing
 
-We first preprocess the misophonia dataset to discard all irrelevant metadata. We can either run 
+To preprocess the dataset into `data/model-v1` for training, run the following command from the project root:
+
 ```bash
-python -m misophonia_anc.main preprocess
-``` 
-with a `PremadeMisophoniaDataset` object or a `GeneratedMisophoniaDataset` object. For the former, specify the `base_dir` field. For the latter, specify the `source_data` and `save_dir` fields. It is assumed that the source data has already been downloaded. `name` and `split-name` must be specified for both.
+python -m misophonia_anc.preprocess model-v1 --split train --split val --split test
+```
+
+A `config.yaml` file is required in `data/model-v1/`. This configuration file defines:
+
+- Dataset generation parameters:
+  - Number of binaural mixes per split
+  - Trigger-to-control ratio
+  - Desired SNR range
+  - Number of background sounds per mix
+  - Trigger subtraction methods for evaluation
+- Training settings
+  - Number of epochs
+  - Batch size
+  - Loss function
+  - Trigger subtraction methods
+- Model parameters
+- Model hyperparameters
+
+See `data/model-v1/config.yaml` for an example configuration.
+
+Generated datasets for each split are compressed and saved under:
+
+```text
+data/model-v1/webdataset/<split-name>
+```
+
+### Training
+
+Once the dataset has been generated and with a ready `config.yaml`, training can be started with:
+
+```bash
+python -m misophonia_anc.train model-v1
+```
+
+All major training settings are controlled through `config.yaml`.
+
+For implementation details, see:
+
+- `train_model` in `misophonia_anc/train.py`
+- `MisophoniaANCNet` in `misophonia_anc/model.py`
+
+At the end of each epoch, a checkpoint containing model weights and metadata is saved to:
+
+```text
+data/model-v1/checkpoints
+```
+
+If training is interrupted (for example during epoch 6), training can be resumed from epoch 5 with:
+
+```bash
+python -m misophonia_anc.train model-v1 --checkpoint weights_epoch_5.pt
+```
+
+Additional options:
+
+- `--resume-mlflow` — Resume logging to an existing MLflow experiment
+- `--reset-epoch` — Reset the epoch counter to `0`
+- `--skip-subtraction` — Skip evaluation metrics based on subtraction methods
+
+Subtraction methods are configured in `config.yaml` and implemented in:
+
+```text
+misophonia_anc/subtraction_methods.py
+```
+
+Using `--skip-subtraction` during training is generally not recommended.
+
+### Evaluation
+
+TODO
