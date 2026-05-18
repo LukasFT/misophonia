@@ -335,7 +335,7 @@ def train_model(
             # Same as results_file etc. but with ema_ prefix
             ema_results_file = results_file.with_name(f"ema_{results_file.name}")
             ema_aggregated_results_file = aggregated_results_file.with_name(f"ema_{aggregated_results_file.name}")
-            ema_samples_dir = samples_dir.with_name(f"ema_{samples_dir.name}")
+            ema_samples_dir = samples_dir.parent.with_name(f"ema_{samples_dir.parent.name}") / samples_dir.name
 
             prepare_dir_or_file(ema_results_file, overwrite=True, is_dir=False)
             prepare_dir_or_file(ema_aggregated_results_file, overwrite=True, is_dir=False)
