@@ -791,11 +791,12 @@ def perform_eval(
     ground_truth_target = model.ground_truth_target
 
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
+    log_to_mlflow_every = 50 if log_to_mlflow else None # Only log every x batch to MLflow to avoid overloading it
     mlflow_logger = CustomMlFlowLogger(allow_inactive=True)  # Allow it to do nothing if MLFlow is not active
 
     with mlflow_logger, torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
-            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):
+            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1): # Log debug even less often
                 _debug_to_mlflow(mlflow_logger, mlflow_global_step, device, prefix="val_")
 
             inputs = batch["inputs"]
@@ -920,17 +921,18 @@ def perform_eval(
 
             if log_to_mlflow:
                 mlflow_global_step.increment()
-                mlflow_logger.log_metrics(
-                    {
-                        "val/batch/si_snr_improvement": np.mean([m["si_snr_improvement"] for m in batch_metrics]),
-                        "val/batch/si_snr": np.mean([m["si_snr"] for m in batch_metrics]),
-                        "val/batch/snr_improvement": np.mean([m["snr_improvement"] for m in batch_metrics]),
-                        "val/batch/snr": np.mean([m["snr"] for m in batch_metrics]),
-                        "val/batch/loss": np.mean([m["loss"] for m in batch_metrics]),
-                    },
-                    step=mlflow_global_step.current,  # Batch step
-                    synchronous=False,
-                )
+                if batch_idx % log_to_mlflow_every == 0:
+                    mlflow_logger.log_metrics(
+                        {
+                            "val/batch/si_snr_improvement": np.mean([m["si_snr_improvement"] for m in batch_metrics]),
+                            "val/batch/si_snr": np.mean([m["si_snr"] for m in batch_metrics]),
+                            "val/batch/snr_improvement": np.mean([m["snr_improvement"] for m in batch_metrics]),
+                            "val/batch/snr": np.mean([m["snr"] for m in batch_metrics]),
+                            "val/batch/loss": np.mean([m["loss"] for m in batch_metrics]),
+                        },
+                        step=mlflow_global_step.current,  # Batch step
+                        synchronous=False,
+                    )
 
     eliot.log_message(f"Saving results to {save_results_to}", level="info")
     with save_results_to.open("w") as f:
