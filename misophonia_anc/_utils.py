@@ -957,7 +957,7 @@ class CustomMlFlowLogger:
         self,
         *,
         flush_queue_size: int = 512,
-        flush_seconds: int = 300,
+        flush_seconds: int = 600,
         allow_inactive: bool = True,
     ) -> None:
         # get current mlflow run
