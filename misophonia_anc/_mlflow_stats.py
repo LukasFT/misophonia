@@ -196,10 +196,7 @@ RUN_INDEX = {
 
 
 def get_pretty_name(run_name: str) -> str:
-    pretty = RUN_INDEX.get(run_name, {}).get("pretty")
-    if pretty is None:
-        raise ValueError(f"Run name {run_name} not found in index")
-    return pretty
+    return RUN_INDEX.get(run_name, {}).get("pretty", run_name)
 
 
 def get_parameters_from_mlflow(run_name: str) -> dict:
@@ -242,7 +239,12 @@ def get_mlflow_metric_history(
     run_name: str | Iterable[str], key: str, *, exclude: tuple[str] | None = ("run_id",)
 ) -> pd.DataFrame:
     if not isinstance(run_name, str):
-        return pd.concat([get_mlflow_metric_history(rn, key, exclude=exclude) for rn in run_name], ignore_index=True)
+        run_name = tuple(run_name)
+        df = pd.concat([get_mlflow_metric_history(rn, key, exclude=exclude) for rn in run_name], ignore_index=True)
+        # Order by run_name as given by the user
+        df["run_name"] = pd.Categorical(df["run_name"], categories=run_name, ordered=True)
+        df = df.sort_values("run_name")
+        return df
 
     def _get_data_from_mlflow(run_id: str, key: str) -> pd.DataFrame:
         client = MlflowClient()
@@ -281,11 +283,12 @@ def get_mlflow_metric_history(
 
     col_order = ["run_name", "step", "timestamp"]
     df = df[col_order + [c for c in df.columns if c not in col_order]]
+    df["pretty_name"] = df["run_name"].apply(get_pretty_name)
     return df
 
 
 def auto_combine_mean_with_std(
-    run_name: str, mean_key: str, std_key: str | None = None, *, merge_key: str = "step"
+    run_name: str | Iterable[str], mean_key: str, std_key: str | None = None, *, merge_key: str = "step"
 ) -> pd.DataFrame:
     mean_df = get_mlflow_metric_history(run_name, mean_key)
     std_key = std_key or f"{mean_key.replace('mean', '')}_std"
