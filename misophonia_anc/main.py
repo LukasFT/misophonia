@@ -20,6 +20,7 @@ from misophonia_dataset.main import get_dataset_from_name
 from misophonia_dataset.misophonia_dataset import GeneratedMisophoniaDataset, PremadeMisophoniaDataset
 
 from ._utils import (
+    CustomMlFlowLogger,
     MisophoniaANCConfig,
     get_allocated_cpus,
     get_git_sha,
@@ -563,6 +564,7 @@ def evaluate(
                     device=device,
                     warm_up_iters=warm_up,
                     loss_fn=get_loss_fn_from_name(config.loss_option),
+                    mlflow_logger=CustomMlFlowLogger(), # Inactive
                 )
 
                 eliot.log_message(

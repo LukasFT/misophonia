@@ -135,6 +135,7 @@ def train_epoch(
     step_counter: SimpleCounter,
     epoch: int = 0,
     loss_fn: Callable = _time_loss,
+    mlflow_logger: CustomMlFlowLogger,
     gradient_clip_max_norm: float | None = None,
     ema: "ModelEMA | None" = None,
 ) -> tuple[float, float]:
@@ -142,8 +143,6 @@ def train_epoch(
 
     batch_train_losses = []
     log_to_mlflow_every = 500 if mlflow.active_run() is not None else None  # Only log batch metrics for every x batches
-    mlflow_logger = CustomMlFlowLogger()
-
     with mlflow_logger:
         for batch_idx, batch in tqdm(enumerate(train_loader), desc=f"Training (epoch {epoch})", unit="batch"):
             # Debug even less often than log_to_mlflow_every:
@@ -270,6 +269,7 @@ def train_model(
 
     global_step_train_counter = SimpleCounter(global_step_train_start)
     global_step_val_counter = SimpleCounter(global_step_val_start)
+    mlflow_logger = CustomMlFlowLogger(error_base_dir=save_dir / "mlflow_errors")
 
     for epoch in range(checkpoint_epoch + 1, n_epochs + 1):
         # Perform train epoch
@@ -284,6 +284,7 @@ def train_model(
             epoch=epoch,
             gradient_clip_max_norm=gradient_clip_max_norm,
             ema=ema,
+            mlflow_logger=mlflow_logger,
         )
 
         # Perform val epoch
@@ -308,6 +309,7 @@ def train_model(
             skip_subtraction=skip_subtraction,
             split_name="val",
             mono_to_stereo=eval_mono_to_stereo,
+            mlflow_logger=mlflow_logger,
         )
 
         val_si_snr = eval_results_agg["x"]["si_snr_mean"]
@@ -354,6 +356,7 @@ def train_model(
                 skip_subtraction=skip_subtraction,
                 split_name="val",
                 mono_to_stereo=eval_mono_to_stereo,
+                mlflow_logger=mlflow_logger,
             )
             epoch_metrics.update(
                 {
