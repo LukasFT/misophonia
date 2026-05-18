@@ -14,6 +14,20 @@ assert all(k in os.environ for k in ["MLFLOW_TRACKING_URI", "MLFLOW_TRACKING_USE
 )
 
 RUN_INDEX = {
+    # Super models:
+    "model-super-base": {
+        "pretty": "Super (base)",
+        "mlflow": "a969b8ffed29474da91cea6436ca317a",
+    },
+    "model-super-mono-channel": {
+        "pretty": "Super (mono)",
+        "mlflow": "431f7f510633433bb1ec66d2ecc8c3ee",
+    },
+    "model-super-gt-clean-mix": {
+        "pretty": "Super (clean mix)",
+        "mlflow": "b0677e3b9af247af85808a6d4a708171",
+    },
+    # Baselines:
     "model-baseline-rep1": {
         "pretty": "Baseline",  # Median
         "mlflow": "c55334de5ae549c8a02813ed6f0f3308",
@@ -26,12 +40,96 @@ RUN_INDEX = {
         "pretty": "Baseline (rep. 3)",
         "mlflow": "b89eb23a8a1445fc95f77cd89a7cf6f1",
     },
+    # Mono:
+    "model-channels-monosplit": {
+        "pretty": "Split into mono channels",
+        "mlflow": "412edfa2f7db4b35ae049c3737e9edc8",
+    },
+    # Dimensions:
+    "model-d-128": {
+        "pretty": "Dim. 128",
+        "mlflow": "e501b517826d44678abf18e09d1293f1",
+    },
+    "model-d-512": {
+        "pretty": "Dim. 512",
+        "mlflow": "3e482564a75446e5b51a386a0cdcff2f",
+    },
+    # SNR ratio
+    "model-ratio-0-5": {
+        "pretty": "Ratio 0-5",
+        "mlflow": "f0da4c6b14774b7d9b244ff177b7a528",
+    },
+    "model-ratio-10-15": {
+        "pretty": "Ratio 10-15",
+        "mlflow": "9ac5af547ffc425bab736272a3d2d0ad",
+    },
+    "model-ratio-0-15": {
+        "pretty": "Ratio 0-15",
+        "mlflow": "37e9b4bddc244e42810b788d56ba1ee8",
+    },
+    # Size
+    "model-size-2k": {
+        "pretty": "2k training mixtures",
+        "mlflow": "57bd74b49fcf4168ac252920e914afa3",
+    },
+    "model-size-50k": {
+        "pretty": "50k training mixtures",
+        "mlflow": "f3543ddd6ec14b8a849c1c83e6eb5b72",
+    },
+    "model-size-200k": {  # NOTE: This should be limited to the first 4 epochs, even though it ran for longer
+        "pretty": "200k training mixtures",
+        "mlflow": "07c8ba67420a4e3388bba31e5179a677",
+    },
+    # Length
+    "model-length-1sec": {
+        "pretty": "1s training mixtures",
+        "mlflow": "9dc0f915ec034e108dcd912efd26566e",
+    },
+    "model-7sec6batch": {
+        "pretty": "7s training mixtures",
+        "mlflow": "e908372ec2fa4daf8bbeb31e40ef3b03",
+    },
+    # Number of background items
+    "model-backgrounds-1-3": {
+        "pretty": "1-3 background items",
+        "mlflow": "af303192fa4749ec80d36d9e0c347583",
+    },
+    # Loss
+    "model-loss-with-si-snr": {
+        "pretty": "10 pct. SI-SNR loss",
+        "mlflow": "855c528c378145c19b6e50ba7b3f108d",
+    },
+    "model-loss-freq": {
+        "pretty": "Frequency-domain loss",
+        "mlflow": "b54ca05bf66349538cbd1a5adb755563",
+    },
+    # Optimization
+    "model-lr-0.0001-wd-0.00": {
+        "pretty": "lr 0.0001",
+        "mlflow": "712d808508c549c080b75471d0fb03fa",
+    },
+    "model-lr-0.0001-wd-0.01": {
+        "pretty": "lr 0.0001, wd 0.01",
+        "mlflow": "56f61434e9624828a49e6135d28c89cb",
+    },
+    "model-lr-0.0005-wd-0.005": {
+        "pretty": "wd 0.005",
+        "mlflow": "9ef2eda806134dad9be3616ee57001ab",
+    },
+    "model-lr-half-on-5plateau-after-40": {
+        "pretty": "Pleateau scheduler",
+        "mlflow": "5042d9be383040228183d1e8faea5cd6",
+    },
+    "model-lr-half-on-5plateau-after-40-wd-0.001": {
+        "pretty": "Pleateau scheduler, wd 0.001",
+        "mlflow": "dca5c507ff52421a88e85051180bfce4",
+    },
     "model-gradclip-1": {
-        "pretty": "Gradient clipping (1.0)",
+        "pretty": "Gradient clipping to 1",
         "mlflow": "8befa61b277e4b6a918dc67beb4d4385",
     },
     "model-gradclip-5": {
-        "pretty": "Gradient clipping (5.0)",
+        "pretty": "Gradient clipping to 5",
         "mlflow": "176b7070fbc84e76ba0fab39eed5f7df",
     },
     "model-dropout-dec-0.05": {
@@ -50,9 +148,19 @@ RUN_INDEX = {
         "pretty": "Dropout (dec. 0.5)",
         "mlflow": "bd6a7905116e49aa880e638dbc1b521a",
     },
-    "model-lr-0.0005-wd-0.005": {
-        "pretty": "Weight Decay (0.005)",
-        "mlflow": "9ef2eda806134dad9be3616ee57001ab",
+    "model-ema-0.999": {
+        "pretty": "EMA (decay of 0.999)",
+        "mlflow": "ae6b215ad8a64fa38372a5f178b0a298",
+    },
+    # Control items
+    "model-control-0.05": {
+        "pretty": "5 pct. control items",
+        "mlflow": "09a4992488cd4154b76ae069d3fb4f8b",
+    },
+    # Number of trigger items
+    "model-foregrounds-1-2": {
+        "pretty": "1-2 foreground items",
+        "mlflow": "be91f4ec22c048b2a050d7ec1266d5ac",
     },
 }
 
