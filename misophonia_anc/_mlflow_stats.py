@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 from collections.abc import Iterable
@@ -128,32 +129,32 @@ RUN_INDEX = {
         "better_shuffle": True,
     },
     "model-lr-0.0001-wd-0.00": {
-        "pretty": "lr 0.0001",
+        "pretty": "Learning rate (0.0001)",
         "mlflow": "712d808508c549c080b75471d0fb03fa",
     },
     "model-lr-0.0001-wd-0.01": {
-        "pretty": "lr 0.0001, wd 0.01",
+        "pretty": "Learning rate (0.0001), weight decay (0.01)",
         "mlflow": "56f61434e9624828a49e6135d28c89cb",
     },
     "model-lr-0.0005-wd-0.005": {
-        "pretty": "wd 0.005",
+        "pretty": "Weight decay (0.005)",
         "mlflow": "9ef2eda806134dad9be3616ee57001ab",
     },
     "model-lr-half-on-5plateau-after-40": {
-        "pretty": "Pleateau scheduler",
+        "pretty": "Plateau scheduler",
         "mlflow": "5042d9be383040228183d1e8faea5cd6",
     },
     "model-lr-half-on-5plateau-after-40-wd-0.001": {
-        "pretty": "Pleateau scheduler, wd 0.001",
+        "pretty": "Plateau scheduler, weight decay (0.001)",
         "mlflow": "dca5c507ff52421a88e85051180bfce4",
     },
     "model-gradclip-1": {
-        "pretty": "Gradient clipping to 1",
+        "pretty": "Gradient clipping (max 1)",
         "mlflow": "8befa61b277e4b6a918dc67beb4d4385",
         "better_shuffle": True,
     },
     "model-gradclip-5": {
-        "pretty": "Gradient clipping to 5",
+        "pretty": "Gradient clipping (max 5)",
         "mlflow": "176b7070fbc84e76ba0fab39eed5f7df",
         "better_shuffle": True,
     },
@@ -250,11 +251,8 @@ def get_mlflow_metric_history(
         key = tuple(key)
         # merge on step
         keys_dfs = {k: get_mlflow_metric_history(run_name, k, exclude=exclude) for k in key}
-        merged = pd.merge(  # noqa: PD015
-            *[keys_dfs[k][["run_name", "step", "timestamp", k]] for k in key],
-            on=["run_name", "step", "timestamp"],
-            how="outer",
-        )
+        dfs = [keys_dfs[k][["run_name", "step", "timestamp", k]] for k in key]
+        merged = functools.reduce(lambda l, r: pd.merge(l, r, on=["run_name", "step", "timestamp"], how="outer"), dfs)  # noqa: PD015
         # Add cols from first keys_dfs
         base_key = key[0]
         for col in keys_dfs[base_key].columns:
