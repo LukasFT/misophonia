@@ -1,54 +1,61 @@
 #!/usr/bin/env python3
 """
-Export MisophoniaANCNet as a fixed-shape ONNX streaming step for Android.
+Export one or more MisophoniaANCNet checkpoints as fixed-shape ONNX streaming
+steps for the Android proof-of-concept app.
 
-Usage:
+Example:
     python -m android.export \
-        --checkpoint data/YOUR_RUN/checkpoints/best_weights.pt \
-        --output export/misophonia_anc_step.onnx \
-        --label-index 0 \
-        --use-ema
+        --model "aux-ft-all=data/model-aux-ft-all/checkpoints/weights_epoch_11.pt" \
+        --model "baseline=data/model-baseline/checkpoints/weights_epoch_20.pt"
 
-Install export dependencies:
-    pip install onnx onnxruntime
+Each --model must be NAME=CHECKPOINT_PATH.
 
-Android-side call pattern:
-    x, enc_buf, dec_buf, out_buf = session.run(
-        ["x", "new_enc_buf", "new_dec_buf", "new_out_buf"],
-        {
-            "mix": mix,
-            "label": label,
-            "enc_buf": enc_buf,
-            "dec_buf": dec_buf,
-            "out_buf": out_buf,
-        },
-    )
+For each checkpoint:
+    - raw model weights are exported as NAME
+    - EMA weights are also exported as NAME (EMA), if present in the checkpoint
+
+Outputs are written directly to:
+    android/poc/app/src/main/assets/
+
+The Android app should read:
+    misophonia_anc_models.json
+
+and let the user choose between the exported models.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
+import re
 from pathlib import Path
+from typing import Annotated, Any
 
 import numpy as np
 import onnxruntime as ort
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+import typer
 
 from misophonia_anc.model import MisophoniaANCNet
+
+app = typer.Typer(no_args_is_help=True)
+
+CLASS_NAMES = [
+    "chewing_gum",
+    "clearing_throat",
+    "human_breathing",
+    "knife_cutting",
+    "plastic_crumpling",
+    "swallowing",
+    "typing",
+    "water_drops",
+]
 
 
 class MobileANCStep(nn.Module):
     """
     Fixed-shape mobile inference wrapper.
-
-    This wrapper exports one streaming step. It deliberately avoids:
-      - dict inputs,
-      - optional buffer initialization,
-      - subtraction methods,
-      - Python-side variable return types.
 
     Inputs:
         mix:     [1, 2, chunk_samples]
@@ -68,9 +75,6 @@ class MobileANCStep(nn.Module):
         super().__init__()
         self.model = model.eval()
         self.chunk_samples = int(chunk_samples)
-
-        # The exported mobile step should only output the direct model estimate.
-        # Subtraction can be done outside the graph later if needed.
         self.model._subtraction_methods = {}
 
     def forward(
@@ -81,11 +85,6 @@ class MobileANCStep(nn.Module):
         dec_buf: torch.Tensor,
         out_buf: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        # For the current model, lookahead=True means the normal forward path
-        # pads by L samples on both sides before predict().
-        #
-        # We hard-code the fixed-shape prototype case:
-        #   chunk_samples must already be divisible by L.
         if self.model.lookahead:
             mix = F.pad(mix, (self.model.L, self.model.L))
 
@@ -100,37 +99,84 @@ class MobileANCStep(nn.Module):
         return x, enc_buf, dec_buf, out_buf
 
 
-def load_model_from_checkpoint(
-    checkpoint_path: Path,
-    *,
-    use_ema: bool,
-    device: torch.device,
-) -> MisophoniaANCNet:
+def parse_model_spec(spec: str) -> tuple[str, Path]:
+    if "=" not in spec:
+        raise typer.BadParameter(f"Invalid --model value {spec!r}. Expected format: NAME=CHECKPOINT_PATH.")
+
+    name, checkpoint = spec.split("=", 1)
+    name = name.strip()
+    checkpoint_path = Path(checkpoint.strip())
+
+    if not name:
+        raise typer.BadParameter(f"Invalid --model value {spec!r}: name is empty.")
+
+    if not checkpoint_path.is_file():
+        raise typer.BadParameter(f"Checkpoint does not exist: {checkpoint_path}")
+
+    return name, checkpoint_path
+
+
+def sanitize_asset_stem(name: str) -> str:
+    stem = name.lower()
+    stem = re.sub(r"\s+", "_", stem)
+    stem = re.sub(r"[^a-z0-9_.-]+", "_", stem)
+    stem = re.sub(r"_+", "_", stem)
+    return stem.strip("_") or "model"
+
+
+def load_checkpoint(checkpoint_path: Path, *, device: torch.device) -> dict[str, Any]:
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
     if "hyperparameters" not in checkpoint:
         raise KeyError(
-            "Checkpoint does not contain 'hyperparameters'. "
-            "This script expects checkpoints saved with model.save_checkpoint()."
+            f"{checkpoint_path} does not contain 'hyperparameters'. "
+            "Expected a checkpoint saved with MisophoniaANCNet.save_checkpoint()."
         )
 
+    if "model_state" not in checkpoint:
+        raise KeyError(f"{checkpoint_path} does not contain 'model_state'.")
+
+    return checkpoint
+
+
+def build_model_from_state(
+    checkpoint: dict[str, Any],
+    *,
+    use_ema: bool,
+    device: torch.device,
+) -> MisophoniaANCNet:
     model_params = dict(checkpoint["hyperparameters"])
     model = MisophoniaANCNet(**model_params).to(device)
 
     if use_ema:
         ema_state = checkpoint.get("ema_model_state")
         if ema_state is None:
-            raise KeyError("--use-ema was passed, but checkpoint does not contain 'ema_model_state'.")
+            raise KeyError("Requested EMA export, but checkpoint does not contain 'ema_model_state'.")
         model.load_state_dict(ema_state)
     else:
-        if "model_state" not in checkpoint:
-            raise KeyError("Checkpoint does not contain 'model_state'.")
         model.load_state_dict(checkpoint["model_state"])
 
     model.eval()
     model._subtraction_methods = {}
-
     return model
+
+
+def validate_same_hyperparameters(
+    named_checkpoints: list[tuple[str, Path, dict[str, Any]]],
+) -> dict[str, Any]:
+    reference_name, _, reference_checkpoint = named_checkpoints[0]
+    reference_hparams = dict(reference_checkpoint["hyperparameters"])
+
+    for name, checkpoint_path, checkpoint in named_checkpoints[1:]:
+        hparams = dict(checkpoint["hyperparameters"])
+        if hparams != reference_hparams:
+            raise ValueError(
+                "All exported checkpoints must have identical hyperparameters.\n"
+                f"Reference: {reference_name}\n"
+                f"Mismatch:  {name} ({checkpoint_path})"
+            )
+
+    return reference_hparams
 
 
 def make_example_inputs(
@@ -162,8 +208,11 @@ def export_onnx(
     wrapper: MobileANCStep,
     example_inputs: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     output_path: Path,
+    *,
+    artifacts_dir: Path,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     torch.onnx.export(
         wrapper,
@@ -182,17 +231,12 @@ def export_onnx(
             "new_dec_buf",
             "new_out_buf",
         ],
-        # Recommended modern exporter path; it is torch.export-based.
-        # See PyTorch ONNX docs.
         dynamo=True,
-        # Keep a single .onnx file if the model is below the ONNX 2GB limit.
         external_data=False,
-        # Good default for current ONNX Runtime versions.
         opset_version=18,
-        # Turn these on while debugging export failures.
         report=True,
         dump_exported_program=True,
-        artifacts_dir=str(output_path.parent / "onnx_export_artifacts"),
+        artifacts_dir=str(artifacts_dir),
     )
 
 
@@ -201,10 +245,8 @@ def verify_with_onnxruntime(
     wrapper: MobileANCStep,
     example_inputs: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
 ) -> None:
-
     wrapper.eval()
 
-    # Clone because the PyTorch model mutates buffers in-place internally.
     pt_inputs = tuple(t.detach().cpu().clone() for t in example_inputs)
 
     with torch.inference_mode():
@@ -236,19 +278,26 @@ def verify_with_onnxruntime(
         print(f"{name}: max_abs_diff={max_abs_diff:.6g}, mean_abs_diff={mean_abs_diff:.6g}")
 
 
-def save_mobile_metadata(
-    output_path: Path,
+def make_model_metadata(
+    *,
+    display_name: str,
+    checkpoint_path: Path,
+    onnx_asset_name: str,
+    metadata_asset_name: str,
     model: MisophoniaANCNet,
     example_inputs: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    *,
-    label_index: int,
     chunk_samples: int,
-    use_ema: bool,
-) -> None:
+    sample_rate: int,
+    is_ema: bool,
+) -> dict[str, Any]:
     mix, label, enc_buf, dec_buf, out_buf = example_inputs
 
-    metadata = {
-        "onnx_model": str(output_path),
+    return {
+        "display_name": display_name,
+        "onnx_asset_name": onnx_asset_name,
+        "metadata_asset_name": metadata_asset_name,
+        "checkpoint": str(checkpoint_path),
+        "is_ema": is_ema,
         "input_names": ["mix", "label", "enc_buf", "dec_buf", "out_buf"],
         "output_names": ["x", "new_enc_buf", "new_dec_buf", "new_out_buf"],
         "input_shapes": {
@@ -260,120 +309,189 @@ def save_mobile_metadata(
         },
         "output_audio_shape": [1, 2, chunk_samples],
         "chunk_samples": int(chunk_samples),
-        "sample_rate": None,
-        "label_index": int(label_index),
+        "sample_rate": int(sample_rate),
         "label_len": int(model.hyperparameters["label_len"]),
+        "class_names": CLASS_NAMES,
         "L": int(model.L),
         "model_dim": int(model.model_dim),
         "lookahead": bool(model.lookahead),
-        "use_ema": bool(use_ema),
         "note": (
-            "Android prototype should keep enc_buf, dec_buf, and out_buf between "
-            "calls. If microphone input is mono, duplicate it to stereo before "
-            "feeding 'mix'."
+            "Android prototype should keep enc_buf, dec_buf, and out_buf between calls. "
+            "The ONNX output is the audio to play back directly. If microphone input is mono, "
+            "duplicate it to stereo before feeding 'mix'."
         ),
     }
 
-    metadata_path = output_path.with_suffix(".mobile_metadata.json")
-    metadata_path.write_text(json.dumps(metadata, indent=2))
-    print(f"Wrote metadata: {metadata_path}")
+
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
+@app.command()
+def main(
+    models: Annotated[
+        list[str],
+        typer.Option(
+            ...,
+            "--model",
+            help="Named checkpoint to export. Format: NAME=CHECKPOINT_PATH. Can be repeated.",
+        ),
+    ],
+    *,
+    assets_dir: Annotated[
+        Path,
+        typer.Option(
+            ...,
+            "--assets-dir",
+            help="Android app asset directory where ONNX files and metadata are written.",
+        ),
+    ] = Path("android/poc/app/src/main/assets"),
+    export_dir: Annotated[
+        Path,
+        typer.Option(
+            ...,
+            "--export-dir",
+            help="Directory for ONNX export reports/artifacts.",
+        ),
+    ] = Path("android/export"),
+    manifest_name: Annotated[
+        str,
+        typer.Option(..., "--manifest-name", help="Shared Android model manifest asset name."),
+    ] = "misophonia_anc_models.json",
+    sample_rate: Annotated[
+        int,
+        typer.Option(..., "--sample-rate", help="Audio sample rate used by the Android app."),
+    ] = 44_100,
+    label_index: Annotated[
+        int,
+        typer.Option(
+            ...,
+            "--label-index",
+            help="Example class index used only for ONNX export tracing/verification.",
+        ),
+    ] = 0,
+    chunk_samples: Annotated[
+        int | None,
+        typer.Option(
+            ...,
+            "--chunk-samples",
+            help="Fixed audio samples per inference step. Default: model.dec_chunk_size * model.L.",
+        ),
+    ] = None,
+    skip_verify: Annotated[
+        bool,
+        typer.Option(..., "--skip-verify", help="Skip ONNX Runtime numerical verification."),
+    ] = False,
+) -> None:
+    """
+    Export one or more checkpoints directly into the Android app assets directory.
 
-    parser.add_argument(
-        "--checkpoint",
-        type=Path,
-        required=True,
-        help="Path to a checkpoint saved by MisophoniaANCNet.save_checkpoint().",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("export/misophonia_anc_step.onnx"),
-        help="Path to write the ONNX model.",
-    )
-    parser.add_argument(
-        "--label-index",
-        type=int,
-        required=True,
-        help="Trigger-class index to set to 1 in the example one-hot label.",
-    )
-    parser.add_argument(
-        "--chunk-samples",
-        type=int,
-        default=None,
-        help=("Fixed audio samples per mobile inference step. Default: model.dec_chunk_size * model.L."),
-    )
-    parser.add_argument(
-        "--use-ema",
-        action="store_true",
-        help="Export EMA weights instead of raw model weights.",
-    )
-    parser.add_argument(
-        "--skip-verify",
-        action="store_true",
-        help="Skip ONNX Runtime numerical verification.",
-    )
-
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-
+    If a checkpoint contains EMA weights, both raw and EMA ONNX models are exported.
+    """
     device = torch.device("cpu")
     torch.set_grad_enabled(False)
 
-    model = load_model_from_checkpoint(
-        args.checkpoint,
-        use_ema=args.use_ema,
-        device=device,
-    )
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    export_dir.mkdir(parents=True, exist_ok=True)
 
-    # The cleanest prototype chunk is one decoder chunk in waveform samples.
-    # With your defaults this is 72 * 8 = 576 samples.
-    if args.chunk_samples is None:
-        chunk_samples = int(model.mask_gen.decoder.chunk_size * model.L)
-    else:
-        chunk_samples = int(args.chunk_samples)
+    parsed_models = [parse_model_spec(spec) for spec in models]
+    named_checkpoints = [
+        (name, checkpoint_path, load_checkpoint(checkpoint_path, device=device))
+        for name, checkpoint_path in parsed_models
+    ]
 
-    wrapper = MobileANCStep(model, chunk_samples=chunk_samples).to(device).eval()
+    validate_same_hyperparameters(named_checkpoints)
 
-    example_inputs = make_example_inputs(
-        model,
-        label_index=args.label_index,
-        chunk_samples=chunk_samples,
-        device=device,
-    )
+    manifest_models: list[dict[str, Any]] = []
 
-    print("Export settings:")
-    print(f"  checkpoint:     {args.checkpoint}")
-    print(f"  output:         {args.output}")
-    print(f"  use_ema:        {args.use_ema}")
-    print(f"  chunk_samples:  {chunk_samples}")
-    print(f"  label_index:    {args.label_index}")
-    print(f"  label_len:      {model.hyperparameters['label_len']}")
-    print(f"  L:              {model.L}")
-    print(f"  dec_chunk_size: {model.mask_gen.decoder.chunk_size}")
-    print(f"  lookahead:      {model.lookahead}")
+    for name, checkpoint_path, checkpoint in named_checkpoints:
+        has_ema = checkpoint.get("ema_model_state") is not None
 
-    export_onnx(wrapper, example_inputs, args.output)
-    print(f"Wrote ONNX model: {args.output}")
+        export_variants = [(name, False)]
+        if has_ema:
+            export_variants.append((f"{name} (EMA)", True))
 
-    save_mobile_metadata(
-        args.output,
-        model,
-        example_inputs,
-        label_index=args.label_index,
-        chunk_samples=chunk_samples,
-        use_ema=args.use_ema,
-    )
+        for display_name, use_ema in export_variants:
+            stem = sanitize_asset_stem(display_name)
+            onnx_asset_name = f"{stem}.onnx"
+            metadata_asset_name = f"{stem}.mobile_metadata.json"
 
-    if not args.skip_verify:
-        verify_with_onnxruntime(args.output, wrapper, example_inputs)
+            onnx_path = assets_dir / onnx_asset_name
+            metadata_path = assets_dir / metadata_asset_name
+            artifacts_dir = export_dir / "onnx_export_artifacts" / stem
+
+            model = build_model_from_state(
+                checkpoint,
+                use_ema=use_ema,
+                device=device,
+            )
+
+            actual_chunk_samples = (
+                int(model.mask_gen.decoder.chunk_size * model.L) if chunk_samples is None else int(chunk_samples)
+            )
+
+            wrapper = MobileANCStep(model, chunk_samples=actual_chunk_samples).to(device).eval()
+
+            example_inputs = make_example_inputs(
+                model,
+                label_index=label_index,
+                chunk_samples=actual_chunk_samples,
+                device=device,
+            )
+
+            print("Export settings:")
+            print(f"  display_name:   {display_name}")
+            print(f"  checkpoint:     {checkpoint_path}")
+            print(f"  output:         {onnx_path}")
+            print(f"  use_ema:        {use_ema}")
+            print(f"  chunk_samples:  {actual_chunk_samples}")
+            print(f"  sample_rate:    {sample_rate}")
+            print(f"  label_index:    {label_index}")
+            print(f"  label_len:      {model.hyperparameters['label_len']}")
+            print(f"  L:              {model.L}")
+            print(f"  dec_chunk_size: {model.mask_gen.decoder.chunk_size}")
+            print(f"  lookahead:      {model.lookahead}")
+
+            export_onnx(
+                wrapper,
+                example_inputs,
+                onnx_path,
+                artifacts_dir=artifacts_dir,
+            )
+            print(f"Wrote ONNX model: {onnx_path}")
+
+            model_metadata = make_model_metadata(
+                display_name=display_name,
+                checkpoint_path=checkpoint_path,
+                onnx_asset_name=onnx_asset_name,
+                metadata_asset_name=metadata_asset_name,
+                model=model,
+                example_inputs=example_inputs,
+                chunk_samples=actual_chunk_samples,
+                sample_rate=sample_rate,
+                is_ema=use_ema,
+            )
+
+            write_json(metadata_path, model_metadata)
+            print(f"Wrote metadata: {metadata_path}")
+
+            if not skip_verify:
+                verify_with_onnxruntime(onnx_path, wrapper, example_inputs)
+
+            manifest_models.append(model_metadata)
+
+    manifest = {
+        "version": 1,
+        "sample_rate": int(sample_rate),
+        "class_names": CLASS_NAMES,
+        "default_class_index": int(label_index),
+        "models": manifest_models,
+    }
+
+    manifest_path = assets_dir / manifest_name
+    write_json(manifest_path, manifest)
+    print(f"Wrote Android model manifest: {manifest_path}")
 
 
 if __name__ == "__main__":
-    main()
+    app()

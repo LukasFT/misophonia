@@ -12,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -22,12 +23,12 @@ import kotlin.math.max
 import kotlin.math.sqrt
 
 class MainActivity : AppCompatActivity() {
-    private val tag = "MisophoniaPoc"
+    private val logTag = "MisophoniaPoc"
 
     private val sampleRate = 44_100
     private val outputChannels = 2
 
-    private val classNames = listOf(
+    private var classNames = listOf(
         "chewing_gum",
         "clearing_throat",
         "human_breathing",
@@ -38,11 +39,21 @@ class MainActivity : AppCompatActivity() {
         "water_drops"
     )
 
+    private val playbackModes = listOf(
+        "Microphone input",
+        "Model output",
+        "Model output subtracted (Input - Model)"
+    )
+
+    private var currentPlaybackModeIndex = 0
     private var currentLabelIndex = 0
+    private var currentModelIndex = -1
 
     private lateinit var status: TextView
-    private lateinit var button: Button
+    private lateinit var controlButton: Button
     private lateinit var classSpinner: Spinner
+    private lateinit var playbackSpinner: Spinner
+    private lateinit var modelSpinner: Spinner
     private lateinit var inputLevelBar: ProgressBar
     private lateinit var outputLevelBar: ProgressBar
 
@@ -59,6 +70,8 @@ class MainActivity : AppCompatActivity() {
     private val running = AtomicBoolean(false)
     private var worker: Thread? = null
 
+    private var modelsList = mutableListOf<JSONObject>()
+
     @Volatile
     private var latestInputRms = 0f
     @Volatile
@@ -74,10 +87,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         try {
-            initOnnx()
+            env = OrtEnvironment.getEnvironment()
+            loadManifest()
         } catch (e: Exception) {
-            Log.e(tag, "Failed to init ONNX", e)
-            status.text = "Error loading model: ${e.message}"
+            Log.e(logTag, "Failed to load manifest", e)
+            status.text = "Error loading manifest: ${e.message}"
         }
 
         startUpdateTimer()
@@ -104,24 +118,47 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(status)
 
-        root.addView(TextView(this).apply {
-            text = "Target Trigger Class"
-            textSize = 14f
-        })
+        // Model Selection Spinner
+        root.addView(TextView(this).apply { text = "Select Model"; textSize = 14f })
+        modelSpinner = Spinner(this).apply {
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    if (position != currentModelIndex) {
+                        loadModel(position)
+                    }
+                }
+                override fun onNothingSelected(p0: AdapterView<*>?) {}
+            }
+            setPadding(0, 16, 0, 32)
+        }
+        root.addView(modelSpinner)
 
+        // Playback Mode Spinner
+        root.addView(TextView(this).apply { text = "Playback Mode"; textSize = 14f })
+        playbackSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, playbackModes)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    currentPlaybackModeIndex = position
+                    Log.i(logTag, "Playback mode: ${playbackModes[position]}")
+                }
+                override fun onNothingSelected(p0: AdapterView<*>?) {}
+            }
+            setPadding(0, 16, 0, 32)
+        }
+        root.addView(playbackSpinner)
+
+        // Trigger Class Spinner
+        root.addView(TextView(this).apply { text = "Target Trigger Class"; textSize = 14f })
         classSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                classNames
-            )
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, classNames)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                     updateLabelIndex(position)
                 }
-                override fun onNothingSelected(parent: AdapterView<*>?) {}
+                override fun onNothingSelected(p0: AdapterView<*>?) {}
             }
-            setPadding(0, 24, 0, 48)
+            setPadding(0, 16, 0, 48)
         }
         root.addView(classSpinner)
 
@@ -132,22 +169,96 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(inputLevelBar)
 
-        root.addView(TextView(this).apply { text = "Output Level (Filtered)" })
+        root.addView(TextView(this).apply { text = "Output Level (Playback Signal)" })
         outputLevelBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             setPadding(0, 16, 0, 48)
         }
         root.addView(outputLevelBar)
 
-        button = Button(this).apply {
-            text = "Start Live Filtering"
+        controlButton = Button(this).apply {
+            text = "Start Live Audio"
             setOnClickListener {
                 if (running.get()) stopDemo() else startDemo()
             }
         }
-        root.addView(button)
+        root.addView(controlButton)
 
         setContentView(scroll)
+    }
+
+    private fun loadManifest() {
+        val manifestText = assets.open("misophonia_anc_models.json").bufferedReader().use { it.readText() }
+        val manifest = JSONObject(manifestText)
+        
+        val classes = manifest.getJSONArray("class_names")
+        classNames = (0 until classes.length()).map { classes.getString(it) }
+        
+        // Update class spinner
+        runOnUiThread {
+            classSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, classNames)
+            classSpinner.setSelection(manifest.optInt("default_class_index", 0))
+        }
+
+        val models = manifest.getJSONArray("models")
+        val displayNames = mutableListOf<String>()
+        modelsList.clear()
+        for (i in 0 until models.length()) {
+            val m = models.getJSONObject(i)
+            modelsList.add(m)
+            displayNames.add(m.getString("display_name"))
+        }
+
+        runOnUiThread {
+            modelSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, displayNames)
+            if (modelsList.isNotEmpty()) {
+                modelSpinner.setSelection(0)
+            }
+        }
+    }
+
+    private fun loadModel(index: Int) {
+        val wasRunning = running.get()
+        if (wasRunning) {
+            stopDemo()
+        }
+        
+        session?.close()
+        session = null
+        
+        currentModelIndex = index
+        val modelMeta = modelsList[index]
+        val onnxAssetName = modelMeta.getString("onnx_asset_name")
+        
+        try {
+            val modelFile = copyAssetToCache(onnxAssetName)
+            chunkSamples = modelMeta.getInt("chunk_samples")
+            
+            val shapesObj = modelMeta.getJSONObject("input_shapes")
+            val shapes = mutableMapOf<String, LongArray>()
+            arrayOf("mix", "label", "enc_buf", "dec_buf", "out_buf").forEach { key ->
+                shapes[key] = jsonLongArray(shapesObj.getJSONArray(key))
+            }
+            inputShapes = shapes
+            
+            session = env.createSession(modelFile.absolutePath, OrtSession.SessionOptions())
+            
+            label = FloatArray(sizeOf(shapes.getValue("label")))
+            updateLabelIndex(currentLabelIndex)
+            
+            encBuf = FloatArray(sizeOf(shapes.getValue("enc_buf")))
+            decBuf = FloatArray(sizeOf(shapes.getValue("dec_buf")))
+            outBuf = FloatArray(sizeOf(shapes.getValue("out_buf")))
+            
+            status.text = "Model Loaded: $onnxAssetName\nChunk size: $chunkSamples"
+            
+            if (wasRunning) {
+                startDemo()
+            }
+        } catch (e: Exception) {
+            Log.e(logTag, "Failed to load model $onnxAssetName", e)
+            status.text = "Error loading model: ${e.message}"
+        }
     }
 
     private fun updateLabelIndex(index: Int) {
@@ -156,34 +267,7 @@ class MainActivity : AppCompatActivity() {
         if (index in label.indices) {
             label[index] = 1.0f
         }
-        Log.i(tag, "Selected class: ${classNames[index]}")
-    }
-
-    private fun initOnnx() {
-        val modelFile = copyAssetToCache("misophonia_anc_step.onnx")
-        val metaText = assets.open("misophonia_anc_step.mobile_metadata.json").bufferedReader().use { it.readText() }
-
-        val meta = JSONObject(metaText)
-        chunkSamples = meta.getInt("chunk_samples")
-
-        val shapesObj = meta.getJSONObject("input_shapes")
-        val shapes = mutableMapOf<String, LongArray>()
-        arrayOf("mix", "label", "enc_buf", "dec_buf", "out_buf").forEach { key ->
-            shapes[key] = jsonLongArray(shapesObj.getJSONArray(key))
-        }
-        inputShapes = shapes
-
-        env = OrtEnvironment.getEnvironment()
-        session = env.createSession(modelFile.absolutePath, OrtSession.SessionOptions())
-
-        label = FloatArray(sizeOf(shapes.getValue("label")))
-        updateLabelIndex(currentLabelIndex)
-
-        encBuf = FloatArray(sizeOf(shapes.getValue("enc_buf")))
-        decBuf = FloatArray(sizeOf(shapes.getValue("dec_buf")))
-        outBuf = FloatArray(sizeOf(shapes.getValue("out_buf")))
-
-        status.text = "Model: misophonia_anc_step.onnx\nChunk size: $chunkSamples\nSample rate: $sampleRate"
+        Log.i(logTag, "Selected class: ${classNames.getOrNull(index) ?: index}")
     }
 
     private fun startUpdateTimer() {
@@ -214,12 +298,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         running.set(true)
-        button.text = "Stop"
+        controlButton.text = "Stop"
+        
         worker = thread(start = true, name = "audio-worker") {
             try {
                 audioLoop()
             } catch (t: Throwable) {
-                Log.e(tag, "Audio loop error", t)
+                Log.e(logTag, "Audio loop error", t)
                 runOnUiThread {
                     Toast.makeText(this, "Error: ${t.message}", Toast.LENGTH_LONG).show()
                     stopDemo()
@@ -230,7 +315,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopDemo() {
         running.set(false)
-        button.text = "Start Live Filtering"
+        controlButton.text = "Start Live Audio"
         inputLevelBar.progress = 0
         outputLevelBar.progress = 0
     }
@@ -276,15 +361,29 @@ class MainActivity : AppCompatActivity() {
 
                 latestInputRms = calculateRms(mixInput)
 
-                val filtered = runOnnxStep(mixInput) ?: continue
-                latestOutputRms = calculateRms(filtered)
-
-                for (i in 0 until chunkSamples) {
-                    playBuf[2 * i] = filtered[i].coerceIn(-1.0f, 1.0f)
-                    playBuf[2 * i + 1] = filtered[chunkSamples + i].coerceIn(-1.0f, 1.0f)
+                // Determine playback signal based on selected mode
+                val outputSignal = when (currentPlaybackModeIndex) {
+                    0 -> mixInput // Microphone input
+                    1 -> runOnnxStep(mixInput) // Model output
+                    2 -> {
+                        val filtered = runOnnxStep(mixInput)
+                        if (filtered != null) {
+                            val sub = FloatArray(mixInput.size)
+                            for (i in sub.indices) sub[i] = mixInput[i] - filtered[i]
+                            sub
+                        } else null
+                    }
+                    else -> null
                 }
 
-                track.write(playBuf, 0, playBuf.size, AudioTrack.WRITE_BLOCKING)
+                if (outputSignal != null) {
+                    latestOutputRms = calculateRms(outputSignal)
+                    for (i in 0 until chunkSamples) {
+                        playBuf[2 * i] = outputSignal[i].coerceIn(-1.0f, 1.0f)
+                        playBuf[2 * i + 1] = outputSignal[chunkSamples + i].coerceIn(-1.0f, 1.0f)
+                    }
+                    track.write(playBuf, 0, playBuf.size, AudioTrack.WRITE_BLOCKING)
+                }
             }
         } finally {
             recorder.stop()
@@ -321,7 +420,7 @@ class MainActivity : AppCompatActivity() {
                 return x
             }
         } catch (e: Exception) {
-            Log.e(tag, "Inference error", e)
+            Log.e(logTag, "Inference error", e)
             return null
         } finally {
             tensors.values.forEach { it.close() }
@@ -395,7 +494,7 @@ class MainActivity : AppCompatActivity() {
         return out
     }
 
-    private fun jsonLongArray(arr: org.json.JSONArray): LongArray {
+    private fun jsonLongArray(arr: JSONArray): LongArray {
         return LongArray(arr.length()) { i -> arr.getLong(i) }
     }
 

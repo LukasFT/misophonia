@@ -1,0 +1,293 @@
+{
+  "version": 1,
+  "sample_rate": 44100,
+  "class_names": [
+    "chewing_gum",
+    "clearing_throat",
+    "human_breathing",
+    "knife_cutting",
+    "plastic_crumpling",
+    "swallowing",
+    "typing",
+    "water_drops"
+  ],
+  "default_class_index": 0,
+  "models": [
+    {
+      "display_name": "aux-ft-all-11",
+      "onnx_asset_name": "aux-ft-all-11.onnx",
+      "metadata_asset_name": "aux-ft-all-11.mobile_metadata.json",
+      "checkpoint": "data/model-aux-ft-all/checkpoints/weights_epoch_11.pt",
+      "is_ema": false,
+      "input_names": [
+        "mix",
+        "label",
+        "enc_buf",
+        "dec_buf",
+        "out_buf"
+      ],
+      "output_names": [
+        "x",
+        "new_enc_buf",
+        "new_dec_buf",
+        "new_out_buf"
+      ],
+      "input_shapes": {
+        "mix": [
+          1,
+          2,
+          416
+        ],
+        "label": [
+          1,
+          8
+        ],
+        "enc_buf": [
+          1,
+          256,
+          2046
+        ],
+        "dec_buf": [
+          1,
+          2,
+          13,
+          256
+        ],
+        "out_buf": [
+          1,
+          256,
+          4
+        ]
+      },
+      "output_audio_shape": [
+        1,
+        2,
+        416
+      ],
+      "chunk_samples": 416,
+      "sample_rate": 44100,
+      "label_len": 8,
+      "class_names": [
+        "chewing_gum",
+        "clearing_throat",
+        "human_breathing",
+        "knife_cutting",
+        "plastic_crumpling",
+        "swallowing",
+        "typing",
+        "water_drops"
+      ],
+      "L": 32,
+      "model_dim": 256,
+      "lookahead": true,
+      "note": "Android prototype should keep enc_buf, dec_buf, and out_buf between calls. The ONNX output is the audio to play back directly. If microphone input is mono, duplicate it to stereo before feeding 'mix'."
+    },
+    {
+      "display_name": "aux-ft-all-11 (EMA)",
+      "onnx_asset_name": "aux-ft-all-11_ema.onnx",
+      "metadata_asset_name": "aux-ft-all-11_ema.mobile_metadata.json",
+      "checkpoint": "data/model-aux-ft-all/checkpoints/weights_epoch_11.pt",
+      "is_ema": true,
+      "input_names": [
+        "mix",
+        "label",
+        "enc_buf",
+        "dec_buf",
+        "out_buf"
+      ],
+      "output_names": [
+        "x",
+        "new_enc_buf",
+        "new_dec_buf",
+        "new_out_buf"
+      ],
+      "input_shapes": {
+        "mix": [
+          1,
+          2,
+          416
+        ],
+        "label": [
+          1,
+          8
+        ],
+        "enc_buf": [
+          1,
+          256,
+          2046
+        ],
+        "dec_buf": [
+          1,
+          2,
+          13,
+          256
+        ],
+        "out_buf": [
+          1,
+          256,
+          4
+        ]
+      },
+      "output_audio_shape": [
+        1,
+        2,
+        416
+      ],
+      "chunk_samples": 416,
+      "sample_rate": 44100,
+      "label_len": 8,
+      "class_names": [
+        "chewing_gum",
+        "clearing_throat",
+        "human_breathing",
+        "knife_cutting",
+        "plastic_crumpling",
+        "swallowing",
+        "typing",
+        "water_drops"
+      ],
+      "L": 32,
+      "model_dim": 256,
+      "lookahead": true,
+      "note": "Android prototype should keep enc_buf, dec_buf, and out_buf between calls. The ONNX output is the audio to play back directly. If microphone input is mono, duplicate it to stereo before feeding 'mix'."
+    },
+    {
+      "display_name": "aux-ft-all-10",
+      "onnx_asset_name": "aux-ft-all-10.onnx",
+      "metadata_asset_name": "aux-ft-all-10.mobile_metadata.json",
+      "checkpoint": "data/model-aux-ft-all/checkpoints/weights_epoch_10.pt",
+      "is_ema": false,
+      "input_names": [
+        "mix",
+        "label",
+        "enc_buf",
+        "dec_buf",
+        "out_buf"
+      ],
+      "output_names": [
+        "x",
+        "new_enc_buf",
+        "new_dec_buf",
+        "new_out_buf"
+      ],
+      "input_shapes": {
+        "mix": [
+          1,
+          2,
+          416
+        ],
+        "label": [
+          1,
+          8
+        ],
+        "enc_buf": [
+          1,
+          256,
+          2046
+        ],
+        "dec_buf": [
+          1,
+          2,
+          13,
+          256
+        ],
+        "out_buf": [
+          1,
+          256,
+          4
+        ]
+      },
+      "output_audio_shape": [
+        1,
+        2,
+        416
+      ],
+      "chunk_samples": 416,
+      "sample_rate": 44100,
+      "label_len": 8,
+      "class_names": [
+        "chewing_gum",
+        "clearing_throat",
+        "human_breathing",
+        "knife_cutting",
+        "plastic_crumpling",
+        "swallowing",
+        "typing",
+        "water_drops"
+      ],
+      "L": 32,
+      "model_dim": 256,
+      "lookahead": true,
+      "note": "Android prototype should keep enc_buf, dec_buf, and out_buf between calls. The ONNX output is the audio to play back directly. If microphone input is mono, duplicate it to stereo before feeding 'mix'."
+    },
+    {
+      "display_name": "aux-ft-all-10 (EMA)",
+      "onnx_asset_name": "aux-ft-all-10_ema.onnx",
+      "metadata_asset_name": "aux-ft-all-10_ema.mobile_metadata.json",
+      "checkpoint": "data/model-aux-ft-all/checkpoints/weights_epoch_10.pt",
+      "is_ema": true,
+      "input_names": [
+        "mix",
+        "label",
+        "enc_buf",
+        "dec_buf",
+        "out_buf"
+      ],
+      "output_names": [
+        "x",
+        "new_enc_buf",
+        "new_dec_buf",
+        "new_out_buf"
+      ],
+      "input_shapes": {
+        "mix": [
+          1,
+          2,
+          416
+        ],
+        "label": [
+          1,
+          8
+        ],
+        "enc_buf": [
+          1,
+          256,
+          2046
+        ],
+        "dec_buf": [
+          1,
+          2,
+          13,
+          256
+        ],
+        "out_buf": [
+          1,
+          256,
+          4
+        ]
+      },
+      "output_audio_shape": [
+        1,
+        2,
+        416
+      ],
+      "chunk_samples": 416,
+      "sample_rate": 44100,
+      "label_len": 8,
+      "class_names": [
+        "chewing_gum",
+        "clearing_throat",
+        "human_breathing",
+        "knife_cutting",
+        "plastic_crumpling",
+        "swallowing",
+        "typing",
+        "water_drops"
+      ],
+      "L": 32,
+      "model_dim": 256,
+      "lookahead": true,
+      "note": "Android prototype should keep enc_buf, dec_buf, and out_buf between calls. The ONNX output is the audio to play back directly. If microphone input is mono, duplicate it to stereo before feeding 'mix'."
+    }
+  ]
+}

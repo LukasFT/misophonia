@@ -234,3 +234,4 @@ out
 out/*
 SemanticHearing
 misophonia_anc/confidential_losses.py
+android/export/*
