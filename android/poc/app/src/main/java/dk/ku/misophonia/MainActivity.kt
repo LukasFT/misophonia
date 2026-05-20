@@ -54,8 +54,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var classSpinner: Spinner
     private lateinit var playbackSpinner: Spinner
     private lateinit var modelSpinner: Spinner
-    private lateinit var inputLevelBar: ProgressBar
-    private lateinit var outputLevelBar: ProgressBar
+    private lateinit var inputWaveform: WaveformView
+    private lateinit var outputWaveform: WaveformView
 
     private lateinit var env: OrtEnvironment
     private var session: OrtSession? = null
@@ -163,18 +163,20 @@ class MainActivity : AppCompatActivity() {
         root.addView(classSpinner)
 
         root.addView(TextView(this).apply { text = "Input Level (Raw Mic)" })
-        inputLevelBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            setPadding(0, 16, 0, 32)
+        inputWaveform = WaveformView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 250).apply {
+                setMargins(0, 16, 0, 32)
+            }
         }
-        root.addView(inputLevelBar)
+        root.addView(inputWaveform)
 
         root.addView(TextView(this).apply { text = "Output Level (Playback Signal)" })
-        outputLevelBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            setPadding(0, 16, 0, 48)
+        outputWaveform = WaveformView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 250).apply {
+                setMargins(0, 16, 0, 48)
+            }
         }
-        root.addView(outputLevelBar)
+        root.addView(outputWaveform)
 
         controlButton = Button(this).apply {
             text = "Start Live Audio"
@@ -275,11 +277,11 @@ class MainActivity : AppCompatActivity() {
             while (!isDestroyed) {
                 Thread.sleep(50)
                 if (running.get()) {
-                    val inP = (latestInputRms * 100).toInt().coerceIn(0, 100)
-                    val outP = (latestOutputRms * 100).toInt().coerceIn(0, 100)
+                    val inRms = latestInputRms
+                    val outRms = latestOutputRms
                     runOnUiThread {
-                        inputLevelBar.progress = inP
-                        outputLevelBar.progress = outP
+                        inputWaveform.addValue(inRms)
+                        outputWaveform.addValue(outRms)
                     }
                 }
             }
@@ -316,8 +318,6 @@ class MainActivity : AppCompatActivity() {
     private fun stopDemo() {
         running.set(false)
         controlButton.text = "Start Live Audio"
-        inputLevelBar.progress = 0
-        outputLevelBar.progress = 0
     }
 
     private fun audioLoop() {
