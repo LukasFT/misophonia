@@ -38,6 +38,12 @@ dev = [
     "pytest>=8.3.4",
 ]
 
+onnx = [
+    "onnxruntime>=1.26.0",
+    "onnxscript>=0.7.0",
+    "onnx>=1.21.0",
+]
+
 [tool.ruff]
 line-length = 120
 indent-width = 4
