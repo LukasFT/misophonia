@@ -48,6 +48,11 @@ RUN_INDEX = {
         "pretty": "Baseline (rep. 3)",
         "mlflow": "b89eb23a8a1445fc95f77cd89a7cf6f1",
     },
+    # More epochs:
+    "model-baseline-rep3-400epochs": {  # NOTE: Only contains data from 81-400
+        "pretty": "Baseline (rep. 3, 400 epochs)",
+        "mlflow": "a6d63fa429f241f08b6172177ba79339",
+    },
     # Mono:
     "model-channels-monosplit": {
         "pretty": "Split into mono channels",
