@@ -16,13 +16,18 @@ class WaveformView @JvmOverloads constructor(
         strokeWidth = 4f
         isAntiAlias = true
     }
-    
+
+    private val activeColor = Color.RED
+    private val normalColor = Color.parseColor("#4CAF50")
+
     private val maxDataPoints = 128
     private val data = FloatArray(maxDataPoints)
+    private val activeStates = BooleanArray(maxDataPoints)
     private var head = 0
 
-    fun addValue(value: Float) {
+    fun addValue(value: Float, isActive: Boolean = false) {
         data[head] = value
+        activeStates[head] = isActive
         head = (head + 1) % maxDataPoints
         postInvalidateOnAnimation()
     }
@@ -38,6 +43,7 @@ class WaveformView @JvmOverloads constructor(
         val step = w / (maxDataPoints - 1)
         
         // Draw a center line
+        paint.color = normalColor
         paint.alpha = 64
         paint.strokeWidth = 1f
         canvas.drawLine(0f, centerY, w, centerY, paint)
@@ -49,6 +55,9 @@ class WaveformView @JvmOverloads constructor(
             val idx1 = (head + i) % maxDataPoints
             val idx2 = (head + i + 1) % maxDataPoints
             
+            // Use active color if either point is active
+            paint.color = if (activeStates[idx1] || activeStates[idx2]) activeColor else normalColor
+
             // Normalize value to some reasonable range. 
             // RMS is typically 0 to 1, but often much smaller.
             // Let's amplify it slightly for visibility.

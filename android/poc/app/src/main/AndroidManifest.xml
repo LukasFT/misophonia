@@ -3,7 +3,7 @@
 
     <application
         android:theme="@style/AppTheme"
-        android:label="Misophonia ONNX POC"
+        android:label="MisoSoupression"
         android:allowBackup="false"
         android:supportsRtl="true">
         <activity

@@ -46,17 +46,45 @@ class MainActivity : AppCompatActivity() {
     private val playbackModes = listOf(
         "Microphone input",
         "Model output",
-        "Model output subtracted (Input - Model)"
+        "Model output subtracted (Input - Model)",
+        "Audio Block"
     )
 
     private var currentPlaybackModeIndex = 0
     private var currentModelIndex = -1
     private var selectedClasses = BooleanArray(0)
 
+    @Volatile
+    private var relativeThresholdDb = -18.0f
+    @Volatile
+    private var minModelDb = -45.0f
+    @Volatile
+    private var inputSilenceDb = -55.0f
+    @Volatile
+    private var detectorAttackMs = 30L
+    @Volatile
+    private var detectorReleaseMs = 300L
+    @Volatile
+    private var maskVolume = 0.4f
+
+    private var smoothedScoreDb = -120.0f
+    private var currentNoiseGain = 0.0f
+    @Volatile
+    private var isMaskingActive = false
+
+    private val hysteresisDb = 4.0f
+    private val eps = 1e-8f
+    private val noiseAttackMs = 20L
+    private val noiseReleaseMs = 200L
+
+    private val random = java.util.Random()
+    private val pinkNoiseStates = FloatArray(7)
+
     private lateinit var status: TextView
     private lateinit var classSelectBtn: Button
     private lateinit var playbackSpinner: Spinner
     private lateinit var modelSpinner: Spinner
+    private lateinit var noiseSettingsLayout: LinearLayout
     private lateinit var inputWaveform: WaveformView
     private lateinit var outputWaveform: WaveformView
     private lateinit var inputSpectrogram: SpectrogramView
@@ -93,6 +121,9 @@ class MainActivity : AppCompatActivity() {
 
     private var modelsList = mutableListOf<JSONObject>()
 
+    private val triggerQueue = java.util.concurrent.LinkedBlockingQueue<FloatArray>(2)
+    private var triggerWorker: Thread? = null
+
     @Volatile
     private var latestInputRms = 0f
     @Volatile
@@ -103,12 +134,15 @@ class MainActivity : AppCompatActivity() {
     private var latestOutputFft: FloatArray? = null
     @Volatile
     private var latestLatencyMs = 0.0
+    @Volatile
+    private var latestIsNoisePlaying = false
 
     private val fft = FastFourierTransform(512)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        loadSettings()
         setupUI()
 
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -160,9 +194,8 @@ class MainActivity : AppCompatActivity() {
         modelSpinner = Spinner(this).apply {
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    if (position != currentModelIndex) {
-                        loadModel(position)
-                    }
+                    loadModel(position)
+                    saveSettings()
                 }
                 override fun onNothingSelected(p0: AdapterView<*>?) {}
             }
@@ -178,12 +211,102 @@ class MainActivity : AppCompatActivity() {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                     currentPlaybackModeIndex = position
                     Log.i(logTag, "Playback mode: ${playbackModes[position]}")
+                    noiseSettingsLayout.visibility = if (position == 3) View.VISIBLE else View.GONE
+                    if (position != 3) {
+                        isMaskingActive = false
+                        currentNoiseGain = 0.0f
+                    }
+                    saveSettings()
                 }
                 override fun onNothingSelected(p0: AdapterView<*>?) {}
             }
+            setSelection(currentPlaybackModeIndex)
             setPadding(0, 16, 0, 32)
         }
         root.addView(playbackSpinner)
+
+        noiseSettingsLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (currentPlaybackModeIndex == 3) View.VISIBLE else View.GONE
+            setPadding(0, 16, 0, 32)
+            
+            fun addLabeledSeekBar(
+                label: String,
+                initialProgress: Int,
+                maxVal: Int,
+                formatter: (Int) -> String,
+                onChanged: (Int) -> Unit
+            ) {
+                val headerRow = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                headerRow.addView(TextView(this@MainActivity).apply { text = label })
+                val valueText = TextView(this@MainActivity).apply {
+                    text = "  ${formatter(initialProgress)}"
+                    setTextColor(android.graphics.Color.GRAY)
+                }
+                headerRow.addView(valueText)
+                addView(headerRow)
+
+                addView(SeekBar(this@MainActivity).apply {
+                    max = maxVal
+                    progress = initialProgress
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(p0: SeekBar?, p1: Int, p2: Boolean) {
+                            valueText.text = "  ${formatter(p1)}"
+                            onChanged(p1)
+                        }
+                        override fun onStartTrackingTouch(p0: SeekBar?) {}
+                        override fun onStopTrackingTouch(p0: SeekBar?) {
+                            saveSettings()
+                        }
+                    })
+                })
+            }
+
+            addLabeledSeekBar(
+                "Relative Threshold",
+                (relativeThresholdDb + 40).toInt(),
+                60,
+                { "${it - 40} dB" }
+            ) { relativeThresholdDb = it.toFloat() - 40f }
+
+            addLabeledSeekBar(
+                "Min Model Floor",
+                (minModelDb + 120).toInt(),
+                100,
+                { "${it - 120} dB" }
+            ) { minModelDb = it.toFloat() - 120f }
+
+            addLabeledSeekBar(
+                "Input Silence Floor",
+                (inputSilenceDb + 100).toInt(),
+                80,
+                { "${it - 100} dB" }
+            ) { inputSilenceDb = it.toFloat() - 100f }
+
+            addLabeledSeekBar(
+                "Detector Attack",
+                detectorAttackMs.toInt(),
+                500,
+                { "$it ms" }
+            ) { detectorAttackMs = it.toLong().coerceAtLeast(1L) }
+
+            addLabeledSeekBar(
+                "Detector Release",
+                detectorReleaseMs.toInt(),
+                2000,
+                { "$it ms" }
+            ) { detectorReleaseMs = it.toLong().coerceAtLeast(1L) }
+
+            addLabeledSeekBar(
+                "Masking Noise Volume",
+                (maskVolume * 100).toInt(),
+                100,
+                { "${it}%" }
+            ) { maskVolume = it / 100f }
+        }
+        root.addView(noiseSettingsLayout)
 
         // Trigger Class Selection
         root.addView(TextView(this).apply { text = "Target Trigger Classes"; textSize = 14f })
@@ -427,14 +550,26 @@ class MainActivity : AppCompatActivity() {
         
         val classes = manifest.getJSONArray("class_names")
         classNames = (0 until classes.length()).map { classes.getString(it) }
-        selectedClasses = BooleanArray(classNames.size)
         
-        val defaultIdx = manifest.optInt("default_class_index", 0)
-        if (defaultIdx in selectedClasses.indices) {
-            selectedClasses[defaultIdx] = true
+        val prefs = getSharedPreferences("miso_settings", MODE_PRIVATE)
+        val selectedStr = prefs.getString("selectedClasses", "")
+        if (selectedStr != null && selectedStr.isNotEmpty()) {
+            val parts = selectedStr.split(",")
+            if (parts.size == classNames.size) {
+                selectedClasses = BooleanArray(parts.size) { i -> parts[i] == "1" }
+            } else {
+                selectedClasses = BooleanArray(classNames.size)
+                val defaultIdx = manifest.optInt("default_class_index", 0)
+                if (defaultIdx in selectedClasses.indices) selectedClasses[defaultIdx] = true
+            }
+        } else {
+            selectedClasses = BooleanArray(classNames.size)
+            val defaultIdx = manifest.optInt("default_class_index", 0)
+            if (defaultIdx in selectedClasses.indices) selectedClasses[defaultIdx] = true
         }
         
         updateClassButtonText()
+        updateLabelsFromSelection()
 
         val models = manifest.getJSONArray("models")
         val displayNames = mutableListOf<String>()
@@ -448,7 +583,8 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             modelSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, displayNames)
             if (modelsList.isNotEmpty()) {
-                modelSpinner.setSelection(0)
+                val targetIdx = currentModelIndex.coerceIn(0, modelsList.size - 1)
+                modelSpinner.setSelection(targetIdx)
             }
         }
     }
@@ -464,6 +600,7 @@ class MainActivity : AppCompatActivity() {
         builder.setPositiveButton("OK") { _, _ ->
             updateLabelsFromSelection()
             updateClassButtonText()
+            saveSettings()
         }
         builder.setNegativeButton("Cancel", null)
         builder.show()
@@ -552,7 +689,7 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         if (currentMode != SessionMode.RECORD) {
                             inputWaveform.addValue(inRms)
-                            outputWaveform.addValue(outRms)
+                            outputWaveform.addValue(outRms, latestIsNoisePlaying)
                             inFft?.let { inputSpectrogram.update(it) }
                             outFft?.let { outputSpectrogram.update(it) }
                         }
@@ -581,6 +718,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        smoothedScoreDb = -120.0f
+        currentNoiseGain = 0.0f
+        isMaskingActive = false
+
         if (currentMode == SessionMode.RECORD) {
             latencyHistory.clear()
             recordingInputFile = File(cacheDir, "input.pcm")
@@ -599,6 +740,58 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     Toast.makeText(this, "Error: ${t.message}", Toast.LENGTH_LONG).show()
                     setSessionMode(SessionMode.DISABLED)
+                }
+            }
+        }
+    }
+
+    private fun ensureTriggerWorkerRunning() {
+        if (triggerWorker?.isAlive == true) return
+        
+        triggerQueue.clear()
+        triggerWorker = thread(start = true, name = "trigger-worker") {
+            while (running.get()) {
+                val mix = triggerQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+                
+                // Only consume CPU if we are in Audio Block mode
+                if (currentPlaybackModeIndex != 3) continue
+                
+                val modelOutput = runOnnxStep(mix)
+                if (modelOutput != null) {
+                    val inputRms = calculateRms(mix)
+                    val modelRms = calculateRms(modelOutput)
+                    
+                    val inputDb = 20 * kotlin.math.log10(inputRms + eps)
+                    val modelDb = 20 * kotlin.math.log10(modelRms + eps)
+                    val relativeDb = 20 * kotlin.math.log10((modelRms + eps) / (inputRms + eps))
+                    
+                    var rawScoreDb: Float
+                    if (inputDb < inputSilenceDb) {
+                        rawScoreDb = -120.0f
+                        isMaskingActive = false
+                    } else if (modelDb < minModelDb) {
+                        rawScoreDb = -120.0f
+                    } else {
+                        rawScoreDb = relativeDb
+                    }
+                    
+                    // Smooth rawScoreDb
+                    val detectorTime = if (rawScoreDb > smoothedScoreDb) detectorAttackMs else detectorReleaseMs
+                    val detectorAlpha = 1.0f - kotlin.math.exp(- (chunkSamples.toDouble() / sampleRate) / (detectorTime.toDouble() / 1000.0)).toFloat()
+                    smoothedScoreDb = detectorAlpha * rawScoreDb + (1.0f - detectorAlpha) * smoothedScoreDb
+                    
+                    // Activate masking
+                    if (!isMaskingActive && smoothedScoreDb > relativeThresholdDb) {
+                        isMaskingActive = true
+                    } else if (isMaskingActive && smoothedScoreDb < relativeThresholdDb - hysteresisDb) {
+                        isMaskingActive = false
+                    }
+
+                    // Update visualization data
+                    latestOutputRms = modelRms
+                    if (currentMode != SessionMode.RECORD) {
+                        latestOutputFft = calculateFft(modelOutput)
+                    }
                 }
             }
         }
@@ -655,56 +848,16 @@ class MainActivity : AppCompatActivity() {
                     latestInputFft = calculateFft(mixInput)
                 }
 
-                // Determine playback signal based on selected mode
-                val outputSignal = when (currentPlaybackModeIndex) {
-                    0 -> mixInput // Microphone input
-                    1 -> runOnnxStep(mixInput) // Model output
-                    2 -> {
-                        val filtered = runOnnxStep(mixInput)
-                        if (filtered != null) {
-                            val sub = FloatArray(mixInput.size)
-                            for (i in sub.indices) sub[i] = mixInput[i] - filtered[i]
-                            sub
-                        } else null
-                    }
-                    else -> null
+                val (playbackSignal, displayRecordingSignal) = when (currentPlaybackModeIndex) {
+                    0 -> runMicInputMode(mixInput)
+                    1 -> runModelOutputMode(mixInput)
+                    2 -> runSubtractedMode(mixInput)
+                    3 -> runAudioBlockMode(mixInput)
+                    else -> mixInput to mixInput
                 }
 
-                if (outputSignal != null) {
-                    latestOutputRms = calculateRms(outputSignal)
-                    if (currentMode != SessionMode.RECORD) {
-                        latestOutputFft = calculateFft(outputSignal)
-                    }
-                    
-                    val shortBufIn = ShortArray(mixInput.size)
-                    val shortBufOut = ShortArray(playBuf.size)
-                    for (i in 0 until chunkSamples) {
-                        val inL = mixInput[i].coerceIn(-1.0f, 1.0f)
-                        val inR = mixInput[chunkSamples + i].coerceIn(-1.0f, 1.0f)
-                        val outL = outputSignal[i].coerceIn(-1.0f, 1.0f)
-                        val outR = outputSignal[chunkSamples + i].coerceIn(-1.0f, 1.0f)
-                        
-                        playBuf[2 * i] = outL
-                        playBuf[2 * i + 1] = outR
-                        
-                        if (currentMode == SessionMode.RECORD) {
-                            shortBufIn[2 * i] = (inL * 32767).toInt().toShort()
-                            shortBufIn[2 * i + 1] = (inR * 32767).toInt().toShort()
-                            shortBufOut[2 * i] = (outL * 32767).toInt().toShort()
-                            shortBufOut[2 * i + 1] = (outR * 32767).toInt().toShort()
-                        }
-                    }
-                    
-                    if (currentMode == SessionMode.RECORD) {
-                        try {
-                            recordingInputStream?.let { for (s in shortBufIn) it.writeShort(s.toInt()) }
-                            recordingOutputStream?.let { for (s in shortBufOut) it.writeShort(s.toInt()) }
-                        } catch (e: Exception) {
-                            Log.e(logTag, "Recording write error", e)
-                        }
-                    }
-
-                    track.write(playBuf, 0, playBuf.size, AudioTrack.WRITE_BLOCKING)
+                if (playbackSignal != null) {
+                    finalizeAudioBlock(mixInput, playbackSignal, displayRecordingSignal ?: mixInput, playBuf, track)
                 }
             }
         } finally {
@@ -715,9 +868,124 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun runMicInputMode(mixInput: FloatArray): Pair<FloatArray?, FloatArray?> {
+        latestIsNoisePlaying = false
+        latestOutputRms = latestInputRms
+        if (currentMode != SessionMode.RECORD) {
+            latestOutputFft = latestInputFft
+        }
+        return mixInput to mixInput
+    }
+
+    private fun runModelOutputMode(mixInput: FloatArray): Pair<FloatArray?, FloatArray?> {
+        latestIsNoisePlaying = false
+        val modelOutput = runOnnxStep(mixInput)
+        if (modelOutput != null) {
+            latestOutputRms = calculateRms(modelOutput)
+            if (currentMode != SessionMode.RECORD) {
+                latestOutputFft = calculateFft(modelOutput)
+            }
+        }
+        return modelOutput to modelOutput
+    }
+
+    private fun runSubtractedMode(mixInput: FloatArray): Pair<FloatArray?, FloatArray?> {
+        latestIsNoisePlaying = false
+        val modelOutput = runOnnxStep(mixInput)
+        if (modelOutput != null) {
+            val sub = FloatArray(mixInput.size)
+            for (i in sub.indices) sub[i] = mixInput[i] - modelOutput[i]
+            latestOutputRms = calculateRms(sub)
+            if (currentMode != SessionMode.RECORD) {
+                latestOutputFft = calculateFft(sub)
+            }
+            return sub to sub
+        }
+        return null to null
+    }
+
+    private fun runAudioBlockMode(mixInput: FloatArray): Pair<FloatArray?, FloatArray?> {
+        ensureTriggerWorkerRunning()
+        
+        // Push to background trigger worker
+        triggerQueue.offer(mixInput.copyOf())
+        
+        val inputDb = 20 * kotlin.math.log10(latestInputRms + eps)
+        val targetGain = if (isMaskingActive && inputDb >= inputSilenceDb) maskVolume else 0.0f
+        val noiseTime = if (targetGain > currentNoiseGain) noiseAttackMs else noiseReleaseMs
+        val noiseAlpha = 1.0f - kotlin.math.exp(- (chunkSamples.toDouble() / sampleRate) / (noiseTime.toDouble() / 1000.0)).toFloat()
+        currentNoiseGain = noiseAlpha * targetGain + (1.0f - noiseAlpha) * currentNoiseGain
+
+        if (currentNoiseGain > 0.0001f) {
+            latestIsNoisePlaying = currentNoiseGain > (maskVolume * 0.5f)
+            val noise = FloatArray(mixInput.size)
+            val normalizedGain = (currentNoiseGain / maskVolume).coerceIn(0f, 1f)
+            for (i in 0 until chunkSamples) {
+                val pink = nextPinkSample() * currentNoiseGain
+                // Crossfade mic and pink noise
+                noise[i] = mixInput[i] * (1.0f - normalizedGain) + pink
+                noise[chunkSamples + i] = mixInput[chunkSamples + i] * (1.0f - normalizedGain) + pink
+            }
+            return noise to null
+        } else {
+            latestIsNoisePlaying = false
+            return mixInput to null
+        }
+    }
+
+    private fun finalizeAudioBlock(
+        mixInput: FloatArray,
+        playbackSignal: FloatArray,
+        displayRecordingSignal: FloatArray,
+        playBuf: FloatArray,
+        track: AudioTrack
+    ) {
+        val shortBufIn = if (currentMode == SessionMode.RECORD) ShortArray(mixInput.size * 2) else null
+        val shortBufOut = if (currentMode == SessionMode.RECORD) ShortArray(mixInput.size * 2) else null
+
+        for (i in 0 until chunkSamples) {
+            val inL = mixInput[i].coerceIn(-1.0f, 1.0f)
+            val inR = mixInput[chunkSamples + i].coerceIn(-1.0f, 1.0f)
+            
+            // Output for graph/recording
+            val outDispL = displayRecordingSignal[i].coerceIn(-1.0f, 1.0f)
+            val outDispR = displayRecordingSignal[chunkSamples + i].coerceIn(-1.0f, 1.0f)
+            
+            // Output for actual hearing
+            val outPlayL = playbackSignal[i].coerceIn(-1.0f, 1.0f)
+            val outPlayR = playbackSignal[chunkSamples + i].coerceIn(-1.0f, 1.0f)
+            
+            playBuf[2 * i] = outPlayL
+            playBuf[2 * i + 1] = outPlayR
+            
+            if (currentMode == SessionMode.RECORD && shortBufIn != null && shortBufOut != null) {
+                shortBufIn[2 * i] = (inL * 32767).toInt().toShort()
+                shortBufIn[2 * i + 1] = (inR * 32767).toInt().toShort()
+                shortBufOut[2 * i] = (outDispL * 32767).toInt().toShort()
+                shortBufOut[2 * i + 1] = (outDispR * 32767).toInt().toShort()
+            }
+        }
+        
+        if (currentMode == SessionMode.RECORD && shortBufIn != null && shortBufOut != null) {
+            try {
+                recordingInputStream?.let { for (s in shortBufIn) it.writeShort(s.toInt()) }
+                recordingOutputStream?.let { for (s in shortBufOut) it.writeShort(s.toInt()) }
+            } catch (e: Exception) {
+                Log.e(logTag, "Recording write error", e)
+            }
+        }
+
+        track.write(playBuf, 0, playBuf.size, AudioTrack.WRITE_BLOCKING)
+    }
+
     private fun calculateRms(audio: FloatArray): Float {
         var sum = 0f
-        for (x in audio) sum += x * x
+        for (x in audio) {
+            val sq = x * x
+            if (!sq.isNaN() && !sq.isInfinite()) {
+                sum += sq
+            }
+        }
         return sqrt(sum / audio.size)
     }
 
@@ -739,15 +1007,26 @@ class MainActivity : AppCompatActivity() {
         return mags
     }
 
-    private fun runOnnxStep(mix: FloatArray): FloatArray? {
+    private val onnxLock = Any()
+    private fun runOnnxStep(mix: FloatArray): FloatArray? = synchronized(onnxLock) {
         val sess = session ?: return null
         val shapes = inputShapes ?: return null
         
         val tensors = mutableMapOf<String, OnnxTensor>()
         try {
+            val mixShape = shapes.getValue("mix")
+            val expectedElements = mixShape.fold(1L) { acc, l -> acc * l }.toInt()
+            
+            if (mix.size != expectedElements) {
+                Log.e(logTag, "Buffer size mismatch! Expected $expectedElements elements for shape ${mixShape.contentToString()}, but got ${mix.size}")
+                return null
+            }
+
             val startTime = System.nanoTime()
             val currentLabel = label.copyOf()
-            tensors["mix"] = OnnxTensor.createTensor(env, FloatBuffer.wrap(mix), shapes.getValue("mix"))
+            val mixCopy = mix.copyOf()
+            
+            tensors["mix"] = OnnxTensor.createTensor(env, FloatBuffer.wrap(mixCopy), mixShape)
             tensors["label"] = OnnxTensor.createTensor(env, FloatBuffer.wrap(currentLabel), shapes.getValue("label"))
             tensors["enc_buf"] = OnnxTensor.createTensor(env, FloatBuffer.wrap(encBuf), shapes.getValue("enc_buf"))
             tensors["dec_buf"] = OnnxTensor.createTensor(env, FloatBuffer.wrap(decBuf), shapes.getValue("dec_buf"))
@@ -755,10 +1034,9 @@ class MainActivity : AppCompatActivity() {
 
             sess.run(tensors).use { result ->
                 val endTime = System.nanoTime()
-                val latency = (endTime - startTime) / 1_000_000.0
-                latestLatencyMs = latency
+                latestLatencyMs = (endTime - startTime) / 1_000_000.0
                 if (currentMode == SessionMode.RECORD) {
-                    latencyHistory.add(latency)
+                    latencyHistory.add(latestLatencyMs)
                 }
 
                 val x = tensorToFloatArray(result.get(0) as OnnxTensor)
@@ -768,7 +1046,7 @@ class MainActivity : AppCompatActivity() {
                 return x
             }
         } catch (e: Exception) {
-            Log.e(logTag, "Inference error", e)
+            Log.e(logTag, "Inference error: ${e.message}", e)
             return null
         } finally {
             tensors.values.forEach { it.close() }
@@ -782,7 +1060,7 @@ class MainActivity : AppCompatActivity() {
         val bufferSize = max(minBufferSize, chunkSamples * inputChannels * 4 * 10)
 
         val recorder = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            .setAudioSource(MediaRecorder.AudioSource.MIC)
             .setAudioFormat(AudioFormat.Builder()
                 .setSampleRate(sampleRate)
                 .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
@@ -850,6 +1128,19 @@ class MainActivity : AppCompatActivity() {
         return shape.fold(1L) { acc, v -> acc * v }.toInt()
     }
 
+    private fun nextPinkSample(): Float {
+        val white = random.nextFloat() * 2f - 1f
+        pinkNoiseStates[0] = 0.99886f * pinkNoiseStates[0] + white * 0.0555179f
+        pinkNoiseStates[1] = 0.99332f * pinkNoiseStates[1] + white * 0.0750759f
+        pinkNoiseStates[2] = 0.96900f * pinkNoiseStates[2] + white * 0.1538520f
+        pinkNoiseStates[3] = 0.86650f * pinkNoiseStates[3] + white * 0.3104856f
+        pinkNoiseStates[4] = 0.55000f * pinkNoiseStates[4] + white * 0.5329522f
+        pinkNoiseStates[5] = -0.7616f * pinkNoiseStates[5] - white * 0.0168980f
+        val pink = pinkNoiseStates[0] + pinkNoiseStates[1] + pinkNoiseStates[2] + pinkNoiseStates[3] + pinkNoiseStates[4] + pinkNoiseStates[5] + pinkNoiseStates[6] + white * 0.5362f
+        pinkNoiseStates[6] = white * 0.115926f
+        return pink * 0.11f // Normalize roughly to [-1, 1]
+    }
+
     class FastFourierTransform(private val n: Int) {
         private val cos = FloatArray(n / 2)
         private val sin = FloatArray(n / 2)
@@ -906,5 +1197,39 @@ class MainActivity : AppCompatActivity() {
         session?.close()
         env.close()
         super.onDestroy()
+    }
+
+    private fun loadSettings() {
+        val prefs = getSharedPreferences("miso_settings", MODE_PRIVATE)
+        relativeThresholdDb = prefs.getFloat("relativeThresholdDb", -18.0f)
+        minModelDb = prefs.getFloat("minModelDb", -45.0f)
+        inputSilenceDb = prefs.getFloat("inputSilenceDb", -55.0f)
+        detectorAttackMs = prefs.getLong("detectorAttackMs", 30L)
+        detectorReleaseMs = prefs.getLong("detectorReleaseMs", 300L)
+        maskVolume = prefs.getFloat("maskVolume", 0.4f)
+        currentPlaybackModeIndex = prefs.getInt("currentPlaybackModeIndex", 0)
+        currentModelIndex = prefs.getInt("currentModelIndex", 0)
+        
+        val selectedStr = prefs.getString("selectedClasses", "")
+        if (selectedStr != null && selectedStr.isNotEmpty()) {
+            val parts = selectedStr.split(",")
+            selectedClasses = BooleanArray(parts.size) { i -> parts[i] == "1" }
+        }
+    }
+
+    private fun saveSettings() {
+        val prefs = getSharedPreferences("miso_settings", MODE_PRIVATE)
+        prefs.edit().apply {
+            putFloat("relativeThresholdDb", relativeThresholdDb)
+            putFloat("minModelDb", minModelDb)
+            putFloat("inputSilenceDb", inputSilenceDb)
+            putLong("detectorAttackMs", detectorAttackMs)
+            putLong("detectorReleaseMs", detectorReleaseMs)
+            putFloat("maskVolume", maskVolume)
+            putInt("currentPlaybackModeIndex", currentPlaybackModeIndex)
+            putInt("currentModelIndex", currentModelIndex)
+            putString("selectedClasses", selectedClasses.joinToString(",") { if (it) "1" else "0" })
+            apply()
+        }
     }
 }
