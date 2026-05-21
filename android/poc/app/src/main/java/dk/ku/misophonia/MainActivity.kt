@@ -50,11 +50,11 @@ class MainActivity : AppCompatActivity() {
     )
 
     private var currentPlaybackModeIndex = 0
-    private var currentLabelIndex = 0
     private var currentModelIndex = -1
+    private var selectedClasses = BooleanArray(0)
 
     private lateinit var status: TextView
-    private lateinit var classSpinner: Spinner
+    private lateinit var classSelectBtn: Button
     private lateinit var playbackSpinner: Spinner
     private lateinit var modelSpinner: Spinner
     private lateinit var inputWaveform: WaveformView
@@ -185,19 +185,14 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(playbackSpinner)
 
-        // Trigger Class Spinner
-        root.addView(TextView(this).apply { text = "Target Trigger Class"; textSize = 14f })
-        classSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, classNames)
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    updateLabelIndex(position)
-                }
-                override fun onNothingSelected(p0: AdapterView<*>?) {}
-            }
+        // Trigger Class Selection
+        root.addView(TextView(this).apply { text = "Target Trigger Classes"; textSize = 14f })
+        classSelectBtn = Button(this).apply {
+            text = "Select Classes"
+            setOnClickListener { showClassSelectionDialog() }
             setPadding(0, 16, 0, 48)
         }
-        root.addView(classSpinner)
+        root.addView(classSelectBtn)
 
         val btnRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -432,12 +427,14 @@ class MainActivity : AppCompatActivity() {
         
         val classes = manifest.getJSONArray("class_names")
         classNames = (0 until classes.length()).map { classes.getString(it) }
+        selectedClasses = BooleanArray(classNames.size)
         
-        // Update class spinner
-        runOnUiThread {
-            classSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, classNames)
-            classSpinner.setSelection(manifest.optInt("default_class_index", 0))
+        val defaultIdx = manifest.optInt("default_class_index", 0)
+        if (defaultIdx in selectedClasses.indices) {
+            selectedClasses[defaultIdx] = true
         }
+        
+        updateClassButtonText()
 
         val models = manifest.getJSONArray("models")
         val displayNames = mutableListOf<String>()
@@ -454,6 +451,44 @@ class MainActivity : AppCompatActivity() {
                 modelSpinner.setSelection(0)
             }
         }
+    }
+
+    private fun showClassSelectionDialog() {
+        val builder = androidx.appcompat.app.AlertDialog.Builder(this)
+        builder.setTitle("Select Trigger Classes")
+        
+        builder.setMultiChoiceItems(classNames.toTypedArray(), selectedClasses) { _, index, isChecked ->
+            selectedClasses[index] = isChecked
+        }
+        
+        builder.setPositiveButton("OK") { _, _ ->
+            updateLabelsFromSelection()
+            updateClassButtonText()
+        }
+        builder.setNegativeButton("Cancel", null)
+        builder.show()
+    }
+
+    private fun updateClassButtonText() {
+        val selected = classNames.filterIndexed { index, _ -> selectedClasses[index] }
+        classSelectBtn.text = if (selected.isEmpty()) {
+            "None Selected"
+        } else if (selected.size <= 2) {
+            selected.joinToString(", ")
+        } else {
+            "${selected.size} Classes Selected"
+        }
+    }
+
+    private fun updateLabelsFromSelection() {
+        label.fill(0f)
+        for (i in selectedClasses.indices) {
+            if (selectedClasses[i] && i in label.indices) {
+                label[i] = 1.0f
+            }
+        }
+        val selected = classNames.filterIndexed { index, _ -> selectedClasses[index] }
+        Log.i(logTag, "Selected classes: $selected")
     }
 
     private fun loadModel(index: Int) {
@@ -483,7 +518,7 @@ class MainActivity : AppCompatActivity() {
             session = env.createSession(modelFile.absolutePath, OrtSession.SessionOptions())
             
             label = FloatArray(sizeOf(shapes.getValue("label")))
-            updateLabelIndex(currentLabelIndex)
+            updateLabelsFromSelection()
             
             encBuf = FloatArray(sizeOf(shapes.getValue("enc_buf")))
             decBuf = FloatArray(sizeOf(shapes.getValue("dec_buf")))
@@ -498,15 +533,6 @@ class MainActivity : AppCompatActivity() {
             Log.e(logTag, "Failed to load model $onnxAssetName", e)
             status.text = "Error loading model: ${e.message}"
         }
-    }
-
-    private fun updateLabelIndex(index: Int) {
-        currentLabelIndex = index
-        label.fill(0f)
-        if (index in label.indices) {
-            label[index] = 1.0f
-        }
-        Log.i(logTag, "Selected class: ${classNames.getOrNull(index) ?: index}")
     }
 
     private fun startUpdateTimer() {
@@ -524,10 +550,12 @@ class MainActivity : AppCompatActivity() {
                     val latencyVal = if (currentPlaybackModeIndex == 0) "N/A (Bypass)" else "${"%.2f".format(latency)} ms"
                     
                     runOnUiThread {
-                        inputWaveform.addValue(inRms)
-                        outputWaveform.addValue(outRms)
-                        inFft?.let { inputSpectrogram.update(it) }
-                        outFft?.let { outputSpectrogram.update(it) }
+                        if (currentMode != SessionMode.RECORD) {
+                            inputWaveform.addValue(inRms)
+                            outputWaveform.addValue(outRms)
+                            inFft?.let { inputSpectrogram.update(it) }
+                            outFft?.let { outputSpectrogram.update(it) }
+                        }
                         
                         debugInfo.text = """
                             Model: $modelName
@@ -623,7 +651,9 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 latestInputRms = calculateRms(mixInput)
-                latestInputFft = calculateFft(mixInput)
+                if (currentMode != SessionMode.RECORD) {
+                    latestInputFft = calculateFft(mixInput)
+                }
 
                 // Determine playback signal based on selected mode
                 val outputSignal = when (currentPlaybackModeIndex) {
@@ -642,7 +672,9 @@ class MainActivity : AppCompatActivity() {
 
                 if (outputSignal != null) {
                     latestOutputRms = calculateRms(outputSignal)
-                    latestOutputFft = calculateFft(outputSignal)
+                    if (currentMode != SessionMode.RECORD) {
+                        latestOutputFft = calculateFft(outputSignal)
+                    }
                     
                     val shortBufIn = ShortArray(mixInput.size)
                     val shortBufOut = ShortArray(playBuf.size)
