@@ -14,8 +14,12 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.io.FileOutputStream
+import android.content.Intent
+import android.graphics.Typeface
+import androidx.core.content.FileProvider
+import java.io.*
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
@@ -50,12 +54,29 @@ class MainActivity : AppCompatActivity() {
     private var currentModelIndex = -1
 
     private lateinit var status: TextView
-    private lateinit var controlButton: Button
     private lateinit var classSpinner: Spinner
     private lateinit var playbackSpinner: Spinner
     private lateinit var modelSpinner: Spinner
     private lateinit var inputWaveform: WaveformView
     private lateinit var outputWaveform: WaveformView
+    private lateinit var inputSpectrogram: SpectrogramView
+    private lateinit var outputSpectrogram: SpectrogramView
+
+    private lateinit var liveBtn: Button
+    private lateinit var recordBtn: Button
+    private lateinit var disabledBtn: Button
+    private lateinit var debugLayout: LinearLayout
+    private lateinit var debugInfo: TextView
+    private lateinit var debugToggle: Button
+
+    private var currentMode = SessionMode.DISABLED
+    private var recordingInputFile: File? = null
+    private var recordingOutputFile: File? = null
+    private var recordingInputStream: DataOutputStream? = null
+    private var recordingOutputStream: DataOutputStream? = null
+    private val latencyHistory = java.util.Collections.synchronizedList(mutableListOf<Double>())
+
+    enum class SessionMode { DISABLED, LIVE, RECORD }
 
     private lateinit var env: OrtEnvironment
     private var session: OrtSession? = null
@@ -76,6 +97,14 @@ class MainActivity : AppCompatActivity() {
     private var latestInputRms = 0f
     @Volatile
     private var latestOutputRms = 0f
+    @Volatile
+    private var latestInputFft: FloatArray? = null
+    @Volatile
+    private var latestOutputFft: FloatArray? = null
+    @Volatile
+    private var latestLatencyMs = 0.0
+
+    private val fft = FastFourierTransform(512)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,7 +129,7 @@ class MainActivity : AppCompatActivity() {
     private fun setupUI() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(64, 64, 64, 64)
+            setPadding(64, 128, 64, 64)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -111,10 +140,18 @@ class MainActivity : AppCompatActivity() {
             addView(root)
         }
 
+        root.addView(TextView(this).apply {
+            text = "MisoSoupression"
+            textSize = 28f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 16, 0, 32)
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+        })
+
         status = TextView(this).apply {
             text = "Initializing..."
-            textSize = 16f
-            setPadding(0, 0, 0, 48)
+            textSize = 14f
+            setPadding(0, 0, 0, 32)
         }
         root.addView(status)
 
@@ -162,7 +199,34 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(classSpinner)
 
-        root.addView(TextView(this).apply { text = "Input Level (Raw Mic)" })
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            weightSum = 3f
+        }
+        
+        liveBtn = Button(this).apply {
+            text = "Live"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { setSessionMode(SessionMode.LIVE) }
+        }
+        recordBtn = Button(this).apply {
+            text = "Record"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { setSessionMode(SessionMode.RECORD) }
+        }
+        disabledBtn = Button(this).apply {
+            text = "Disabled"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { setSessionMode(SessionMode.DISABLED) }
+        }
+        
+        btnRow.addView(liveBtn)
+        btnRow.addView(recordBtn)
+        btnRow.addView(disabledBtn)
+        root.addView(btnRow)
+
+        root.addView(TextView(this).apply { text = "Input Waveform (Mic)"; setPadding(0, 32, 0, 0) })
         inputWaveform = WaveformView(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 250).apply {
                 setMargins(0, 16, 0, 32)
@@ -170,23 +234,196 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(inputWaveform)
 
-        root.addView(TextView(this).apply { text = "Output Level (Playback Signal)" })
+        root.addView(TextView(this).apply { text = "Input Spectrogram" })
+        inputSpectrogram = SpectrogramView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 400).apply {
+                setMargins(0, 16, 0, 48)
+            }
+        }
+        root.addView(inputSpectrogram)
+
+        root.addView(TextView(this).apply { text = "Output Waveform (Signal)" })
         outputWaveform = WaveformView(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 250).apply {
-                setMargins(0, 16, 0, 48)
+                setMargins(0, 16, 0, 32)
             }
         }
         root.addView(outputWaveform)
 
-        controlButton = Button(this).apply {
-            text = "Start Live Audio"
-            setOnClickListener {
-                if (running.get()) stopDemo() else startDemo()
+        root.addView(TextView(this).apply { text = "Output Spectrogram" })
+        outputSpectrogram = SpectrogramView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 400).apply {
+                setMargins(0, 16, 0, 48)
             }
         }
-        root.addView(controlButton)
+        root.addView(outputSpectrogram)
+
+        debugLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setBackgroundColor(0x11000000)
+            setPadding(32, 32, 32, 32)
+        }
+        debugInfo = TextView(this).apply {
+            textSize = 12f
+            text = "Debug Info..."
+        }
+        debugLayout.addView(debugInfo)
+        root.addView(debugLayout)
+
+        debugToggle = Button(this).apply {
+            text = "Show Debug"
+            setOnClickListener {
+                if (debugLayout.visibility == View.VISIBLE) {
+                    debugLayout.visibility = View.GONE
+                    text = "Show Debug"
+                } else {
+                    debugLayout.visibility = View.VISIBLE
+                    text = "Hide Debug"
+                }
+            }
+        }
+        root.addView(debugToggle)
 
         setContentView(scroll)
+        updateButtonColors()
+    }
+
+    private fun setSessionMode(mode: SessionMode) {
+        if (mode == currentMode) return
+        
+        val oldMode = currentMode
+        currentMode = mode // Update mode FIRST
+        
+        if (oldMode == SessionMode.RECORD && (mode == SessionMode.LIVE || mode == SessionMode.DISABLED)) {
+            stopRecordingAndShare()
+        }
+
+        updateButtonColors()
+
+        if (mode != SessionMode.DISABLED && !running.get()) {
+            startDemo()
+        } else if (mode == SessionMode.DISABLED && running.get()) {
+            stopDemo()
+        }
+    }
+
+    private fun updateButtonColors() {
+        runOnUiThread {
+            liveBtn.alpha = if (currentMode == SessionMode.LIVE) 1.0f else 0.5f
+            recordBtn.alpha = if (currentMode == SessionMode.RECORD) 1.0f else 0.5f
+            disabledBtn.alpha = if (currentMode == SessionMode.DISABLED) 1.0f else 0.5f
+        }
+    }
+
+    private fun stopRecordingAndShare() {
+        try {
+            recordingInputStream?.close()
+            recordingOutputStream?.close()
+            recordingInputStream = null
+            recordingOutputStream = null
+            
+            val pcmIn = recordingInputFile ?: return
+            val pcmOut = recordingOutputFile ?: return
+            
+            val timestamp = System.currentTimeMillis()
+            val baseDir = externalCacheDir ?: cacheDir
+            val wavInFile = File(baseDir, "input_$timestamp.wav")
+            val wavOutFile = File(baseDir, "output_$timestamp.wav")
+            val csvFile = File(baseDir, "latency_$timestamp.csv")
+            
+            pcmToWav(pcmIn, wavInFile)
+            pcmToWav(pcmOut, wavOutFile)
+            
+            // Save latency history to CSV
+            csvFile.printWriter().use { out ->
+                out.println("Chunk,LatencyMs")
+                synchronized(latencyHistory) {
+                    latencyHistory.forEachIndexed { index, latency ->
+                        out.println("$index,$latency")
+                    }
+                }
+            }
+            
+            val inUri = FileProvider.getUriForFile(this, "dk.ku.misophonia.fileprovider", wavInFile)
+            val outUri = FileProvider.getUriForFile(this, "dk.ku.misophonia.fileprovider", wavOutFile)
+            val csvUri = FileProvider.getUriForFile(this, "dk.ku.misophonia.fileprovider", csvFile)
+            
+            val uris = arrayListOf(inUri, outUri, csvUri)
+            val shareIntent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "*/*"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, "Share Results"))
+            
+        } catch (e: Exception) {
+            Log.e(logTag, "Error sharing results", e)
+            runOnUiThread {
+                Toast.makeText(this, "Sharing failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun pcmToWav(pcmFile: File, wavFile: File) {
+        val totalAudioLen = pcmFile.length()
+        val totalDataLen = totalAudioLen + 36
+        val longSampleRate = sampleRate.toLong()
+        val channels = 2
+        val byteRate = 16 * sampleRate * channels / 8
+
+        val header = ByteArray(44)
+        header[0] = 'R'.code.toByte()
+        header[1] = 'I'.code.toByte()
+        header[2] = 'F'.code.toByte()
+        header[3] = 'F'.code.toByte()
+        header[4] = (totalDataLen and 0xff).toByte()
+        header[5] = ((totalDataLen shr 8) and 0xff).toByte()
+        header[6] = ((totalDataLen shr 16) and 0xff).toByte()
+        header[7] = ((totalDataLen shr 24) and 0xff).toByte()
+        header[8] = 'W'.code.toByte()
+        header[9] = 'A'.code.toByte()
+        header[10] = 'V'.code.toByte()
+        header[11] = 'E'.code.toByte()
+        header[12] = 'f'.code.toByte()
+        header[13] = 'm'.code.toByte()
+        header[14] = 't'.code.toByte()
+        header[15] = ' '.code.toByte()
+        header[16] = 16
+        header[17] = 0
+        header[18] = 0
+        header[19] = 0
+        header[20] = 1 // PCM
+        header[21] = 0
+        header[22] = channels.toByte()
+        header[23] = 0
+        header[24] = (longSampleRate and 0xff).toByte()
+        header[25] = ((longSampleRate shr 8) and 0xff).toByte()
+        header[26] = ((longSampleRate shr 16) and 0xff).toByte()
+        header[27] = ((longSampleRate shr 24) and 0xff).toByte()
+        header[28] = (byteRate and 0xff).toByte()
+        header[29] = ((byteRate shr 8) and 0xff).toByte()
+        header[30] = ((byteRate shr 16) and 0xff).toByte()
+        header[31] = ((byteRate shr 24) and 0xff).toByte()
+        header[32] = (2 * 16 / 8).toByte()
+        header[33] = 0
+        header[34] = 16
+        header[35] = 0
+        header[36] = 'd'.code.toByte()
+        header[37] = 'a'.code.toByte()
+        header[38] = 't'.code.toByte()
+        header[39] = 'a'.code.toByte()
+        header[40] = (totalAudioLen and 0xff).toByte()
+        header[41] = ((totalAudioLen shr 8) and 0xff).toByte()
+        header[42] = ((totalAudioLen shr 16) and 0xff).toByte()
+        header[43] = ((totalAudioLen shr 24) and 0xff).toByte()
+
+        FileOutputStream(wavFile).use { out ->
+            out.write(header)
+            FileInputStream(pcmFile).use { input ->
+                input.copyTo(out)
+            }
+        }
     }
 
     private fun loadManifest() {
@@ -252,7 +489,7 @@ class MainActivity : AppCompatActivity() {
             decBuf = FloatArray(sizeOf(shapes.getValue("dec_buf")))
             outBuf = FloatArray(sizeOf(shapes.getValue("out_buf")))
             
-            status.text = "Model Loaded: $onnxAssetName\nChunk size: $chunkSamples"
+            status.text = "Status: Model Ready"
             
             if (wasRunning) {
                 startDemo()
@@ -279,9 +516,25 @@ class MainActivity : AppCompatActivity() {
                 if (running.get()) {
                     val inRms = latestInputRms
                     val outRms = latestOutputRms
+                    val inFft = latestInputFft
+                    val outFft = latestOutputFft
+                    val latency = latestLatencyMs
+                    val modelName = modelsList.getOrNull(currentModelIndex)?.optString("display_name") ?: "None"
+                    
+                    val latencyVal = if (currentPlaybackModeIndex == 0) "N/A (Bypass)" else "${"%.2f".format(latency)} ms"
+                    
                     runOnUiThread {
                         inputWaveform.addValue(inRms)
                         outputWaveform.addValue(outRms)
+                        inFft?.let { inputSpectrogram.update(it) }
+                        outFft?.let { outputSpectrogram.update(it) }
+                        
+                        debugInfo.text = """
+                            Model: $modelName
+                            Chunk Size: $chunkSamples
+                            Inference Latency: $latencyVal
+                            Mode: $currentMode
+                        """.trimIndent()
                     }
                 }
             }
@@ -296,11 +549,19 @@ class MainActivity : AppCompatActivity() {
 
         if (session == null) {
             Toast.makeText(this, "Model not loaded", Toast.LENGTH_SHORT).show()
+            setSessionMode(SessionMode.DISABLED)
             return
         }
 
+        if (currentMode == SessionMode.RECORD) {
+            latencyHistory.clear()
+            recordingInputFile = File(cacheDir, "input.pcm")
+            recordingOutputFile = File(cacheDir, "output.pcm")
+            recordingInputStream = DataOutputStream(FileOutputStream(recordingInputFile))
+            recordingOutputStream = DataOutputStream(FileOutputStream(recordingOutputFile))
+        }
+
         running.set(true)
-        controlButton.text = "Stop"
         
         worker = thread(start = true, name = "audio-worker") {
             try {
@@ -309,7 +570,7 @@ class MainActivity : AppCompatActivity() {
                 Log.e(logTag, "Audio loop error", t)
                 runOnUiThread {
                     Toast.makeText(this, "Error: ${t.message}", Toast.LENGTH_LONG).show()
-                    stopDemo()
+                    setSessionMode(SessionMode.DISABLED)
                 }
             }
         }
@@ -317,7 +578,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopDemo() {
         running.set(false)
-        controlButton.text = "Start Live Audio"
+        if (currentMode == SessionMode.RECORD) {
+            stopRecordingAndShare()
+        }
     }
 
     private fun audioLoop() {
@@ -360,6 +623,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 latestInputRms = calculateRms(mixInput)
+                latestInputFft = calculateFft(mixInput)
 
                 // Determine playback signal based on selected mode
                 val outputSignal = when (currentPlaybackModeIndex) {
@@ -378,10 +642,36 @@ class MainActivity : AppCompatActivity() {
 
                 if (outputSignal != null) {
                     latestOutputRms = calculateRms(outputSignal)
+                    latestOutputFft = calculateFft(outputSignal)
+                    
+                    val shortBufIn = ShortArray(mixInput.size)
+                    val shortBufOut = ShortArray(playBuf.size)
                     for (i in 0 until chunkSamples) {
-                        playBuf[2 * i] = outputSignal[i].coerceIn(-1.0f, 1.0f)
-                        playBuf[2 * i + 1] = outputSignal[chunkSamples + i].coerceIn(-1.0f, 1.0f)
+                        val inL = mixInput[i].coerceIn(-1.0f, 1.0f)
+                        val inR = mixInput[chunkSamples + i].coerceIn(-1.0f, 1.0f)
+                        val outL = outputSignal[i].coerceIn(-1.0f, 1.0f)
+                        val outR = outputSignal[chunkSamples + i].coerceIn(-1.0f, 1.0f)
+                        
+                        playBuf[2 * i] = outL
+                        playBuf[2 * i + 1] = outR
+                        
+                        if (currentMode == SessionMode.RECORD) {
+                            shortBufIn[2 * i] = (inL * 32767).toInt().toShort()
+                            shortBufIn[2 * i + 1] = (inR * 32767).toInt().toShort()
+                            shortBufOut[2 * i] = (outL * 32767).toInt().toShort()
+                            shortBufOut[2 * i + 1] = (outR * 32767).toInt().toShort()
+                        }
                     }
+                    
+                    if (currentMode == SessionMode.RECORD) {
+                        try {
+                            recordingInputStream?.let { for (s in shortBufIn) it.writeShort(s.toInt()) }
+                            recordingOutputStream?.let { for (s in shortBufOut) it.writeShort(s.toInt()) }
+                        } catch (e: Exception) {
+                            Log.e(logTag, "Recording write error", e)
+                        }
+                    }
+
                     track.write(playBuf, 0, playBuf.size, AudioTrack.WRITE_BLOCKING)
                 }
             }
@@ -399,12 +689,31 @@ class MainActivity : AppCompatActivity() {
         return sqrt(sum / audio.size)
     }
 
+    private fun calculateFft(mix: FloatArray): FloatArray {
+        // Average channels and pad to 512
+        val real = FloatArray(512)
+        val imag = FloatArray(512)
+        for (i in 0 until chunkSamples) {
+            real[i] = (mix[i] + mix[chunkSamples + i]) / 2f
+        }
+        
+        fft.transform(real, imag)
+        
+        // Calculate magnitudes for the first half (Nyquist)
+        val mags = FloatArray(256)
+        for (i in 0 until 256) {
+            mags[i] = sqrt(real[i] * real[i] + imag[i] * imag[i])
+        }
+        return mags
+    }
+
     private fun runOnnxStep(mix: FloatArray): FloatArray? {
         val sess = session ?: return null
         val shapes = inputShapes ?: return null
         
         val tensors = mutableMapOf<String, OnnxTensor>()
         try {
+            val startTime = System.nanoTime()
             val currentLabel = label.copyOf()
             tensors["mix"] = OnnxTensor.createTensor(env, FloatBuffer.wrap(mix), shapes.getValue("mix"))
             tensors["label"] = OnnxTensor.createTensor(env, FloatBuffer.wrap(currentLabel), shapes.getValue("label"))
@@ -413,6 +722,13 @@ class MainActivity : AppCompatActivity() {
             tensors["out_buf"] = OnnxTensor.createTensor(env, FloatBuffer.wrap(outBuf), shapes.getValue("out_buf"))
 
             sess.run(tensors).use { result ->
+                val endTime = System.nanoTime()
+                val latency = (endTime - startTime) / 1_000_000.0
+                latestLatencyMs = latency
+                if (currentMode == SessionMode.RECORD) {
+                    latencyHistory.add(latency)
+                }
+
                 val x = tensorToFloatArray(result.get(0) as OnnxTensor)
                 encBuf = tensorToFloatArray(result.get(1) as OnnxTensor)
                 decBuf = tensorToFloatArray(result.get(2) as OnnxTensor)
@@ -500,6 +816,57 @@ class MainActivity : AppCompatActivity() {
 
     private fun sizeOf(shape: LongArray): Int {
         return shape.fold(1L) { acc, v -> acc * v }.toInt()
+    }
+
+    class FastFourierTransform(private val n: Int) {
+        private val cos = FloatArray(n / 2)
+        private val sin = FloatArray(n / 2)
+
+        init {
+            for (i in 0 until n / 2) {
+                cos[i] = kotlin.math.cos(2 * Math.PI * i / n).toFloat()
+                sin[i] = kotlin.math.sin(2 * Math.PI * i / n).toFloat()
+            }
+        }
+
+        fun transform(real: FloatArray, imag: FloatArray) {
+            var j = 0
+            for (i in 0 until n) {
+                if (i < j) {
+                    val tempReal = real[i]
+                    real[i] = real[j]
+                    real[j] = tempReal
+                    val tempImag = imag[i]
+                    imag[i] = imag[j]
+                    imag[j] = tempImag
+                }
+                var m = n shr 1
+                while (m >= 1 && j >= m) {
+                    j -= m
+                    m = m shr 1
+                }
+                j += m
+            }
+
+            var m = 2
+            while (m <= n) {
+                val halfM = m / 2
+                val step = n / m
+                for (k in 0 until n step m) {
+                    for (i in 0 until halfM) {
+                        val wr = cos[i * step]
+                        val wi = -sin[i * step]
+                        val tr = wr * real[k + i + halfM] - wi * imag[k + i + halfM]
+                        val ti = wr * imag[k + i + halfM] + wi * real[k + i + halfM]
+                        real[k + i + halfM] = real[k + i] - tr
+                        imag[k + i + halfM] = imag[k + i] - ti
+                        real[k + i] += tr
+                        imag[k + i] += ti
+                    }
+                }
+                m *= 2
+            }
+        }
     }
 
     override fun onDestroy() {
