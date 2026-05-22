@@ -16,7 +16,45 @@ assert all(k in os.environ for k in ["MLFLOW_TRACKING_URI", "MLFLOW_TRACKING_USE
 )
 
 RUN_INDEX = {
-    # Super models:
+    # Final models:
+    "model-super-sh-base": {
+        "pretty": "Dual",
+        "mlflow": "7751a4bdfe204399bdccb4cc7805fa54",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    "model-super-sh-gt-clean-mix": {
+        "pretty": "Dual",
+        "mlflow": "c366e9e47aab4ae18fe420df1c3f1cf0",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    "model-super-sh-mono-channel": {
+        "pretty": "Mono",
+        "mlflow": "3056d33512d9480b9f1ee000e3782258",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    "model-aux-ft-all": {
+        "pretty": "Fine-tuned",
+        "mlflow": "9f4b26bf5ad34058ac1c4645717ce883",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    "model-aux-ft-all-gt-clean-mix": {
+        "pretty": "Fine-tuned",
+        "mlflow": "b043aa47158d4c6daa1c0e31964e36ba",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    # Aux models:
+    "model-aux-ft-label": {
+        "pretty": "Label embedding fine-tuned",
+        "mlflow": "a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    # DISCONTINUED super models:
     "model-super-base": {
         "pretty": "Super (base)",
         "mlflow": "a969b8ffed29474da91cea6436ca317a",
