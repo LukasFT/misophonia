@@ -1855,6 +1855,7 @@ def plot_average_spectogram_background(
         sample_rate=sample_rate,
         hop_length=hop_length,
         n_fft=n_fft,
+        is_average=True,
         is_background=True,
     )
 
