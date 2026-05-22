@@ -20,10 +20,10 @@ from tqdm import tqdm
 from ._utils import CustomMlFlowLogger, SimpleCounter, _debug_to_mlflow, perform_eval, prepare_dir_or_file
 
 try:
-    from .confidential_losses import combined_complex_mag_loss  # noqa: F401
+    from .confidential_losses import mrccmse_loss  # noqa: F401
 except ImportError:
     eliot.log_message(
-        "Could not import combined complex magnitude loss. Make sure you have access to the private repository containing confidential losses and that it is properly installed.",
+        "Could not import MultiResolutionCCMSE loss. Make sure you have access to the private repository containing confidential losses and that it is properly installed.",
         level="warning",
     )
 
@@ -89,12 +89,12 @@ def _time_snr_and_si_snr_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens:
 
 def _freq_loss(pred: torch.Tensor, tgt: torch.Tensor, audio_lens: torch.Tensor) -> torch.Tensor:
     """
-    Computes combined complex magnitude loss
+    Computes multiresolution CCMSE on
     """
     batch_size = pred.shape[0]
     batch_loss = []
     for i in range(batch_size):
-        item_loss = combined_complex_mag_loss(pred[i, :, : audio_lens[i]], tgt[i, :, : audio_lens[i]])  # type: ignore
+        item_loss = mrccmse_loss(pred[i, :, : audio_lens[i]], tgt[i, :, : audio_lens[i]])  # type: ignore
         batch_loss.append(item_loss)
     return sum(batch_loss) / len(batch_loss)
 
