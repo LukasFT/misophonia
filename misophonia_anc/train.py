@@ -3,6 +3,7 @@ The main training script for training on synthetic data
 """
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -215,6 +216,7 @@ def train_model(
     global_step_train_start: int = 0,
     global_step_val_start: int = 0,
     ema: "ModelEMA | None" = None,
+    train_only_layers: Iterable[str] | None = None,
 ) -> None:
     """
     Main function to run training loop on Misophonia ANC model. Checkpoints model weights after each epoch. Logs batch and epoch losses for both
@@ -236,9 +238,15 @@ def train_model(
         eval_mono_to_stereo: If True, combine every other pair of predictions into a stereo signal.
         global_step_train (int): Metadata for MLflow to report total number of training batches already logged.
         global_step_val (int): Metadata for MLflow to report total number of validation batches already logged.
+        train_only_layers (list[str] | tuple[str, ...] | None): List of layer names to keep trainable. All other parameters will be frozen. If None or empty, all parameters are trainable (default).
     """
 
     model = model.to(device)
+
+    # Apply layer freezing if specified
+    if train_only_layers is not None and len(train_only_layers) > 0:
+        _apply_layer_freeze(model, train_only_layers)
+
     optimizer = optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=weight_decay)
     loss_fn = get_loss_fn_from_name(loss_option)
 
@@ -404,3 +412,34 @@ def train_model(
             train_loss=train_loss,
             ema_model=ema,
         )
+
+
+def _apply_layer_freeze(model: nn.Module, train_only_layers: Iterable[str]) -> None:
+    # Get list of available top-level layers
+    train_only_layers = tuple(train_only_layers)
+    available_layers = [name for name, _ in model.named_children()]
+
+    invalid_layers = set(train_only_layers) - set(available_layers)
+    if invalid_layers:
+        raise ValueError(
+            f"Unknown layer names in train_only_layers: {tuple(sorted(invalid_layers))}. "
+            f"Available top-level layers in model: {tuple(sorted(available_layers))}"
+        )
+
+    # Freeze all parameters by default
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Unfreeze only the specified layers
+    for layer_name in train_only_layers:
+        layer = getattr(model, layer_name)
+        if isinstance(layer, nn.Module):
+            for param in layer.parameters():
+                param.requires_grad = True
+        else:
+            raise ValueError(f"Layer '{layer_name}' is not a module.")
+
+    eliot.log_message(
+        f"Training only layers: {train_only_layers}. All other parameters are frozen.",
+        level="info",
+    )

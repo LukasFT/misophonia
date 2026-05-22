@@ -339,6 +339,7 @@ def train(
             skip_subtraction=skip_subtraction,
             eval_mono_to_stereo=config.stereo_to_mono,
             ema=checkpoint_metadata.get("ema_model", None),
+            train_only_layers=config.train_only_layers,
             **config.model_hyperparams,
         )
         cp_best_epoch(name, data_base_dir=data_base_dir)

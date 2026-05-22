@@ -235,6 +235,11 @@ class MisophoniaANCConfig(BaseModel):
         description="Whether to use an exponential moving average of the model weights during training. See train.train_model for details.",
     )
 
+    train_only_layers: list[str] | tuple[str, ...] | None = pydantic.Field(
+        None,
+        description="List of top-level layer names to keep trainable during training. All other parameters will be frozen. If None or empty, all parameters remain trainable (default behavior). Examples: ['label_embedding'], ['in_conv', 'label_embedding']. Available layers depend on model architecture. Layer names are validated during training.",
+    )
+
     mlflow_experiment: str | None = pydantic.Field(
         None, description="MLflow experiment name to log training metrics to."
     )
@@ -792,11 +797,11 @@ def perform_eval(
     ground_truth_target = model.ground_truth_target
 
     log_to_mlflow = mlflow.active_run() is not None and mlflow_global_step is not None and split_name is not None
-    log_to_mlflow_every = 50 if log_to_mlflow else None # Only log every x batch to MLflow to avoid overloading it
+    log_to_mlflow_every = 50 if log_to_mlflow else None  # Only log every x batch to MLflow to avoid overloading it
 
     with mlflow_logger, torch.no_grad():
         for batch_idx, batch in tqdm(enumerate(data_loader), desc="Evaluating", unit=" batches"):
-            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1): # Log debug even less often
+            if log_to_mlflow and (batch_idx % 1000 == 0 or batch_idx % 1000 == 1):  # Log debug even less often
                 _debug_to_mlflow(mlflow_logger, mlflow_global_step, device, prefix="val_")
 
             inputs = batch["inputs"]
