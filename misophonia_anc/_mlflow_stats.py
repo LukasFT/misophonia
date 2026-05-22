@@ -56,19 +56,19 @@ RUN_INDEX = {
     },
     # DISCONTINUED super models:
     "model-super-base": {
-        "pretty": "Super (base)",
+        "pretty": "Discontinued (base)",
         "mlflow": "a969b8ffed29474da91cea6436ca317a",
         "train_size": 1_000_960,
         "train_size_per_epoch": 50_048,
     },
     "model-super-mono-channel": {
-        "pretty": "Super (mono)",
+        "pretty": "Discontinued (mono)",
         "mlflow": "431f7f510633433bb1ec66d2ecc8c3ee",
         "train_size": 1_000_960,
         "train_size_per_epoch": 50_048,
     },
     "model-super-gt-clean-mix": {
-        "pretty": "Super (clean mix)",
+        "pretty": "Discontinued (clean mix)",
         "mlflow": "b0677e3b9af247af85808a6d4a708171",
         "train_size": 1_000_960,
         "train_size_per_epoch": 50_048,
