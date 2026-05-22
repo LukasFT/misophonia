@@ -383,6 +383,11 @@ class MisophoniaANCNet(nn.Module):
                     name=method_name,
                     func=None,  # Automatically look up the function from the name
                 )
+                if "ema_model" in metadata:
+                    metadata["ema_model"].register_subtraction_method(
+                        name=method_name,
+                        func=None,  # Automatically look up the function from the name
+                    )
 
         if device is not None:
             model.to(device)
