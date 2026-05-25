@@ -350,6 +350,7 @@ def make_custom_collate_fn(
     include_clean_mix: bool,
     max_length: int | None = None,
     stereo_to_mono: bool = False,
+    randomize_labels: bool = False,
 ) -> Callable[[dict], dict]:
     max_length = torch.inf if max_length is None else max_length
 
@@ -424,6 +425,8 @@ def make_custom_collate_fn(
                 # See note in docstring for motivation
                 random_class = rng.integers(0, len(label))
                 label[random_class] = 1
+            elif randomize_labels:
+                label = label[torch.randperm(len(label))]
 
             labels.append(label)
 
@@ -482,6 +485,7 @@ def make_dataloader(
     shuffle_buffer: int = 512,
     shardshuffle: int | bool | None = None,
     drop_last: bool = True,
+    randomize_labels: bool = False,
 ) -> wds.WebLoader:
     """
     Make a WebLoader from the given .tar files.
@@ -563,6 +567,7 @@ def make_dataloader(
                 include_clean_mix=include_clean_mix,
                 max_length=max_length,
                 stereo_to_mono=stereo_to_mono,
+                randomize_labels = randomize_labels
             ),
             partial=not drop_last,
         )
