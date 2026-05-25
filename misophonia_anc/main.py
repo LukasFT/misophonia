@@ -463,6 +463,9 @@ def evaluate(
     ema: Annotated[
         bool, typer.Option(..., help="Whether to evaluate the EMA version of the model if it exists in the checkpoint.")
     ] = False,
+    randomize_labels: Annotated[
+        bool, typer.Option(..., help="Whether to randomize the labels during evaluation.")
+    ] = False
 ) -> None:
     """
     Function to compare sample gts and mixes to model outputs.
@@ -486,6 +489,8 @@ def evaluate(
                 checkpoint_name = f"{'ema_' if ema else ''}{checkpoint.replace('.pt', '')}"
 
                 filename_prefix = f"{checkpoint_name}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+                if randomize_labels:
+                    filename_prefix += "_random_labels"
                 results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
                 aggregated_results_file = model_dir / "eval_results" / f"{filename_prefix}_aggregated_results.json"
                 prepare_dir_or_file(results_file, overwrite=overwrite, is_dir=False)
@@ -494,7 +499,10 @@ def evaluate(
                 if save_samples == 0:
                     samples_dir = None
                 else:
-                    samples_dir = model_dir / "samples" / checkpoint_name / split
+                    if not randomize_labels:
+                        samples_dir = model_dir / "samples" / checkpoint_name / split
+                    else:
+                        samples_dir = model_dir / "samples" / f"{checkpoint_name}_random_labels" / split
                     prepare_dir_or_file(samples_dir, overwrite=overwrite, is_dir=True)
 
                 checkpoint_file = model_dir / "checkpoints" / checkpoint
@@ -539,6 +547,7 @@ def evaluate(
                     stereo_to_mono=config.stereo_to_mono,
                     limit=limit_samples,
                     drop_last=False,
+                    randomize_labels=randomize_labels,
                 )
 
                 res, agg_res = perform_eval(
