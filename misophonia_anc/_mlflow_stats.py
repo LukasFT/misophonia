@@ -279,6 +279,16 @@ def get_parameters_from_mlflow(run_name: str) -> dict:
         return params
 
 
+def reset_mlflow_cache(run_name: str) -> None:
+    run_id = RUN_INDEX.get(run_name, {}).get("mlflow")
+    if run_id is None:
+        raise ValueError(f"Run name {run_name} not found in index")
+
+    # Remove all files that start with run_id
+    for file in MLFLOW_CACHE_DIR.glob(f"{run_id}_*"):
+        file.unlink()
+
+
 def get_mlflow_metric_history(
     run_name: str | Iterable[str], key: str | Iterable[str], *, exclude: tuple[str] | None = ("run_id",)
 ) -> pd.DataFrame:
