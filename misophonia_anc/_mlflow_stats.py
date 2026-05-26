@@ -36,13 +36,13 @@ RUN_INDEX = {
         "train_size_per_epoch": 50_048,
     },
     "model-aux-ft-all": {
-        "pretty": "Fine-tuned",
+        "pretty": "Pretrained",
         "mlflow": "9f4b26bf5ad34058ac1c4645717ce883",
         "train_size": 1_000_960,
         "train_size_per_epoch": 50_048,
     },
     "model-aux-ft-all-gt-clean-mix": {
-        "pretty": "Fine-tuned",
+        "pretty": "Pretrained",
         "mlflow": "b043aa47158d4c6daa1c0e31964e36ba",
         "train_size": 1_000_960,
         "train_size_per_epoch": 50_048,
