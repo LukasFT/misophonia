@@ -1,6 +1,14 @@
 # Misophonia ANC dataset and model
 
-TODO: Add overall project description here.
+Abstract:
+
+>Misophonia is a condition in which specific everyday sounds, such as chewing, breathing, and typing, provoke strong negative emotional and physiological reactions. Although these trigger sounds can substantially impair daily functioning, assistive technologies tailored to misophonia remain limited. Selective Active Noise Control (ANC) offers a promising approach by suppressing only unwanted trigger sounds while preserving the surrounding auditory environment. However, existing selective ANC systems have not been adapted to misophonia.
+>
+>This work adapts a selective ANC system inspired by *Semantic Hearing* to misophonia triggers. We trained a mask-estimation based model on a synthetic binaural dataset containing common misophonia trigger sounds overlaid on background scenes. Two suppression formulations were evaluated: an extract-and-subtract approach, in which the model estimates the trigger signal before removal, and an end-to-end approach, in which the model directly predicts a trigger-free output. To identify effective training strategies, we first examined the impact of dataset composition, data augmentation, training stabilization techniques, and model design choices.
+>
+>The best-performing model was an end-to-end suppression system, achieving a mean Signal-invariant Signal-to-Noise improvement (Si-SNRi) of 9.69 dB on the test set. Direct suppression outperformed extract-and-subtract methods, suggesting that explicit subtraction introduces additional error. Performance varied substantially across and within trigger categories. Categories such as throat clearing and knife cutting proved easier to suppress whereas chewing and human breathing were more difficult. In a deeper analysis we found that temporal structure of trigger sounds was a stronger predictor of suppression difficulty than their spectral characteristics.
+>
+>Overall, the results demonstrate that selective suppression of common misophonia triggers is feasible and establish a concrete starting point for misophonia-focused ANC. That being said, we did not identify the source of variability in performance and our reported metrics do not directly reflect the perceptual usefulness of the models. We leave these topics for future work.
 
 Authors: Lukas Frimer Thorlander, Tonio Ermakoff.
 
@@ -194,6 +202,14 @@ misophonia_anc/subtraction_methods.py
 
 Using `--skip-subtraction` during training is generally not recommended.
 
+After training, the epoch with the highest Si-SNRi is saved to a ```best_weights.pt``` file.
+
 ### Evaluation
 
-TODO
+Evaluation on the test set should be run with 
+
+```bash
+python -m misophonia_anc.evaluate model-v1 --split test
+```
+
+By default, evaluate looks for and runs on the ```best_weights.pt``` file. If you wish a evaluate a specific checkpoint, you can specifiy the model weight file with the ```--checkpoint``` flag.
