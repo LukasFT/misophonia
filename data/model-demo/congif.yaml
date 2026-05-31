@@ -1,0 +1,43 @@
+dataset_splits:
+  train:
+    # from_premade: true
+    generated_config: &generate_train
+      num_samples: 1000
+      trig_to_control_ratio: 1 # 100% triggers, no controls
+      backgrounds_per_item: [1, 2]
+      target_snr_range: [0.0, 15.0]
+      max_length: 220500 # 5 secs at 44.1 kHz
+  val:
+    generated_config:
+      <<: *generate_train
+      num_samples: 300
+      target_snr_range: [5.0, 10.0]
+  test:
+    generated_config:
+      <<: *generate_train
+      num_samples: 200
+      target_snr_range: [5.0, 10.0]
+
+batch_size: 4
+num_epochs: 5
+loss_option: "time"
+
+ema_decay: 0.999
+
+model_params:
+  label_len: 8
+  model_dim: 256
+  L: 32
+  num_dec_layers: 1
+  dec_buf_len: 13
+  dec_chunk_size: 13
+  out_buf_len: 4
+  dropout_label: 0.0
+  dropout_encoder: 0.0
+  dropout_decoder: 0.1
+  dropout_pos: 0.0
+  decoder_batches_parallel_k: 8000
+
+model_hyperparams:
+  lr: 0.0005
+  weight_decay: 0
