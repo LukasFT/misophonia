@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 from collections.abc import Iterable
@@ -15,21 +16,59 @@ assert all(k in os.environ for k in ["MLFLOW_TRACKING_URI", "MLFLOW_TRACKING_USE
 )
 
 RUN_INDEX = {
-    # Super models:
+    # Final models:
+    "model-super-sh-base": {
+        "pretty": "Dual",
+        "mlflow": "7751a4bdfe204399bdccb4cc7805fa54",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    "model-super-sh-gt-clean-mix": {
+        "pretty": "Dual",
+        "mlflow": "c366e9e47aab4ae18fe420df1c3f1cf0",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    "model-super-sh-mono-channel": {
+        "pretty": "Mono",
+        "mlflow": "3056d33512d9480b9f1ee000e3782258",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    "model-aux-ft-all": {
+        "pretty": "Pretrained",
+        "mlflow": "9f4b26bf5ad34058ac1c4645717ce883",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    "model-aux-ft-all-gt-clean-mix": {
+        "pretty": "Pretrained",
+        "mlflow": "b043aa47158d4c6daa1c0e31964e36ba",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    # Aux models:
+    "model-aux-ft-label": {
+        "pretty": "Label embedding fine-tuned",
+        "mlflow": "a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9",
+        "train_size": 1_000_960,
+        "train_size_per_epoch": 50_048,
+    },
+    # DISCONTINUED super models:
     "model-super-base": {
-        "pretty": "Super (base)",
+        "pretty": "Discontinued (base)",
         "mlflow": "a969b8ffed29474da91cea6436ca317a",
         "train_size": 1_000_960,
         "train_size_per_epoch": 50_048,
     },
     "model-super-mono-channel": {
-        "pretty": "Super (mono)",
+        "pretty": "Discontinued (mono)",
         "mlflow": "431f7f510633433bb1ec66d2ecc8c3ee",
         "train_size": 1_000_960,
         "train_size_per_epoch": 50_048,
     },
     "model-super-gt-clean-mix": {
-        "pretty": "Super (clean mix)",
+        "pretty": "Discontinued (clean mix)",
         "mlflow": "b0677e3b9af247af85808a6d4a708171",
         "train_size": 1_000_960,
         "train_size_per_epoch": 50_048,
@@ -46,6 +85,11 @@ RUN_INDEX = {
     "model-baseline-rep3": {
         "pretty": "Baseline (rep. 3)",
         "mlflow": "b89eb23a8a1445fc95f77cd89a7cf6f1",
+    },
+    # More epochs:
+    "model-baseline-rep3-400epochs": {  # NOTE: Only contains data from 81-400
+        "pretty": "Baseline (rep. 3, 400 epochs)",
+        "mlflow": "a6d63fa429f241f08b6172177ba79339",
     },
     # Mono:
     "model-channels-monosplit": {
@@ -128,32 +172,32 @@ RUN_INDEX = {
         "better_shuffle": True,
     },
     "model-lr-0.0001-wd-0.00": {
-        "pretty": "lr 0.0001",
+        "pretty": "Learning rate (0.0001)",
         "mlflow": "712d808508c549c080b75471d0fb03fa",
     },
     "model-lr-0.0001-wd-0.01": {
-        "pretty": "lr 0.0001, wd 0.01",
+        "pretty": "Learning rate (0.0001), weight decay (0.01)",
         "mlflow": "56f61434e9624828a49e6135d28c89cb",
     },
     "model-lr-0.0005-wd-0.005": {
-        "pretty": "wd 0.005",
+        "pretty": "Weight decay (0.005)",
         "mlflow": "9ef2eda806134dad9be3616ee57001ab",
     },
     "model-lr-half-on-5plateau-after-40": {
-        "pretty": "Pleateau scheduler",
+        "pretty": "Plateau scheduler",
         "mlflow": "5042d9be383040228183d1e8faea5cd6",
     },
     "model-lr-half-on-5plateau-after-40-wd-0.001": {
-        "pretty": "Pleateau scheduler, wd 0.001",
+        "pretty": "Plateau scheduler, weight decay (0.001)",
         "mlflow": "dca5c507ff52421a88e85051180bfce4",
     },
     "model-gradclip-1": {
-        "pretty": "Gradient clipping to 1",
+        "pretty": "Gradient clipping (max 1)",
         "mlflow": "8befa61b277e4b6a918dc67beb4d4385",
         "better_shuffle": True,
     },
     "model-gradclip-5": {
-        "pretty": "Gradient clipping to 5",
+        "pretty": "Gradient clipping (max 5)",
         "mlflow": "176b7070fbc84e76ba0fab39eed5f7df",
         "better_shuffle": True,
     },
@@ -235,6 +279,16 @@ def get_parameters_from_mlflow(run_name: str) -> dict:
         return params
 
 
+def reset_mlflow_cache(run_name: str) -> None:
+    run_id = RUN_INDEX.get(run_name, {}).get("mlflow")
+    if run_id is None:
+        raise ValueError(f"Run name {run_name} not found in index")
+
+    # Remove all files that start with run_id
+    for file in MLFLOW_CACHE_DIR.glob(f"{run_id}_*"):
+        file.unlink()
+
+
 def get_mlflow_metric_history(
     run_name: str | Iterable[str], key: str | Iterable[str], *, exclude: tuple[str] | None = ("run_id",)
 ) -> pd.DataFrame:
@@ -250,11 +304,8 @@ def get_mlflow_metric_history(
         key = tuple(key)
         # merge on step
         keys_dfs = {k: get_mlflow_metric_history(run_name, k, exclude=exclude) for k in key}
-        merged = pd.merge(  # noqa: PD015
-            *[keys_dfs[k][["run_name", "step", "timestamp", k]] for k in key],
-            on=["run_name", "step", "timestamp"],
-            how="outer",
-        )
+        dfs = [keys_dfs[k][["run_name", "step", "timestamp", k]] for k in key]
+        merged = functools.reduce(lambda l, r: pd.merge(l, r, on=["run_name", "step", "timestamp"], how="outer"), dfs)  # noqa: PD015
         # Add cols from first keys_dfs
         base_key = key[0]
         for col in keys_dfs[base_key].columns:
