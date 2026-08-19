@@ -689,13 +689,13 @@ def visualize_data(
 
 @app.command()
 def sample_level_model_comparison(
-    model_end_to_end: Annotated[
+    model_1: Annotated[
         str,
-        typer.Argument(..., help="Name of end-to-end model directory."),
+        typer.Argument(..., help="Name of first model directory."),
     ],
-    model_ext_then_sub: Annotated[
+    model_2: Annotated[
         str,
-        typer.Argument(..., help="Name of extract-then-subtract model directory."),
+        typer.Argument(..., help="Name of second model directory."),
     ],
     end_to_end_results_file: Annotated[
         str,
@@ -711,6 +711,20 @@ def sample_level_model_comparison(
             help="Name of extract-then-subtract results file (e.g., 'best_weights.pt_test_results.json').",
         ),
     ],
+    model_1_pred_name: Annotated[
+        str,
+        typer.Option(
+            ...,
+            help="Prediction name for the first model (e.g., 'x').",
+        ),
+    ] = "x",
+    model_2_pred_name: Annotated[
+        str,
+        typer.Option(
+            ...,
+            help="Prediction name for the second model (e.g., 'x_simple').",
+        ),
+    ] = "x_simple",
 ) -> None:
     """
     Compare end-to-end and extract-then-subtract models using a paired
@@ -723,17 +737,17 @@ def sample_level_model_comparison(
     H1: mean paired SI-SNRi difference != 0.
     """
 
-    model_1_dir = get_data_dir(dataset_name=model_end_to_end)
-    model_2_dir = get_data_dir(dataset_name=model_ext_then_sub)
+    model_1_dir = get_data_dir(dataset_name=model_1)
+    model_2_dir = get_data_dir(dataset_name=model_2)
 
     model_1_results_file = model_1_dir / "eval_results" / end_to_end_results_file
     model_2_results_file = model_2_dir / "eval_results" / ext_then_sub_results_file
 
     if not model_1_results_file.exists():
-        raise FileNotFoundError(f"Results file for end-to-end model not found: {model_1_results_file}")
+        raise FileNotFoundError(f"Results file for first model not found: {model_1_results_file}")
 
     if not model_2_results_file.exists():
-        raise FileNotFoundError(f"Results file for extract-then-subtract model not found: {model_2_results_file}")
+        raise FileNotFoundError(f"Results file for second model not found: {model_2_results_file}")
 
     with open(model_1_results_file, "r") as f:
         model_1_results = json.load(f)
@@ -751,13 +765,13 @@ def sample_level_model_comparison(
     model_1_scores = {
         sample["idx"]: sample["metrics"]["si_snr_improvement"]
         for sample in model_1_results
-        if sample["pred_name"] == "x"
+        if sample["pred_name"] == model_1_pred_name
     }
 
     model_2_scores = {
         sample["idx"]: sample["metrics"]["si_snr_improvement"]
         for sample in model_2_results
-        if sample["pred_name"] == "x_simple"
+        if sample["pred_name"] == model_2_pred_name
     }
 
     # Pair samples by idx.
@@ -773,7 +787,7 @@ def sample_level_model_comparison(
         raise ValueError("No matching sample idx values found between the two result files.")
 
     eliot.log_message(
-        (f"Sample-level comparison: {model_end_to_end} (pred_name='x') vs {model_ext_then_sub} (pred_name='x_simple')"),
+        (f"Sample-level comparison: {model_1} (pred_name='x') vs {model_2} (pred_name='x_simple')"),
         level="info",
     )
 
@@ -805,49 +819,11 @@ def sample_level_model_comparison(
         dtype=float,
     )
 
-    differences = scores_1 - scores_2
-
-    # Descriptive statistics.
-    mean_1 = scores_1.mean()
-    mean_2 = scores_2.mean()
-
-    mean_difference = differences.mean()
-    median_difference = np.median(differences)
-    std_difference = differences.std(ddof=1)
-
-    model_1_wins = np.sum(differences > 0)
-    model_2_wins = np.sum(differences < 0)
-    ties = np.sum(differences == 0)
-
-    # Paired t-test.
-    t_stat, p_value = stats.ttest_rel(
-        scores_1,
-        scores_2,
-    )
+    # Wilcoxon Signed-Rank Test
+    t_stat, p_value = stats.wilcoxon(scores_1, scores_2)
 
     eliot.log_message(
-        (f"Mean SI-SNRi: {model_end_to_end}={mean_1:.4f} dB, {model_ext_then_sub}={mean_2:.4f} dB"),
-        level="info",
-    )
-
-    eliot.log_message(
-        (
-            f"Paired difference "
-            f"({model_end_to_end} - {model_ext_then_sub}): "
-            f"mean={mean_difference:.4f} dB, "
-            f"median={median_difference:.4f} dB, "
-            f"std={std_difference:.4f} dB"
-        ),
-        level="info",
-    )
-
-    eliot.log_message(
-        (f"Sample-level wins: {model_end_to_end}={model_1_wins}, {model_ext_then_sub}={model_2_wins}, ties={ties}"),
-        level="info",
-    )
-
-    eliot.log_message(
-        (f"Paired t-test: t={t_stat:.6f}, p={p_value:.6g}, n={len(common_ids)}"),
+        (f"Paired Wilcoxon Signed-Rank Test: t={t_stat:.6f}, p={p_value:.6g}, n={len(common_ids)}"),
         level="info",
     )
 
