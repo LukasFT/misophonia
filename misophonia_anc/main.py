@@ -9,6 +9,8 @@ from pathlib import Path
 
 import eliot
 import mlflow
+import numpy as np
+import scipy.stats as stats
 import torch
 import typer
 from dotenv import load_dotenv
@@ -466,7 +468,7 @@ def evaluate(
     ] = False,
     randomize_labels: Annotated[
         bool, typer.Option(..., help="Whether to randomize the labels during evaluation.")
-    ] = False
+    ] = False,
 ) -> None:
     """
     Function to compare sample gts and mixes to model outputs.
@@ -489,7 +491,9 @@ def evaluate(
                 )
                 checkpoint_name = f"{'ema_' if ema else ''}{checkpoint.replace('.pt', '')}"
 
-                filename_prefix = f"{checkpoint_name}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+                filename_prefix = (
+                    f"{checkpoint_name}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+                )
                 if randomize_labels:
                     filename_prefix += "_random_labels"
                 results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
@@ -574,7 +578,7 @@ def evaluate(
                     device=device,
                     warm_up_iters=warm_up,
                     loss_fn=get_loss_fn_from_name(config.loss_option),
-                    mlflow_logger=CustomMlFlowLogger(), # Inactive
+                    mlflow_logger=CustomMlFlowLogger(),  # Inactive
                 )
 
                 eliot.log_message(
@@ -681,6 +685,171 @@ def visualize_data(
         eliot.log_message(f"Calculating average spectorgram of background sounds of split {split}", level="info")
         plot_average_spectogram_background(model_dir, split, loader=split_loader, device=device, max_length=max_length)
         eliot.log_message(f"Saved average spectogram of background sounds to {model_dir}/spectrograms/{split}")
+
+
+@app.command()
+def sample_level_model_comparison(
+    model_end_to_end: Annotated[
+        str,
+        typer.Argument(..., help="Name of end-to-end model directory."),
+    ],
+    model_ext_then_sub: Annotated[
+        str,
+        typer.Argument(..., help="Name of extract-then-subtract model directory."),
+    ],
+    end_to_end_results_file: Annotated[
+        str,
+        typer.Option(
+            ...,
+            help="Name of end-to-end results file (e.g., 'best_weights.pt_test_results.json').",
+        ),
+    ],
+    ext_then_sub_results_file: Annotated[
+        str,
+        typer.Option(
+            ...,
+            help="Name of extract-then-subtract results file (e.g., 'best_weights.pt_test_results.json').",
+        ),
+    ],
+) -> None:
+    """
+    Compare end-to-end and extract-then-subtract models using a paired
+    t-test on sample-level SI-SNR improvement scores.
+
+    Samples are paired by idx. The end-to-end result uses pred_name='x',
+    while the extract-then-subtract result uses pred_name='x_simple'.
+
+    H0: mean paired SI-SNRi difference = 0.
+    H1: mean paired SI-SNRi difference != 0.
+    """
+
+    model_1_dir = get_data_dir(dataset_name=model_end_to_end)
+    model_2_dir = get_data_dir(dataset_name=model_ext_then_sub)
+
+    model_1_results_file = model_1_dir / "eval_results" / end_to_end_results_file
+    model_2_results_file = model_2_dir / "eval_results" / ext_then_sub_results_file
+
+    if not model_1_results_file.exists():
+        raise FileNotFoundError(f"Results file for end-to-end model not found: {model_1_results_file}")
+
+    if not model_2_results_file.exists():
+        raise FileNotFoundError(f"Results file for extract-then-subtract model not found: {model_2_results_file}")
+
+    with open(model_1_results_file, "r") as f:
+        model_1_results = json.load(f)
+
+    with open(model_2_results_file, "r") as f:
+        model_2_results = json.load(f)
+
+    # Extract the relevant prediction type for each model.
+    #
+    # End-to-end model:
+    #   (idx, "x")
+    #
+    # Extract-then-subtract model:
+    #   (idx, "x_simple")
+    model_1_scores = {
+        sample["idx"]: sample["metrics"]["si_snr_improvement"]
+        for sample in model_1_results
+        if sample["pred_name"] == "x"
+    }
+
+    model_2_scores = {
+        sample["idx"]: sample["metrics"]["si_snr_improvement"]
+        for sample in model_2_results
+        if sample["pred_name"] == "x_simple"
+    }
+
+    # Pair samples by idx.
+    model_1_ids = set(model_1_scores)
+    model_2_ids = set(model_2_scores)
+
+    common_ids = sorted(model_1_ids & model_2_ids)
+
+    missing_from_model_1 = model_2_ids - model_1_ids
+    missing_from_model_2 = model_1_ids - model_2_ids
+
+    if not common_ids:
+        raise ValueError("No matching sample idx values found between the two result files.")
+
+    eliot.log_message(
+        (f"Sample-level comparison: {model_end_to_end} (pred_name='x') vs {model_ext_then_sub} (pred_name='x_simple')"),
+        level="info",
+    )
+
+    eliot.log_message(
+        (f"Samples found: model_1={len(model_1_scores)}, model_2={len(model_2_scores)}, paired={len(common_ids)}"),
+        level="info",
+    )
+
+    if missing_from_model_1:
+        eliot.log_message(
+            (f"{len(missing_from_model_1)} samples are present in model 2 but missing from model 1."),
+            level="warning",
+        )
+
+    if missing_from_model_2:
+        eliot.log_message(
+            (f"{len(missing_from_model_2)} samples are present in model 1 but missing from model 2."),
+            level="warning",
+        )
+
+    # Ensure that both arrays have exactly the same sample ordering.
+    scores_1 = np.array(
+        [model_1_scores[idx] for idx in common_ids],
+        dtype=float,
+    )
+
+    scores_2 = np.array(
+        [model_2_scores[idx] for idx in common_ids],
+        dtype=float,
+    )
+
+    differences = scores_1 - scores_2
+
+    # Descriptive statistics.
+    mean_1 = scores_1.mean()
+    mean_2 = scores_2.mean()
+
+    mean_difference = differences.mean()
+    median_difference = np.median(differences)
+    std_difference = differences.std(ddof=1)
+
+    model_1_wins = np.sum(differences > 0)
+    model_2_wins = np.sum(differences < 0)
+    ties = np.sum(differences == 0)
+
+    # Paired t-test.
+    t_stat, p_value = stats.ttest_rel(
+        scores_1,
+        scores_2,
+    )
+
+    eliot.log_message(
+        (f"Mean SI-SNRi: {model_end_to_end}={mean_1:.4f} dB, {model_ext_then_sub}={mean_2:.4f} dB"),
+        level="info",
+    )
+
+    eliot.log_message(
+        (
+            f"Paired difference "
+            f"({model_end_to_end} - {model_ext_then_sub}): "
+            f"mean={mean_difference:.4f} dB, "
+            f"median={median_difference:.4f} dB, "
+            f"std={std_difference:.4f} dB"
+        ),
+        level="info",
+    )
+
+    eliot.log_message(
+        (f"Sample-level wins: {model_end_to_end}={model_1_wins}, {model_ext_then_sub}={model_2_wins}, ties={ties}"),
+        level="info",
+    )
+
+    eliot.log_message(
+        (f"Paired t-test: t={t_stat:.6f}, p={p_value:.6g}, n={len(common_ids)}"),
+        level="info",
+    )
 
 
 if __name__ == "__main__":
