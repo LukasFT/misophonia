@@ -697,34 +697,20 @@ def sample_level_model_comparison(
         str,
         typer.Argument(..., help="Name of second model directory."),
     ],
-    end_to_end_results_file: Annotated[
+    model_1_results_file: Annotated[
         str,
         typer.Option(
             ...,
             help="Name of end-to-end results file (e.g., 'best_weights.pt_test_results.json').",
         ),
     ],
-    ext_then_sub_results_file: Annotated[
+    model_2_results_file: Annotated[
         str,
         typer.Option(
             ...,
             help="Name of extract-then-subtract results file (e.g., 'best_weights.pt_test_results.json').",
         ),
     ],
-    model_1_pred_name: Annotated[
-        str,
-        typer.Option(
-            ...,
-            help="Prediction name for the first model (e.g., 'x').",
-        ),
-    ] = "x",
-    model_2_pred_name: Annotated[
-        str,
-        typer.Option(
-            ...,
-            help="Prediction name for the second model (e.g., 'x_simple').",
-        ),
-    ] = "x_simple",
 ) -> None:
     """
     Compare end-to-end and extract-then-subtract models using a paired
@@ -740,8 +726,18 @@ def sample_level_model_comparison(
     model_1_dir = get_data_dir(dataset_name=model_1)
     model_2_dir = get_data_dir(dataset_name=model_2)
 
-    model_1_results_file = model_1_dir / "eval_results" / end_to_end_results_file
-    model_2_results_file = model_2_dir / "eval_results" / ext_then_sub_results_file
+    model_1_results_file = model_1_dir / "eval_results" / model_1_results_file
+    model_2_results_file = model_2_dir / "eval_results" / model_2_results_file
+
+    model_1_config = MisophoniaANCConfig.from_yaml(model_1_dir / "config.yaml", defaults={"mlflow_experiment": model_1})
+    model_2_config = MisophoniaANCConfig.from_yaml(model_2_dir / "config.yaml", defaults={"mlflow_experiment": model_2})
+
+    pred_names = {}
+    for model_name, config in zip((model_1, model_2), (model_1_config, model_2_config)):
+        if config.model_params.get("ground_truth_target", None) == "clean_mix":
+            pred_names[model_name] = "x"
+        else:
+            pred_names[model_name] = "x_simple"
 
     if not model_1_results_file.exists():
         raise FileNotFoundError(f"Results file for first model not found: {model_1_results_file}")
@@ -765,13 +761,13 @@ def sample_level_model_comparison(
     model_1_scores = {
         sample["idx"]: sample["metrics"]["si_snr_improvement"]
         for sample in model_1_results
-        if sample["pred_name"] == model_1_pred_name
+        if sample["pred_name"] == pred_names[model_1]
     }
 
     model_2_scores = {
         sample["idx"]: sample["metrics"]["si_snr_improvement"]
         for sample in model_2_results
-        if sample["pred_name"] == model_2_pred_name
+        if sample["pred_name"] == pred_names[model_2]
     }
 
     # Pair samples by idx.
