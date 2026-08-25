@@ -729,8 +729,8 @@ def sample_level_model_comparison(
     model_1_results_file = model_1_dir / "eval_results" / model_1_results_file
     model_2_results_file = model_2_dir / "eval_results" / model_2_results_file
 
-    model_1_config = MisophoniaANCConfig.from_yaml(model_1_dir / "config.yaml", defaults={"mlflow_experiment": model_1})
-    model_2_config = MisophoniaANCConfig.from_yaml(model_2_dir / "config.yaml", defaults={"mlflow_experiment": model_2})
+    model_1_config = MisophoniaANCConfig.from_yaml(model_1_dir / "config.yaml")
+    model_2_config = MisophoniaANCConfig.from_yaml(model_2_dir / "config.yaml")
 
     pred_names = {}
     for model_name, config in zip((model_1, model_2), (model_1_config, model_2_config)):
