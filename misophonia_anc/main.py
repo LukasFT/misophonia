@@ -518,11 +518,13 @@ def evaluate(
                 config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
                 model, model_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
                 if ema:
-                    if model_metadata.get("ema_model") is None:
+                    ema_wrapper = model_metadata.get("ema_model")
+                    if ema_wrapper is None:
                         raise ValueError(
-                            f"EMA model not found in checkpoint {checkpoint_file} for model {name}. Cannot evaluate EMA version of the model."
+                            f"EMA model not found in checkpoint {checkpoint_file} "
+                            f"for model {name}. Cannot evaluate EMA version."
                         )
-                    model = model_metadata["ema_model"].model  # Get MisophoniaANCModel from EMA wrapper
+                    model.load_state_dict(model_metadata["ema_model"].model.state_dict())
 
                 model.eval()
 
