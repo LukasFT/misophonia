@@ -9,6 +9,8 @@ from pathlib import Path
 
 import eliot
 import mlflow
+import numpy as np
+import scipy.stats as stats
 import torch
 import typer
 from dotenv import load_dotenv
@@ -466,7 +468,7 @@ def evaluate(
     ] = False,
     randomize_labels: Annotated[
         bool, typer.Option(..., help="Whether to randomize the labels during evaluation.")
-    ] = False
+    ] = False,
 ) -> None:
     """
     Function to compare sample gts and mixes to model outputs.
@@ -489,7 +491,9 @@ def evaluate(
                 )
                 checkpoint_name = f"{'ema_' if ema else ''}{checkpoint.replace('.pt', '')}"
 
-                filename_prefix = f"{checkpoint_name}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+                filename_prefix = (
+                    f"{checkpoint_name}_{split}{f'_{limit_samples}samples' if limit_samples is not None else ''}"
+                )
                 if randomize_labels:
                     filename_prefix += "_random_labels"
                 results_file = model_dir / "eval_results" / f"{filename_prefix}_results.json"
@@ -514,11 +518,13 @@ def evaluate(
                 config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml", defaults={"mlflow_experiment": name})
                 model, model_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
                 if ema:
-                    if model_metadata.get("ema_model") is None:
+                    ema_wrapper = model_metadata.get("ema_model")
+                    if ema_wrapper is None:
                         raise ValueError(
-                            f"EMA model not found in checkpoint {checkpoint_file} for model {name}. Cannot evaluate EMA version of the model."
+                            f"EMA model not found in checkpoint {checkpoint_file} "
+                            f"for model {name}. Cannot evaluate EMA version."
                         )
-                    model = model_metadata["ema_model"].model  # Get MisophoniaANCModel from EMA wrapper
+                    model.load_state_dict(model_metadata["ema_model"].model.state_dict())
 
                 model.eval()
 
@@ -574,7 +580,7 @@ def evaluate(
                     device=device,
                     warm_up_iters=warm_up,
                     loss_fn=get_loss_fn_from_name(config.loss_option),
-                    mlflow_logger=CustomMlFlowLogger(), # Inactive
+                    mlflow_logger=CustomMlFlowLogger(),  # Inactive
                 )
 
                 eliot.log_message(
@@ -681,6 +687,143 @@ def visualize_data(
         eliot.log_message(f"Calculating average spectorgram of background sounds of split {split}", level="info")
         plot_average_spectogram_background(model_dir, split, loader=split_loader, device=device, max_length=max_length)
         eliot.log_message(f"Saved average spectogram of background sounds to {model_dir}/spectrograms/{split}")
+
+
+@app.command()
+def sample_level_model_comparison(
+    model_1: Annotated[
+        str,
+        typer.Argument(..., help="Name of first model directory."),
+    ],
+    model_2: Annotated[
+        str,
+        typer.Argument(..., help="Name of second model directory."),
+    ],
+    model_1_results_file: Annotated[
+        str,
+        typer.Option(
+            ...,
+            help="Name of end-to-end results file (e.g., 'best_weights.pt_test_results.json').",
+        ),
+    ],
+    model_2_results_file: Annotated[
+        str,
+        typer.Option(
+            ...,
+            help="Name of extract-then-subtract results file (e.g., 'best_weights.pt_test_results.json').",
+        ),
+    ],
+) -> None:
+    """
+    Compare end-to-end and extract-then-subtract models using a paired
+    t-test on sample-level SI-SNR improvement scores.
+
+    Samples are paired by idx. The end-to-end result uses pred_name='x',
+    while the extract-then-subtract result uses pred_name='x_simple'.
+
+    H0: mean paired SI-SNRi difference = 0.
+    H1: mean paired SI-SNRi difference != 0.
+    """
+
+    model_1_dir = get_data_dir(dataset_name=model_1)
+    model_2_dir = get_data_dir(dataset_name=model_2)
+
+    model_1_results_file = model_1_dir / "eval_results" / model_1_results_file
+    model_2_results_file = model_2_dir / "eval_results" / model_2_results_file
+
+    model_1_config = MisophoniaANCConfig.from_yaml(model_1_dir / "config.yaml")
+    model_2_config = MisophoniaANCConfig.from_yaml(model_2_dir / "config.yaml")
+
+    pred_names = {}
+    for model_name, config in zip((model_1, model_2), (model_1_config, model_2_config)):
+        if config.model_params.get("ground_truth_target", None) == "clean_mix":
+            pred_names[model_name] = "x"
+        else:
+            pred_names[model_name] = "x_simple"
+
+    if not model_1_results_file.exists():
+        raise FileNotFoundError(f"Results file for first model not found: {model_1_results_file}")
+
+    if not model_2_results_file.exists():
+        raise FileNotFoundError(f"Results file for second model not found: {model_2_results_file}")
+
+    with open(model_1_results_file, "r") as f:
+        model_1_results = json.load(f)
+
+    with open(model_2_results_file, "r") as f:
+        model_2_results = json.load(f)
+
+    # Extract the relevant prediction type for each model.
+    #
+    # End-to-end model:
+    #   (idx, "x")
+    #
+    # Extract-then-subtract model:
+    #   (idx, "x_simple")
+    model_1_scores = {
+        sample["idx"]: sample["metrics"]["si_snr_improvement"]
+        for sample in model_1_results
+        if sample["pred_name"] == pred_names[model_1]
+    }
+
+    model_2_scores = {
+        sample["idx"]: sample["metrics"]["si_snr_improvement"]
+        for sample in model_2_results
+        if sample["pred_name"] == pred_names[model_2]
+    }
+
+    # Pair samples by idx.
+    model_1_ids = set(model_1_scores)
+    model_2_ids = set(model_2_scores)
+
+    common_ids = sorted(model_1_ids & model_2_ids)
+
+    missing_from_model_1 = model_2_ids - model_1_ids
+    missing_from_model_2 = model_1_ids - model_2_ids
+
+    if not common_ids:
+        raise ValueError("No matching sample idx values found between the two result files.")
+
+    eliot.log_message(
+        (f"Sample-level comparison: {model_1} (pred_name='x') vs {model_2} (pred_name='x_simple')"),
+        level="info",
+    )
+
+    eliot.log_message(
+        (f"Samples found: model_1={len(model_1_scores)}, model_2={len(model_2_scores)}, paired={len(common_ids)}"),
+        level="info",
+    )
+
+    if missing_from_model_1:
+        eliot.log_message(
+            (f"{len(missing_from_model_1)} samples are present in model 2 but missing from model 1."),
+            level="warning",
+        )
+
+    if missing_from_model_2:
+        eliot.log_message(
+            (f"{len(missing_from_model_2)} samples are present in model 1 but missing from model 2."),
+            level="warning",
+        )
+
+    # Ensure that both arrays have exactly the same sample ordering.
+    scores_1 = np.array(
+        [model_1_scores[idx] for idx in common_ids],
+        dtype=float,
+    )
+
+    scores_2 = np.array(
+        [model_2_scores[idx] for idx in common_ids],
+        dtype=float,
+    )
+
+    # Wilcoxon Signed-Rank Test
+    t_stat, p_value = stats.wilcoxon(scores_1, scores_2)
+
+    eliot.log_message(
+        (f"Paired Wilcoxon Signed-Rank Test: t={t_stat:.6f}, p={p_value:.6g}, n={len(common_ids)}"),
+        level="info",
+    )
 
 
 if __name__ == "__main__":

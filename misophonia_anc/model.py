@@ -361,6 +361,13 @@ class MisophoniaANCNet(nn.Module):
             metadata.pop("model_state")  # Remove model state from metadata to avoid confusion
             model.load_state_dict(state_dict)
 
+            if config.subtraction_methods is not None:
+                for method_name in config.subtraction_methods:
+                    model.register_subtraction_method(
+                        name=method_name,
+                        func=None,  # Automatically look up the function from the name
+                    )
+
             # Load EMA:
             ema_state = metadata.pop("ema_model_state", None)  # Remove EMA state from metadata to avoid confusion
             ema_decay = metadata.pop("ema_decay", None)  # Remove EMA decay from metadata to avoid confusion
@@ -376,13 +383,6 @@ class MisophoniaANCNet(nn.Module):
                     ema_decay = config.ema_decay
                 metadata["ema_model"] = ModelEMA(model, decay=ema_decay, model_state=ema_state)
                 metadata["ema_model"].to(device) if device is not None else None
-
-        if config.subtraction_methods is not None:
-            for method_name in config.subtraction_methods:
-                model.register_subtraction_method(
-                    name=method_name,
-                    func=None,  # Automatically look up the function from the name
-                )
 
         if device is not None:
             model.to(device)

@@ -229,8 +229,11 @@ playground.py
 data
 data/*
 !data/.gitkeep
+!data/model-demo/congif.yaml
 playground*
 out
 out/*
 SemanticHearing
 misophonia_anc/confidential_losses.py
+weights
+weights/*
