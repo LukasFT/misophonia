@@ -826,5 +826,101 @@ def sample_level_model_comparison(
     )
 
 
+@app.command()
+def eval_sh_baseline(
+    dir: Annotated[
+        str,
+        typer.Argument(..., help="Name of first model directory."),
+    ],
+    split: Annotated[
+        str,
+        typer.Argument(..., help="Name of the data split to evaluate."),
+    ],
+) -> None:
+    batch_size = 1  # Needed for filtering
+    num_workers = 2
+    config = MisophoniaANCConfig.from_yaml(Path(dir) / "config.yaml")
+    checkpoint_file = Path(dir) / "checkpoints" / "model_file.pt"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    results_file = Path(dir) / "eval_results" / f"sh_baseline_{split}_results.json"
+    aggregated_results_file = Path(dir) / "eval_results" / f"sh_baseline_{split}_aggregated_results.json"
+
+    model, model_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
+
+    dataset_split_dir = dir / "webdataset" / split
+    eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
+    shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
+    if len(shards_split) == 0:
+        eliot.log_message(
+            f"No data shards found for split {split} at {dataset_split_dir}. Skipping evaluation for this split.",
+            level="error",
+        )
+        return
+    log_dataset_config_diffs(config, dataset_split_dir / "metadata.json", split)
+    split_loader = make_dataloader(
+        shards_split,
+        batch_size=batch_size if batch_size is not None else config.batch_size,
+        num_workers=num_workers,
+        include_metadata=True,
+        include_clean_mix=model.ground_truth_target == "clean_mix"
+        or (config.subtraction_methods is not None and len(config.subtraction_methods) > 0),
+        include_isolated_trigger=model.ground_truth_target == "isolated_trigger",
+        max_length=(
+            config.dataset_splits[split].generated_config.get("max_length")
+            if split in config.dataset_splits and config.dataset_splits[split].generated_config is not None
+            else None
+        ),
+        stereo_to_mono=config.stereo_to_mono,
+        limit=None,
+        drop_last=False,
+        randomize_labels=False,
+    )
+
+    def make_adapted_split_loader(split_loader):
+        for batch in split_loader:
+            is_typing = batch["label_vector"] == torch.tensor([0, 0, 0, 0, 0, 0, 1, 0])
+            if is_typing.all():
+                for i in range(20):
+                    batch["label_vector"] = torch.zeros(20)
+                    batch["label_vector"][i] = 1
+                    batch["metadata"]["fg_categories"] = [f"class {i}"]
+
+                    yield batch
+
+    adapted_split_loader = make_adapted_split_loader(split_loader)
+
+    res, agg_res = perform_eval(
+        model,
+        adapted_split_loader,
+        save_results_to=results_file,
+        save_aggregated_results_to=aggregated_results_file,
+        aggregated_results_kwargs={
+            "group_by": (
+                ("fg_categories", "is_trigger"),
+                "__len__(fg_categories)",
+                "__len__(bg_categories)",
+                ("__len__(fg_categories)", "__len__(bg_categories)"),
+                "is_trigger",
+            )
+        },
+        calculate_metrics_kwargs={
+            "calculate_ild_itd": True,
+        },
+        mono_to_stereo=config.stereo_to_mono,
+        save_num_samples=0,
+        save_samples_to=0,
+        device=device,
+        warm_up_iters=10,
+        loss_fn=get_loss_fn_from_name(config.loss_option),
+        mlflow_logger=CustomMlFlowLogger(),  # Inactive
+    )
+
+    eliot.log_message(f"Aggregated results of 'x':\n{json.dumps(agg_res.get('x'), indent=4)}", level="debug")
+
+    eliot.log_message(f"{dir}: Evaluated {len(res)} {split} samples", level="info")
+
+    pass
+
+
 if __name__ == "__main__":
     app()
