@@ -839,15 +839,16 @@ def eval_sh_baseline(
 ) -> None:
     batch_size = 1  # Needed for filtering
     num_workers = 2
-    config = MisophoniaANCConfig.from_yaml(Path(dir) / "config.yaml")
-    checkpoint_file = Path(dir) / "checkpoints" / "model_file.pt"
+    model_dir = get_data_dir(dataset_name=dir)
+    config = MisophoniaANCConfig.from_yaml(model_dir / "config.yaml")
+    checkpoint_file = model_dir / "checkpoints" / "model_file.pt"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    results_file = Path(dir) / "eval_results" / f"sh_baseline_{split}_results.json"
-    aggregated_results_file = Path(dir) / "eval_results" / f"sh_baseline_{split}_aggregated_results.json"
+    results_file = model_dir / "eval_results" / f"sh_baseline_{split}_results.json"
+    aggregated_results_file = model_dir / "eval_results" / f"sh_baseline_{split}_aggregated_results.json"
 
     model, model_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
 
-    dataset_split_dir = dir / "webdataset" / split
+    dataset_split_dir = model_dir / "webdataset" / split
     eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
     shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
     if len(shards_split) == 0:
@@ -917,7 +918,7 @@ def eval_sh_baseline(
 
     eliot.log_message(f"Aggregated results of 'x':\n{json.dumps(agg_res.get('x'), indent=4)}", level="debug")
 
-    eliot.log_message(f"{dir}: Evaluated {len(res)} {split} samples", level="info")
+    eliot.log_message(f"{model_dir.name}: Evaluated {len(res)} {split} samples", level="info")
 
     pass
 
