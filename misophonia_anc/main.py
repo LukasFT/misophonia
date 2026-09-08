@@ -896,7 +896,7 @@ def eval_sh_baseline(
                     label_vector[i] = 1
 
                     adapted_batch["inputs"]["label_vector"] = label_vector.unsqueeze(0)
-                    adapted_batch["metadata"]["fg_categories"] = [f"class {i}"]
+                    adapted_batch["metadata"][0]["fg_categories"] = [f"class {i}"]
 
                     yield adapted_batch
 
