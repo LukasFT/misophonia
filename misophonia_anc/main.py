@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import shutil
@@ -880,14 +881,24 @@ def eval_sh_baseline(
     def make_adapted_split_loader(split_loader):
         for batch in split_loader:
             inputs = batch["inputs"]
-            is_typing = inputs["label_vector"] == torch.tensor([0, 0, 0, 0, 0, 0, 1, 0])
-            if is_typing.all():
+            typing_vector = torch.tensor(
+                [0, 0, 0, 0, 0, 0, 1, 0], device=inputs["label_vector"].device, dtype=inputs["label_vector"].dtype
+            )
+            is_typing = (inputs[0]["label_vector"] == typing_vector).all()
+            if is_typing:
                 for i in range(20):
-                    inputs["label_vector"] = torch.zeros(20)
-                    inputs["label_vector"][i] = 1
-                    batch["metadata"][0]["fg_categories"] = [f"class {i}"]
+                    adapted_batch = copy.deepcopy(batch)
+                    label_vector = torch.zeros(
+                        20,
+                        device=inputs["label_vector"].device,
+                        dtype=inputs["label_vector"].dtype,
+                    )
+                    label_vector[i] = 1
 
-                    yield inputs
+                    adapted_batch["inputs"]["label_vector"] = label_vector.unsqueeze(0)
+                    adapted_batch["metadata"][0]["fg_categories"] = [f"class {i}"]
+
+                    yield adapted_batch
 
     adapted_split_loader = make_adapted_split_loader(split_loader)
 
