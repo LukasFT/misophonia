@@ -885,7 +885,7 @@ def eval_sh_baseline(
                 for i in range(20):
                     inputs["label_vector"] = torch.zeros(20)
                     inputs["label_vector"][i] = 1
-                    inputs["metadata"]["fg_categories"] = [f"class {i}"]
+                    batch["metadata"]["fg_categories"] = [f"class {i}"]
 
                     yield inputs
 
