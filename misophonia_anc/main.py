@@ -884,7 +884,7 @@ def eval_sh_baseline(
             typing_vector = torch.tensor(
                 [0, 0, 0, 0, 0, 0, 1, 0], device=inputs["label_vector"].device, dtype=inputs["label_vector"].dtype
             )
-            is_typing = (inputs[0]["label_vector"] == typing_vector).all()
+            is_typing = (inputs["label_vector"] == typing_vector).all()
             if is_typing:
                 for i in range(20):
                     adapted_batch = copy.deepcopy(batch)
@@ -896,7 +896,7 @@ def eval_sh_baseline(
                     label_vector[i] = 1
 
                     adapted_batch["inputs"]["label_vector"] = label_vector.unsqueeze(0)
-                    adapted_batch["metadata"][0]["fg_categories"] = [f"class {i}"]
+                    adapted_batch["metadata"]["fg_categories"] = [f"class {i}"]
 
                     yield adapted_batch
 
