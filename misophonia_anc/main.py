@@ -879,14 +879,15 @@ def eval_sh_baseline(
 
     def make_adapted_split_loader(split_loader):
         for batch in split_loader:
-            is_typing = batch["label_vector"] == torch.tensor([0, 0, 0, 0, 0, 0, 1, 0])
+            inputs = batch["inputs"]
+            is_typing = inputs["label_vector"] == torch.tensor([0, 0, 0, 0, 0, 0, 1, 0])
             if is_typing.all():
                 for i in range(20):
-                    batch["label_vector"] = torch.zeros(20)
-                    batch["label_vector"][i] = 1
-                    batch["metadata"]["fg_categories"] = [f"class {i}"]
+                    inputs["label_vector"] = torch.zeros(20)
+                    inputs["label_vector"][i] = 1
+                    inputs["metadata"]["fg_categories"] = [f"class {i}"]
 
-                    yield batch
+                    yield inputs
 
     adapted_split_loader = make_adapted_split_loader(split_loader)
 
