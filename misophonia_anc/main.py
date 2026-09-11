@@ -848,9 +848,10 @@ def eval_sh_baseline(
     aggregated_results_file = model_dir / "eval_results" / f"sh_baseline_{split}_aggregated_results.json"
 
     model, model_metadata = MisophoniaANCNet.from_config(config, checkpoint=checkpoint_file, device=device)
-
     dataset_split_dir = model_dir / "webdataset" / split
+    samples_dir = model_dir / "samples" / "model_file" / split
     eliot.log_message(f"Loading {split} data from {dataset_split_dir}", level="debug")
+    eliot.log_message(f"Saving samples to {samples_dir}", level="debug")
     shards_split = tuple(dataset_split_dir.glob("data-*.tar"))
     if len(shards_split) == 0:
         eliot.log_message(
@@ -886,19 +887,18 @@ def eval_sh_baseline(
             )
             is_typing = (inputs["label_vector"] == typing_vector).all()
             if is_typing:
-                for i in range(20):
-                    adapted_batch = copy.deepcopy(batch)
-                    label_vector = torch.zeros(
-                        20,
-                        device=inputs["label_vector"].device,
-                        dtype=inputs["label_vector"].dtype,
-                    )
-                    label_vector[i] = 1
+                adapted_batch = copy.deepcopy(batch)
+                label_vector = torch.zeros(
+                    20,
+                    device=inputs["label_vector"].device,
+                    dtype=inputs["label_vector"].dtype,
+                )
+                label_vector[7] = 1 # Found that the 7th index corresponds to "typing" in their label vector
 
-                    adapted_batch["inputs"]["label_vector"] = label_vector.unsqueeze(0)
-                    adapted_batch["metadata"][0]["fg_categories"] = [f"class {i}"]
+                adapted_batch["inputs"]["label_vector"] = label_vector.unsqueeze(0)
+                adapted_batch["metadata"][0]["fg_categories"] = [f"typing"]
 
-                    yield adapted_batch
+                yield adapted_batch
 
     adapted_split_loader = make_adapted_split_loader(split_loader)
 
@@ -920,6 +920,8 @@ def eval_sh_baseline(
             "calculate_ild_itd": True,
         },
         mono_to_stereo=config.stereo_to_mono,
+        save_num_samples=50,
+        save_samples_to=samples_dir,
         device=device,
         warm_up_iters=10,
         loss_fn=get_loss_fn_from_name(config.loss_option),
